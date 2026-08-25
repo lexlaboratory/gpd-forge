@@ -1,0 +1,30 @@
+<!--
+  GPD Forge — core service (Windows Service, SYSTEM) + local HTTP API (Kestrel).
+  Copyright (C) 2026 lexlaboratory. GPL-3.0-or-later. See ../LICENSE.
+  Requires the .NET 9 SDK to build:  winget install Microsoft.DotNet.SDK.9
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>GpdForge</RootNamespace>
+    <AssemblyName>GpdForge.Service</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
+    <!-- Read-only telemetry via WMI (no kernel driver) — the default, zero-risk path. -->
+    <PackageReference Include="System.Management" Version="9.0.0" />
+    <!-- Optional richer read-only sensors (package power, temps, fan RPM) via LibreHardwareMonitor.
+         Loads its own read-only kernel driver, so it is ONLY used when GPDFORGE_ENABLE_HARDWARE=1
+         + elevation. Default telemetry stays pure-WMI. -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.4" />
+  </ItemGroup>
+
+</Project>

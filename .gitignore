@@ -1,0 +1,45 @@
+# --- .NET / core ---
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+artifacts/
+publish/
+*.dll
+*.pdb
+
+# --- Node / UI ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# --- Tauri ---
+ui/src-tauri/target/
+ui/src-tauri/gen/
+# desktop-only: drop the generated mobile icon sets (keep desktop png/ico/icns)
+ui/src-tauri/icons/android/
+ui/src-tauri/icons/ios/
+
+# --- Playwright ---
+test-results/
+playwright-report/
+playwright/.cache/
+tests/e2e/artifacts/
+
+# --- OS / editor ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+
+# --- Script runtime logs ---
+scripts/logs/
+
+# --- Secrets ---
+.env
+.env.*
+*.pem
+*.key

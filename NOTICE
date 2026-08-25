@@ -1,0 +1,27 @@
+GPD Forge
+Copyright (C) 2026 lexlaboratory
+Licensed under the GNU General Public License v3.0 or later (see LICENSE).
+
+This product is a clean-room, community-first project. It is not affiliated with,
+endorsed by, or derived from the source code of GPD's proprietary MotionAssistant
+or GPD Tool applications (no source for those is public). Interoperability facts
+(EC register maps, SMU mailbox behavior, HID report layouts) are used as data, not
+as copied code.
+
+Third-party components and the reused/derived material inventory (kept current):
+
+  Component            License        Use in GPD Forge
+  -------------------  -------------  --------------------------------------------
+  HandheldCompanion    GPL-3.0        Reference/derivation: Auto-TDP, ViGEm, gyro
+  UXTU                 GPL-3.0        Reference: power presets, PawnIO backend
+  RyzenAdj             LGPL-2.1       TDP/SMU engine (linked)
+  gpd-fan-driver       GPL-2.0        EC register map (data)
+  LibreHardwareMonitor MPL-2.0        Sensor readout (temps/watts)
+  ViGEmBus / ViGEm.NET MIT           Virtual controller
+  HidHide              GPL-3.0        Physical device hiding
+  RTSSSharedMemoryNET  MIT            OSD / frame-limit bridge
+  PresentMon           MIT           FPS/frametime telemetry
+  PawnIO               (proprietary)  Kernel access broker (redistribution per its terms)
+
+Every file that reuses or is derived from a GPL/LGPL upstream carries an in-file
+header naming the upstream and its license, as required by GPL-3 section 5(a)/(b).

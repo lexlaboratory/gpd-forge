@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ui:
+    name: UI build + E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install UI deps
+        run: npm ci
+        working-directory: ui
+      - name: Typecheck + build UI
+        run: npm run build
+        working-directory: ui
+      - name: Install E2E deps
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  core:
+    name: Core build + unit tests (.NET)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '9.0.x' }
+      - name: Build core
+        run: dotnet build core/GpdForge.Service.csproj -c Release
+      - name: Test core
+        run: dotnet test core.tests/GpdForge.Core.Tests.csproj -c Release
