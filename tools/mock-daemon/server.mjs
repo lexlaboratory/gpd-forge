@@ -38,6 +38,12 @@ const state = {
   refresh: { current: 60, supported: [48, 60] },
   night: { on: false, warmth: 0 },
   tablet: { raw: null }, // null = ConvertibilityEnabled not set (default OS chassis detection)
+  // Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer. The mock
+  // presents all three as controllable/available so the UI/E2E can exercise a full round-trip —
+  // the real daemon (see core/Led, core/Battery, core/Undervolt) stays honestly gated/advisory.
+  led: { mode: 'Off', color: '#00c8ff' },
+  chargeLimit: { percent: 100 },
+  undervolt: { coCount: 0, offsetMv: 0 },
   fanMode: 'Auto',
   frozen: [],
   history: [], // { unixMs, snap } ring, capped at HISTORY_CAPACITY — see pushHistory()
@@ -200,6 +206,38 @@ function describeTablet(raw) {
 function tabletInfo(applied, advisory) {
   const raw = state.tablet.raw
   return { convertible: raw === null || raw === undefined ? null : raw !== 0, raw, applied, advisory: advisory ?? describeTablet(raw) }
+}
+
+// --- Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer ---------
+// Mirrors core/Led/LedService.cs, core/Battery/ChargeLimitService.cs, core/Undervolt/
+// CurveOptimizerService.cs — except the mock reports everything as controllable/available/applied
+// so the UI and E2E can exercise a full round-trip without real hardware. The real daemon is gated
+// behind GPDFORGE_ENABLE_HARDWARE=1 and, even then, is honest that no working write path exists yet.
+const LED_MODES = new Set(['Off', 'Solid', 'Breathe', 'Rotate'])
+const LED_MOCK_ADVISORY =
+  'Mock daemon: LED is presented as controllable so the UI/E2E can exercise the round-trip. The ' +
+  "real daemon is gated behind GPDFORGE_ENABLE_HARDWARE=1 and, even then, this HX370's firmware has " +
+  'no working HID write path yet.'
+const CHARGE_LIMIT_MOCK_ADVISORY =
+  'Mock daemon: charge limit is presented as available/controllable for UI/E2E. The real daemon is ' +
+  'gated, and "stop charging at N%" is an EC/BIOS feature with no known driverless write path yet.'
+const UNDERVOLT_MOCK_ADVISORY =
+  'Mock daemon: undervolt is presented as applied for UI/E2E. The real daemon is gated, and ' +
+  'RyzenAdj (its TDP backend) does not expose Curve Optimizer / PBO at all.'
+
+function ledInfo() {
+  return { mode: state.led.mode, color: state.led.color, controllable: true, applied: true, advisory: LED_MOCK_ADVISORY }
+}
+function normalizeHexColor(input) {
+  if (typeof input !== 'string') return null
+  const hex = input.startsWith('#') ? input.slice(1) : input
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex.toLowerCase()}` : null
+}
+function chargeLimitInfo() {
+  return { percent: state.chargeLimit.percent, available: true, applied: true, advisory: CHARGE_LIMIT_MOCK_ADVISORY }
+}
+function undervoltInfo() {
+  return { coCount: state.undervolt.coCount, offsetMv: state.undervolt.offsetMv, applied: true, advisory: UNDERVOLT_MOCK_ADVISORY }
 }
 
 function aiInfo() {
@@ -459,6 +497,37 @@ const server = http.createServer(async (req, res) => {
   // Keyboard backlight (ADVISORY only — mirrors KeyboardBacklightService.cs; no state, no writes).
   if (method === 'GET' && path === '/display/keyboard-backlight') return send(res, 200, { controllable: false, applied: false, advisory: KEYBOARD_BACKLIGHT_ADVISORY })
   if (method === 'POST' && path === '/display/keyboard-backlight') return send(res, 200, { controllable: false, applied: false, advisory: KEYBOARD_BACKLIGHT_ADVISORY })
+
+  // Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer. The mock
+  // plays along as controllable (see ledInfo/chargeLimitInfo/undervoltInfo above); the real daemon
+  // (core/Led, core/Battery, core/Undervolt) stays gated + honestly applied:false.
+  if (method === 'GET' && path === '/led') return send(res, 200, ledInfo())
+  if (method === 'POST' && path === '/led') {
+    const body = await readBody(req)
+    if (!LED_MODES.has(body?.mode)) return err(res, 400, 'bad_mode', 'mode must be one of Off, Solid, Breathe, Rotate')
+    state.led.mode = body.mode
+    const color = normalizeHexColor(body?.color)
+    if (color) state.led.color = color
+    return send(res, 200, ledInfo())
+  }
+
+  if (method === 'GET' && path === '/battery/charge-limit') return send(res, 200, chargeLimitInfo())
+  if (method === 'POST' && path === '/battery/charge-limit') {
+    const body = await readBody(req)
+    const pct = Math.max(50, Math.min(100, Number(body?.percent)))
+    if (Number.isFinite(pct)) state.chargeLimit.percent = pct
+    return send(res, 200, chargeLimitInfo())
+  }
+
+  if (method === 'GET' && path === '/undervolt') return send(res, 200, undervoltInfo())
+  if (method === 'POST' && path === '/undervolt') {
+    const body = await readBody(req)
+    if (body?.coCount !== undefined && body.coCount !== null && Number.isFinite(Number(body.coCount)))
+      state.undervolt.coCount = Math.max(-30, Math.min(30, Number(body.coCount)))
+    if (body?.offsetMv !== undefined && body.offsetMv !== null && Number.isFinite(Number(body.offsetMv)))
+      state.undervolt.offsetMv = Math.max(-100, Math.min(100, Number(body.offsetMv)))
+    return send(res, 200, undervoltInfo())
+  }
 
   if (method === 'GET' && path === '/standby') return send(res, 200, state.standby)
   if (method === 'POST' && path === '/standby/restore') {

@@ -126,6 +126,39 @@ firmware (see the `--probe-ec` notes in `core/Program.cs`) — so GPD Forge has 
 path and never attempts a blind one; this always reports the honest advisory rather than faking
 success.
 
+### `GET /led`  ·  `POST /led`  (RGB/LED — ADVISORY, GATED)
+- `GET → { mode: 'Off'|'Solid'|'Breathe'|'Rotate', color: string, controllable: false, applied: false,
+  advisory: string }` — the last-set (or default) desired config GPD Forge is holding. There is no
+  readable live state for this board, so this is never a live read.
+- `POST { mode: string, color?: string } → (same shape as GET)` — `mode` must be one of `Off` /
+  `Solid` / `Breathe` / `Rotate` (`400` otherwise); `color` is `#RRGGBB` or `RRGGBB`, case-
+  insensitive (`400` on a malformed color). The desired config is always stored (so the UI round-
+  trips), but a WRITE is only attempted when `GPDFORGE_ENABLE_HARDWARE=1` — and even then this
+  always reports `applied:false`: the LED sits on the same HID feature-report config interface as
+  the controller's button/deadzone blob (`core/Hid/SafeConfigWriter.cs`), which on this HX370 unit
+  is already known to reject the very first `HidD_SetFeature` call (see
+  `docs/overlay-home-button.md`). GPD Forge never blind-writes it; see `core/Led/LedService.cs`.
+
+### `GET /battery/charge-limit`  ·  `POST /battery/charge-limit`  (ADVISORY, GATED)
+- `GET → { percent: number, available: boolean, applied: false, advisory: string }` — `available`
+  is `true` only if a driverless source could report the live threshold; today none is known for
+  this board, so this is the last-set (or default, 100) value GPD Forge is holding.
+- `POST { percent: number } → (same shape as GET)` — `percent` is clamped to 50–100
+  (`core/Battery/ChargeLimit.cs`'s `ChargeLimitValidator.Normalize`). A WRITE is only attempted when
+  `GPDFORGE_ENABLE_HARDWARE=1`; "stop charging at N%" is an EC/BIOS feature with no verified,
+  driverless write path on this board, so this always reports `applied:false` + why rather than a
+  blind write — see `core/Battery/ChargeLimitService.cs`.
+
+### `GET /undervolt`  ·  `POST /undervolt`  (Undervolt / Curve Optimizer — ADVISORY, GATED)
+- `GET → { coCount: number, offsetMv: number, applied: false, advisory: string }` — the last-set (or
+  default, `0`/`0`) desired values GPD Forge is holding.
+- `POST { coCount?: number, offsetMv?: number } → (same shape as GET)` — `coCount` (AMD PBO Curve-
+  Optimizer magnitude; negative = undervolt) is clamped to -30..+30, `offsetMv` to -100..+100
+  (`core/Undervolt/CurveOptimizer.cs`'s `CurveOptimizerValidator`). Always `applied:false`: RyzenAdj,
+  the only TDP backend this project drives (`core/Tdp/RyzenAdjBackend.cs`), does not expose Curve
+  Optimizer / PBO at all, so there is no implemented write path regardless of the hardware gate —
+  see `core/Undervolt/CurveOptimizerService.cs`.
+
 ### `GET /battery/budget`
 `200 → { minutesRemaining: number | null, remainingWh: number, dischargeW: number,
   projections: Array<{ watts: number, minutes: number }> }`

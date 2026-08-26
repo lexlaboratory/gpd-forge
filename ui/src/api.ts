@@ -9,6 +9,7 @@ import type {
   HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
   TuneGoal, TunerInfo, UpdateCheck,
+  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
 } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
@@ -109,3 +110,12 @@ export const startTuner = (req: StartTunerRequest) => json<TunerInfo>('/tuner/st
 
 // --- update checker ---
 export const checkUpdate = () => json<UpdateCheck>('/update/check')
+
+// --- Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer ---
+export const getLed = () => json<LedInfo>('/led')
+export const setLed = (mode: LedMode, color?: string) => json<LedInfo>('/led', post({ mode, color }))
+export const getChargeLimit = () => json<ChargeLimitInfo>('/battery/charge-limit')
+export const setChargeLimit = (percent: number) => json<ChargeLimitInfo>('/battery/charge-limit', post({ percent }))
+export const getUndervolt = () => json<UndervoltInfo>('/undervolt')
+export const setUndervolt = (coCount?: number, offsetMv?: number) =>
+  json<UndervoltInfo>('/undervolt', post({ coCount, offsetMv }))

@@ -86,6 +86,16 @@ export interface TunerInfo {
 // Update checker (mirror of GET /update/check).
 export interface UpdateCheck { current: string; latest: string | null; updateAvailable: boolean; url: string | null }
 
+// Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer (mirror of
+// core/Led, core/Battery/ChargeLimit*.cs, core/Undervolt/*.cs). All three are ADVISORY — real
+// validators run and the desired state is stored for real, but a write is only ever attempted when
+// the daemon's hardware gate is open, and even then this HX370 has no working write path for any of
+// them yet; see docs/api.md.
+export type LedMode = 'Off' | 'Solid' | 'Breathe' | 'Rotate'
+export interface LedInfo { mode: LedMode; color: string; controllable: boolean; applied: boolean; advisory: string }
+export interface ChargeLimitInfo { percent: number; available: boolean; applied: boolean; advisory: string }
+export interface UndervoltInfo { coCount: number; offsetMv: number; applied: boolean; advisory: string }
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'blocked'
 
 export interface Job {

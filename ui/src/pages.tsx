@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type {
   Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo, TuneGoal, TunerInfo, UpdateCheck,
+  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
 } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
@@ -11,6 +12,7 @@ import {
   getPowerSource, setPowerSource, settingsExportUrl, importSettings, type TdpResult,
   getRefreshRate, setRefreshRate, getNightMode, setNightMode, getTabletMode, getKeyboardBacklight,
   getTuner, startTuner, checkUpdate,
+  getLed, setLed, getChargeLimit, setChargeLimit, getUndervolt, setUndervolt,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -195,6 +197,109 @@ function TunerCard() {
   )
 }
 
+// --- Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer --------
+// All three are ADVISORY: GPD Forge validates and stores the request for real, but only ever
+// attempts a write when the daemon's hardware gate is open — and on this HX370 unit, even then,
+// there is no working write path yet (HID config, EC/BIOS, and RyzenAdj all lack one). The mock
+// daemon plays along as controllable/available so this round-trips in dev/E2E; the real daemon
+// stays honest (see docs/api.md).
+const LED_MODES: LedMode[] = ['Off', 'Solid', 'Breathe', 'Rotate']
+
+function LedCard() {
+  const toast = useToast()
+  const [info, setInfo] = useState<LedInfo | null>(null)
+  const [color, setColor] = useState('#00c8ff')
+
+  useEffect(() => { getLed().then((s) => { setInfo(s); setColor(s.color) }).catch(() => {}) }, [])
+
+  const pick = async (mode: LedMode) => {
+    const r = await setLed(mode, color).catch(() => null)
+    if (!r) return
+    setInfo(r)
+    toast.push({ kind: r.applied ? 'success' : 'info', message: r.applied ? `LED set to ${mode}` : r.advisory })
+  }
+  const onColor = (e: ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value
+    setColor(next)
+    if (info) void setLed(info.mode, next).then(setInfo).catch(() => {})
+  }
+
+  return (
+    <Card title="LED / RGB" hint={<Soon>{info?.applied ? 'writable' : 'gated'}</Soon>}>
+      <div className="chips" data-testid="led-modes">
+        {LED_MODES.map((m) => (
+          <button key={m} className={`chip-btn ${info?.mode === m ? 'on' : ''}`}
+            onClick={() => pick(m)} data-testid={`led-${m.toLowerCase()}`}>{m}</button>
+        ))}
+      </div>
+      <div className="row">
+        <span>Color</span>
+        <input type="color" className="led-color" value={color} onChange={onColor} data-testid="led-color" aria-label="LED color" />
+      </div>
+      <p className="muted" data-testid="led-advisory">{info?.advisory ?? 'Loading…'}</p>
+    </Card>
+  )
+}
+
+function ChargeLimitRow() {
+  const toast = useToast()
+  const [info, setInfo] = useState<ChargeLimitInfo | null>(null)
+  useEffect(() => { getChargeLimit().then(setInfo).catch(() => {}) }, [])
+
+  const commit = (v: number) => {
+    void setChargeLimit(v).then((r) => {
+      setInfo(r)
+      toast.push({ kind: r.applied ? 'success' : 'info', message: r.applied ? `Charge limit set to ${r.percent}%` : r.advisory })
+    }).catch(() => {})
+  }
+
+  return (
+    <Card title="Battery charge limit" hint={<Soon>{info?.available ? 'readable' : 'gated'}</Soon>}>
+      <Slider label="Stop charging at" testid="charge-limit" value={info?.percent ?? 100} min={50} max={100} unit=" %"
+        onChange={(v) => setInfo((s) => (s ? { ...s, percent: v } : s))} onCommit={commit} />
+      <p className="muted" data-testid="charge-limit-advisory">{info?.advisory ?? 'Loading…'}</p>
+    </Card>
+  )
+}
+
+function UndervoltRow() {
+  const toast = useToast()
+  const [info, setInfo] = useState<UndervoltInfo | null>(null)
+  useEffect(() => { getUndervolt().then(setInfo).catch(() => {}) }, [])
+
+  const commit = (coCount: number, offsetMv: number) => {
+    void setUndervolt(coCount, offsetMv).then((r) => { setInfo(r); toast.push({ kind: 'info', message: r.advisory }) }).catch(() => {})
+  }
+
+  return (
+    <Card title="Undervolt / Curve Optimizer" hint={<Soon>advisory</Soon>}>
+      <div className="grid2">
+        <Slider label="CO count (all-core)" testid="undervolt-co" value={info?.coCount ?? 0} min={-30} max={30}
+          onChange={(v) => setInfo((s) => (s ? { ...s, coCount: v } : s))} onCommit={(v) => commit(v, info?.offsetMv ?? 0)} />
+        <Slider label="Offset" testid="undervolt-mv" value={info?.offsetMv ?? 0} min={-100} max={100} unit=" mV"
+          onChange={(v) => setInfo((s) => (s ? { ...s, offsetMv: v } : s))} onCommit={(v) => commit(info?.coCount ?? 0, v)} />
+      </div>
+      <p className="muted" data-testid="undervolt-advisory">{info?.advisory ?? 'Loading…'}</p>
+    </Card>
+  )
+}
+
+function AdvancedHardwarePanel() {
+  return (
+    <section className="panel" data-testid="advanced-hardware-panel" aria-label="Advanced hardware-gated controls">
+      <h2 className="section-title">Advanced (hardware-gated)</h2>
+      <p className="panel-note">
+        Real validators, real stored state — but a write is only ever attempted behind
+        <code> GPDFORGE_ENABLE_HARDWARE=1</code>, and honestly reported when there's still no
+        verified path to reach the hardware. GPD Forge never fakes a successful write.
+      </p>
+      <LedCard />
+      <ChargeLimitRow />
+      <UndervoltRow />
+    </section>
+  )
+}
+
 // --- Power (editable per-mode TDP presets) ------------------------------------
 export function PowerPage() {
   const [presets, setPresets] = useState<Record<string, Preset>>({})
@@ -248,6 +353,7 @@ export function PowerPage() {
       <Card title="GPU" hint={<Soon />}>
         <p className="muted">iGPU clock cap and UMA/VRAM assignment (for the Agents/AI mode) — via the broker, gated behind hardware approval.</p>
       </Card>
+      <AdvancedHardwarePanel />
     </>
   )
 }

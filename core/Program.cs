@@ -19,6 +19,9 @@ using GpdForge.History;
 using GpdForge.Import;
 using GpdForge.Tuner;
 using GpdForge.Update;
+using GpdForge.Led;
+using GpdForge.Battery;
+using GpdForge.Undervolt;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -205,6 +208,20 @@ builder.Services.AddSingleton<ITabletModeRegistry, WindowsTabletModeRegistry>();
 builder.Services.AddSingleton(sp => new TabletModeService(
     sp.GetRequiredService<ITabletModeRegistry>(), enableHardware, sp.GetService<ILogger<TabletModeService>>()));
 builder.Services.AddSingleton<KeyboardBacklightService>();
+
+// Advanced (hardware-gated) controls: LED/RGB, battery charge limit, undervolt/Curve Optimizer.
+// All three follow the same honesty stance as TabletModeService/KeyboardBacklightService above:
+// real pure validators/encoders (unit-tested), a real injectable write-attempt interface where one
+// conceptually exists (LED, charge limit), and applied:false + an advisory whenever there is no
+// verified path to actually reach the hardware — which today is unconditionally true for all three
+// on this HX370 (see each service's file header for specifics). Never a blind EC/registry/SMU write.
+builder.Services.AddSingleton<ILedHidWriter, HidLedWriter>();
+builder.Services.AddSingleton(sp => new LedService(
+    sp.GetRequiredService<ILedHidWriter>(), enableHardware, sp.GetService<ILogger<LedService>>()));
+builder.Services.AddSingleton<IChargeLimitBackend, UnavailableChargeLimitBackend>();
+builder.Services.AddSingleton(sp => new ChargeLimitService(
+    sp.GetRequiredService<IChargeLimitBackend>(), enableHardware, sp.GetService<ILogger<ChargeLimitService>>()));
+builder.Services.AddSingleton(sp => new CurveOptimizerService(enableHardware, sp.GetService<ILogger<CurveOptimizerService>>()));
 
 builder.Services.AddSingleton<FanState>();
 builder.Services.AddSingleton<BatteryService>();
@@ -456,6 +473,55 @@ app.MapPost("/display/keyboard-backlight", (KeyboardBacklightService k) =>
     return Results.Json(new { controllable = s.Controllable, applied = s.Applied, advisory = s.Advisory });
 });
 
+// --- Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer ---------
+// All three: real validators/encoders below (unit-tested in core.tests), write GATED behind
+// GPDFORGE_ENABLE_HARDWARE=1, and honest applied:false + advisory wherever no verified write path
+// exists — which today is every case on this HX370 (see LedService.cs / ChargeLimitService.cs /
+// CurveOptimizerService.cs). Never a blind EC/registry/SMU write.
+app.MapGet("/led", (LedService led) =>
+{
+    var s = led.Get();
+    return Results.Json(new { mode = s.Mode, color = s.Color, controllable = s.Controllable, applied = s.Applied, advisory = s.Advisory });
+});
+app.MapPost("/led", (LedRequest req, LedService led) =>
+{
+    if (!Enum.TryParse<LedMode>(req.Mode, ignoreCase: true, out var mode))
+        return Results.BadRequest(new { error = new { code = "bad_mode", message = "mode must be one of Off, Solid, Breathe, Rotate" } });
+
+    LedColor? color = null;
+    if (!string.IsNullOrWhiteSpace(req.Color))
+    {
+        if (!LedColor.TryParse(req.Color, out var parsed))
+            return Results.BadRequest(new { error = new { code = "bad_color", message = "color must be #RRGGBB or RRGGBB" } });
+        color = parsed;
+    }
+
+    var s = led.Set(mode, color);
+    return Results.Json(new { mode = s.Mode, color = s.Color, controllable = s.Controllable, applied = s.Applied, advisory = s.Advisory });
+});
+
+app.MapGet("/battery/charge-limit", (ChargeLimitService cl) =>
+{
+    var s = cl.Get();
+    return Results.Json(new { percent = s.Percent, available = s.Available, applied = s.Applied, advisory = s.Advisory });
+});
+app.MapPost("/battery/charge-limit", (ChargeLimitRequest req, ChargeLimitService cl) =>
+{
+    var s = cl.Set(req.Percent);
+    return Results.Json(new { percent = s.Percent, available = s.Available, applied = s.Applied, advisory = s.Advisory });
+});
+
+app.MapGet("/undervolt", (CurveOptimizerService uv) =>
+{
+    var s = uv.Get();
+    return Results.Json(new { coCount = s.CoCount, offsetMv = s.OffsetMv, applied = s.Applied, advisory = s.Advisory });
+});
+app.MapPost("/undervolt", (UndervoltRequest req, CurveOptimizerService uv) =>
+{
+    var s = uv.Set(req.CoCount, req.OffsetMv);
+    return Results.Json(new { coCount = s.CoCount, offsetMv = s.OffsetMv, applied = s.Applied, advisory = s.Advisory });
+});
+
 // Battery budget (minutes left + projections at other TDPs).
 app.MapGet("/battery/budget", (BatteryService b) => Results.Json(b.GetBudget()));
 
@@ -629,6 +695,12 @@ namespace GpdForge.Api
     public sealed record RefreshRateRequest(int Hz);
     public sealed record NightModeRequest(bool On, int? Warmth);
     public sealed record TabletModeRequest(bool Enable);
+
+    // --- Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer ---
+    public sealed record LedRequest(string? Mode, string? Color);
+    public sealed record ChargeLimitRequest(int Percent);
+    public sealed record UndervoltRequest(int? CoCount, int? OffsetMv);
+
     public sealed class FanState { public string Mode { get; set; } = "Auto"; }
     public sealed record FanRequest(string? Mode);
     public sealed record FreezerRequest(string? Name);
