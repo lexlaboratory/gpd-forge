@@ -35,7 +35,13 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [ ] Importer: migrate `C:\Program Files\Motion Assistant\Profiles\*.ini` → native profiles
 - [~] UI: dashboard + per-mode panels shipped — 9 pages (Dashboard/Power/Fan/Controller/Display/Profiles/
       Monitor/System/Settings), light+dark themes, live SVG sparklines, toasts. Browser-QA'd at the Win 4's
-      native 1280×800 (both themes). Quick-menu overlay (gamepad-navigable) still pending.
+      native 1280×800 (both themes).
+- [~] **Quick Access Menu overlay** shipped as a web view at `/overlay.html` (own lean Vite entry): gamepad-first
+      (D-pad focus + A activate, keyboard mirror), right-docked, always-dark; live header + mode/TDP/fan/FPS-cap/
+      brightness/battery/standby. E2E-tested, QA'd. **Launch:** `scripts/overlay-launch.ps1` opens it as a signed
+      Edge/Chrome app-window (runs under Smart App Control). PENDING: topmost-over-exclusive-fullscreen + a resident
+      hotkey listener bound to a WinControls-mapped Home button (L4/R4/Menu) — or code-sign the Tauri window for a
+      native transparent overlay.
 
 ### Landed features (software; some mock-backed until the broker/driver land)
 - [x] **Battery budget**: runtime estimate from live discharge + what-if projections across power levels
