@@ -26,6 +26,13 @@ reliably, unlike a modifier chord routed through the paddle's macro slots.
 **Option A — GPD's official WinControls app (no install, safest):** open WinControls, set the
 **L4** back button to **F24**, apply. Done.
 
+> ⚠️ **Known limitation (Win 4 HX370 / G1618-04):** the scripted path B below fails on this unit —
+> `gpdconfig` (pyWinControls) errors with `HidD_SetFeature: (0x1) Incorrect function` on the very
+> first config request, i.e. this newer firmware's config protocol differs from what pyWinControls
+> supports. It also means we can't back up or read the config, so **do not** attempt a scripted write
+> here. **Use Option A (GPD's own WinControls / GPD Tool), which speaks this firmware's protocol.**
+> Option B remains valid for the GPD models pyWinControls supports.
+
 **Option B — scripted, with automatic backup (our wrapper around the proven `gpdconfig`):**
 
 ```powershell
