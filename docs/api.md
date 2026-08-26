@@ -77,6 +77,18 @@ Suspend/resume background processes to free CPU/RAM during a game or a heavy inf
 - `POST { targetFps: number, enable: boolean } → { enabled, targetFps }` — a PID loop then steers sustained
   TDP to hold `targetFps` at the least power, active in gaming mode once FPS telemetry is available.
 
+### `GET /guardian`  ·  `POST /guardian`  (thermal / battery guardian)
+- `GET → { enabled, autoThrottle, tempThrottleC, tempCriticalC, throttleFloorW, batteryLowPct,
+  batteryCriticalPct, throttling: boolean, throttledToW: number | null, lastAlert: string | null,
+  lastSeverity: 'ok'|'info'|'warn'|'critical' }` — config + live guardian state.
+- `POST { enabled?, autoThrottle?, tempThrottleC?, tempCriticalC?, throttleFloorW?, batteryLowPct?,
+  batteryCriticalPct? } → { …config }` — partial update (only the sent fields change).
+
+The worker evaluates every tick: above `tempThrottleC` it eases the STAPM ceiling down a ramp to
+`throttleFloorW` by `tempCriticalC` (a safety throttle that takes priority over Auto-TDP-to-FPS), and
+clears once temps recover; on battery it raises low/critical alerts. Throttle actions are gated by
+`autoThrottle`; alerts always surface via `lastAlert`.
+
 ### `POST /jobs`  ·  `GET /jobs/:id`  ·  `GET /jobs`  (Agents / AI mode)
 - `POST { cmd: string, constraints?: { requireAC?: boolean, maxTempC?: number, window?: string } }`
   `→ { id: string, status: 'queued' | 'running' | 'done' | 'blocked' }`

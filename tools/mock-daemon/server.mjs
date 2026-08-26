@@ -38,6 +38,7 @@ const state = {
   fanMode: 'Auto',
   frozen: [],
   autoFps: { enabled: false, targetFps: 60 },
+  guardian: { enabled: true, autoThrottle: true, tempThrottleC: 90, tempCriticalC: 96, throttleFloorW: 12, batteryLowPct: 15, batteryCriticalPct: 8 },
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
@@ -198,6 +199,18 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req)
     state.autoFps = { enabled: !!body?.enable, targetFps: body?.targetFps > 0 ? body.targetFps : state.autoFps.targetFps }
     return send(res, 200, state.autoFps)
+  }
+
+  if (method === 'GET' && path === '/guardian') return send(res, 200, {
+    ...state.guardian, throttling: false, throttledToW: null, lastAlert: null, lastSeverity: 'ok',
+  })
+  if (method === 'POST' && path === '/guardian') {
+    const b = await readBody(req)
+    const g = state.guardian
+    for (const k of ['enabled', 'autoThrottle', 'tempThrottleC', 'tempCriticalC', 'throttleFloorW', 'batteryLowPct', 'batteryCriticalPct']) {
+      if (b?.[k] !== undefined && b[k] !== null) g[k] = b[k]
+    }
+    return send(res, 200, g)
   }
 
   if (method === 'GET' && path === '/display') return send(res, 200, { brightness: state.brightness })

@@ -4,7 +4,7 @@
 // (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. Calls throw on failure;
 // callers decide how to degrade (the dashboard shows "Offline" and keeps the last values).
 
-import type { Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps } from './types'
+import type { Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
 
@@ -60,3 +60,7 @@ export const thaw = (name: string) => json<{ name: string; resumed: number; froz
 // --- auto-TDP to FPS ---
 export const getAutoFps = () => json<AutoFps>('/auto-fps')
 export const setAutoFps = (targetFps: number, enable: boolean) => json<AutoFps>('/auto-fps', post({ targetFps, enable }))
+
+// --- thermal/battery guardian ---
+export const getGuardian = () => json<Guardian>('/guardian')
+export const setGuardian = (patch: Partial<Guardian>) => json<Guardian>('/guardian', post(patch))

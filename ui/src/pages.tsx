@@ -1,9 +1,9 @@
 // GPD Forge UI — pages. GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
-import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps } from './types'
+import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
-  getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, type TdpResult,
+  getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian, type TdpResult,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -304,6 +304,37 @@ function BatteryBudgetCard() {
 }
 
 // --- Settings -----------------------------------------------------------------
+function GuardianCard() {
+  const toast = useToast()
+  const [g, setG] = useState<Guardian | null>(null)
+  useEffect(() => { getGuardian().then(setG).catch(() => {}) }, [])
+  const patch = async (p: Partial<Guardian>) => {
+    const n = await setGuardian(p).catch(() => null)
+    if (n) { setG((prev) => ({ ...(prev as Guardian), ...n })); toast.push({ kind: 'info', message: 'Guardian updated' }) }
+  }
+  if (!g) return null
+  return (
+    <Card title="Guardian" hint="Auto-throttle + alerts on overheat / low battery">
+      <div className="row">
+        <Toggle on={g.enabled} onClick={() => patch({ enabled: !g.enabled })} label="Enabled" testid="guardian-enabled" />
+      </div>
+      <div className="row">
+        <Toggle on={g.autoThrottle} onClick={() => patch({ autoThrottle: !g.autoThrottle })} label="Auto-throttle TDP on overheat" testid="guardian-autothrottle" />
+      </div>
+      <div className="stats">
+        <Tile label="Throttle at" value={`${g.tempThrottleC}`} unit="°C" />
+        <Tile label="Critical" value={`${g.tempCriticalC}`} unit="°C" />
+        <Tile label="Floor" value={`${g.throttleFloorW}`} unit="W" />
+        <Tile label="Battery low" value={`${g.batteryLowPct}`} unit="%" />
+      </div>
+      <p className="muted" data-testid="guardian-status">
+        {g.throttling ? `Throttling to ${g.throttledToW} W. ` : 'Not throttling. '}
+        {g.lastAlert ? `Last alert: ${g.lastAlert}` : 'No alerts.'}
+      </p>
+    </Card>
+  )
+}
+
 export function SettingsPage({ auto, setAuto, theme, setTheme }: {
   auto: boolean; setAuto: (v: boolean) => void; theme: 'dark' | 'light'; setTheme: (t: 'dark' | 'light') => void
 }) {
@@ -320,6 +351,7 @@ export function SettingsPage({ auto, setAuto, theme, setTheme }: {
           <Toggle on={theme === 'dark'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} label="Dark theme" testid="settings-theme" />
         </div>
       </Card>
+      <GuardianCard />
       <Card title="About">
         <p className="muted">GPD Forge — the definitive open-source tuning tool for GPD handhelds. GPL-3.0 · lexlaboratory · github.com/lexlaboratory/gpd-forge</p>
       </Card>

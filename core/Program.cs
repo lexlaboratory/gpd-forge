@@ -13,6 +13,7 @@ using GpdForge.Profiles;
 using GpdForge.Standby;
 using GpdForge.Display;
 using GpdForge.SystemControl;
+using GpdForge.Guardian;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -181,6 +182,7 @@ builder.Services.AddSingleton<FreezerService>(sp =>
     new FreezerService(sp.GetRequiredService<IProcessSuspender>(), lister: null, logger: sp.GetService<ILogger<FreezerService>>()));
 builder.Services.AddSingleton<FpsTdpController>();
 builder.Services.AddSingleton<AutoFpsState>();
+builder.Services.AddSingleton<GuardianService>();
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
@@ -296,6 +298,43 @@ app.MapPost("/auto-fps", (AutoFpsRequest req, AutoFpsState s) =>
     return Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps });
 });
 
+// Thermal/battery guardian: auto-throttles TDP on overheat and surfaces the latest alert.
+app.MapGet("/guardian", (GuardianService g) => Results.Json(new
+{
+    enabled = g.Config.Enabled,
+    autoThrottle = g.Config.AutoThrottle,
+    tempThrottleC = g.Config.TempThrottleC,
+    tempCriticalC = g.Config.TempCriticalC,
+    throttleFloorW = g.Config.ThrottleFloorW,
+    batteryLowPct = g.Config.BatteryLowPct,
+    batteryCriticalPct = g.Config.BatteryCriticalPct,
+    throttling = g.Throttling,
+    throttledToW = g.ThrottledToW,
+    lastAlert = g.LastAlert,
+    lastSeverity = g.LastSeverity,
+}));
+app.MapPost("/guardian", (GuardianRequest r, GuardianService g) =>
+{
+    var c = g.Config;
+    g.Configure(c with
+    {
+        Enabled = r.Enabled ?? c.Enabled,
+        AutoThrottle = r.AutoThrottle ?? c.AutoThrottle,
+        TempThrottleC = r.TempThrottleC ?? c.TempThrottleC,
+        TempCriticalC = r.TempCriticalC ?? c.TempCriticalC,
+        ThrottleFloorW = r.ThrottleFloorW ?? c.ThrottleFloorW,
+        BatteryLowPct = r.BatteryLowPct ?? c.BatteryLowPct,
+        BatteryCriticalPct = r.BatteryCriticalPct ?? c.BatteryCriticalPct,
+    });
+    return Results.Json(new
+    {
+        enabled = g.Config.Enabled, autoThrottle = g.Config.AutoThrottle,
+        tempThrottleC = g.Config.TempThrottleC, tempCriticalC = g.Config.TempCriticalC,
+        throttleFloorW = g.Config.ThrottleFloorW, batteryLowPct = g.Config.BatteryLowPct,
+        batteryCriticalPct = g.Config.BatteryCriticalPct,
+    });
+});
+
 // SPA fallback: any non-API path returns index.html (no-op if wwwroot/index.html is absent).
 app.MapFallbackToFile("index.html");
 
@@ -315,6 +354,7 @@ namespace GpdForge.Api
     public sealed record FreezerRequest(string? Name);
     public sealed record AutoFpsRequest(double TargetFps, bool Enable);
     public sealed class AutoFpsState { public bool Enabled { get; set; } public double TargetFps { get; set; } = 60; public int CurrentStapm { get; set; } = 25; }
+    public sealed record GuardianRequest(bool? Enabled, bool? AutoThrottle, double? TempThrottleC, double? TempCriticalC, int? ThrottleFloorW, int? BatteryLowPct, int? BatteryCriticalPct);
 
     public sealed record JobConstraints(bool? RequireAC, int? MaxTempC, string? Window);
     public sealed record JobRequest(string? Cmd, JobConstraints? Constraints);

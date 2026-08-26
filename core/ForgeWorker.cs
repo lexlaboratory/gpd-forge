@@ -3,6 +3,7 @@
 
 using GpdForge.Api;
 using GpdForge.Fan;
+using GpdForge.Guardian;
 using GpdForge.Profiles;
 using GpdForge.SystemControl;
 using GpdForge.Tdp;
@@ -22,7 +23,8 @@ public sealed class ForgeWorker(
     ModeState mode,
     AutoFpsState autoFps,
     FpsTdpController fpsController,
-    FreezerService freezer) : BackgroundService
+    FreezerService freezer,
+    GuardianService guardian) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -35,14 +37,34 @@ public sealed class ForgeWorker(
             {
                 var snapshot = await telemetry.ReadAsync(stoppingToken);
 
-                // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
-                // Without a real FPS source Fps is 0, so this stays inert instead of ramping TDP to max.
-                if (autoFps.Enabled && mode.Active == "gaming" && snapshot.Fps > 0)
+                // Thermal/battery guardian — evaluated every tick. A safety throttle takes priority
+                // over auto-FPS; alerts are logged and surfaced via GET /guardian.
+                var g = guardian.Observe(snapshot);
+                if (g.Alert is not null)
+                    logger.LogWarning("Guardian [{Severity}]: {Alert}", g.Severity, g.Alert);
+
+                if (g.ThrottleToW is int throttleW)
                 {
-                    var gaming = ModeProfiles.For("gaming") ?? new TdpProfile(25, 33, 28, 95);
-                    int next = fpsController.NextStapm(autoFps.TargetFps, snapshot.Fps, autoFps.CurrentStapm, minW: 8, maxW: 30);
-                    autoFps.CurrentStapm = next;
-                    await tdp.ApplyAsync(gaming with { StapmW = next }, stoppingToken);
+                    // Hard cool-down: hold a flat sustained ceiling. Skips auto-FPS this tick.
+                    await tdp.ApplyAsync(new TdpProfile(throttleW, throttleW, throttleW, (int)guardian.Config.TempCriticalC), stoppingToken);
+                }
+                else
+                {
+                    if (g.ClearThrottle)
+                    {
+                        var restore = ModeProfiles.For(mode.Active);
+                        if (restore is not null) await tdp.ApplyAsync(restore.Value, stoppingToken);
+                    }
+
+                    // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
+                    // Without a real FPS source Fps is 0, so this stays inert instead of ramping TDP to max.
+                    if (autoFps.Enabled && mode.Active == "gaming" && snapshot.Fps > 0)
+                    {
+                        var gaming = ModeProfiles.For("gaming") ?? new TdpProfile(25, 33, 28, 95);
+                        int next = fpsController.NextStapm(autoFps.TargetFps, snapshot.Fps, autoFps.CurrentStapm, minW: 8, maxW: 30);
+                        autoFps.CurrentStapm = next;
+                        await tdp.ApplyAsync(gaming with { StapmW = next }, stoppingToken);
+                    }
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
