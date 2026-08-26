@@ -9,12 +9,15 @@ using GpdForge.Profiles;
 using GpdForge.SystemControl;
 using GpdForge.Tdp;
 using GpdForge.Telemetry;
+using GpdForge.Tuner;
 
 namespace GpdForge;
 
 /// <summary>
 /// Orchestrates the hardware subsystems: reads telemetry, and (in gaming mode, once FPS telemetry is
-/// available) steers TDP toward a target FPS via the tested PID. Thaws any frozen processes on stop.
+/// available) steers TDP toward a target FPS via the tested PID — or, while an auto-tuner sweep is
+/// running, steps TDP through the sweep instead (the two never run the same tick; see below). Thaws
+/// any frozen processes on stop.
 /// </summary>
 public sealed class ForgeWorker(
     ILogger<ForgeWorker> logger,
@@ -28,7 +31,8 @@ public sealed class ForgeWorker(
     GuardianService guardian,
     TelemetryHistory history,
     ProfileApplier profileApplier,
-    PowerSourceState powerSource) : BackgroundService
+    PowerSourceState powerSource,
+    TunerState tuner) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
     // than re-applying every tick. Null until the first snapshot arrives.
@@ -79,9 +83,21 @@ public sealed class ForgeWorker(
                         if (restore is not null) await tdp.ApplyAsync(restore.Value, stoppingToken);
                     }
 
+                    // Auto-tuner sweep takes priority over auto-FPS while it's running (both steer
+                    // STAPM; running both at once would fight each other) — starting a sweep is a
+                    // deliberate, explicit action, so it wins until it finishes or is restarted.
+                    // Apply this tick's candidate STAPM (a flat profile — see
+                    // TunerState.CurrentProfile) then feed the resulting telemetry back in. Fps stays
+                    // 0 on this HX370 until PresentMon is wired, so Tick() honestly records nothing
+                    // useful rather than inventing a reading — see TunerState.Tick.
+                    if (tuner.Running)
+                    {
+                        await tdp.ApplyAsync(tuner.CurrentProfile(), stoppingToken);
+                        tuner.Tick(snapshot.Fps, snapshot.CpuTempC);
+                    }
                     // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
                     // Without a real FPS source Fps is 0, so this stays inert instead of ramping TDP to max.
-                    if (autoFps.Enabled && mode.Active == "gaming" && snapshot.Fps > 0)
+                    else if (autoFps.Enabled && mode.Active == "gaming" && snapshot.Fps > 0)
                     {
                         var gaming = ModeProfiles.For("gaming") ?? new TdpProfile(25, 33, 28, 95);
                         int next = fpsController.NextStapm(autoFps.TargetFps, snapshot.Fps, autoFps.CurrentStapm, minW: 8, maxW: 30);

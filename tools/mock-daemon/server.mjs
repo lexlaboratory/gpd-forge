@@ -64,6 +64,49 @@ const state = {
     blockers: ['GPDKeyboard.exe'],
     lastRestore: null,
   },
+  // Auto-tuner: mirrors core/Tuner/TunerState.cs's shape. Unlike the real daemon (whose telemetry
+  // has no FPS source yet — see the honesty note in docs/api.md), the mock simulates a small FPS
+  // curve so POST /tuner/start can return a populated, usable sweep for the UI/E2E to exercise.
+  tuner: {
+    running: false, goal: 'MaxFps', targetFps: null, minW: 8, maxW: 30, tempCapC: 95,
+    currentStapmW: 8, points: [], best: null, note: null,
+  },
+}
+
+const TUNE_GOALS = new Set(['MaxFps', 'BestEfficiency', 'HoldTarget'])
+
+/** Mirrors GpdForge.Tuner.AutoTuner.PickBest: same goals, same temp-cap filter, same tie-breaks. */
+function pickBestTune(points, goal, targetFps, tempCapC) {
+  const underCap = points.filter((p) => p.tempC <= tempCapC)
+  if (underCap.length === 0) return null
+
+  const efficiency = (p) => (p.stapmW > 0 ? p.fps / p.stapmW : 0)
+
+  if (goal === 'MaxFps') {
+    const b = [...underCap].sort((x, y) => y.fps - x.fps || x.stapmW - y.stapmW)[0]
+    return { stapmW: b.stapmW, fps: b.fps, tempC: b.tempC, note: `Highest FPS at or under the ${b.tempC}°C cap.` }
+  }
+  if (goal === 'BestEfficiency') {
+    const b = [...underCap].sort((x, y) => efficiency(y) - efficiency(x) || x.stapmW - y.stapmW || y.fps - x.fps)[0]
+    return { stapmW: b.stapmW, fps: b.fps, tempC: b.tempC, note: `Best FPS-per-watt (${efficiency(b).toFixed(2)} fps/W).` }
+  }
+  // HoldTarget
+  if (targetFps == null) return null
+  const candidates = underCap.filter((p) => p.fps >= targetFps)
+  if (candidates.length === 0) return null
+  const b = [...candidates].sort((x, y) => x.stapmW - y.stapmW || y.fps - x.fps)[0]
+  return { stapmW: b.stapmW, fps: b.fps, tempC: b.tempC, note: `Lowest watts holding ≥${targetFps} fps.` }
+}
+
+/** Canned sweep: a monotonic-ish fps/temp-vs-watts curve, jittered like telemetry() so repeated
+ * sweeps aren't bit-identical. Purely for exercising the UI/E2E — the real daemon sweeps real TDP. */
+function simulateTuneSweep(minW, maxW, tempCapC) {
+  const jitter = (base, amp) => Math.round((base + (Math.random() - 0.5) * amp) * 10) / 10
+  const points = []
+  for (let w = minW; w <= maxW; w += 2) {
+    points.push({ stapmW: w, fps: jitter(20 + w * 2.4, 3), tempC: jitter(55 + w * 1.3, 2) })
+  }
+  return points
 }
 
 function telemetry() {
@@ -423,6 +466,39 @@ const server = http.createServer(async (req, res) => {
     state.tdpVerified = true
     state.standby = { ...state.standby, lastRestore: restored }
     return send(res, 200, { restored })
+  }
+
+  // Update checker — canned "no update" (mirrors GET /update/check's honest-degrade shape; the mock
+  // never reaches the real network).
+  if (method === 'GET' && path === '/update/check') {
+    return send(res, 200, { current: VERSION.replace('-mock', ''), latest: null, updateAvailable: false, url: null })
+  }
+
+  // Auto-tuner — see docs/api.md and core/Tuner/TunerState.cs for the real contract. The mock runs
+  // the whole sweep synchronously and returns it already finished (`running:false`), so the UI/E2E
+  // don't need to poll a multi-second sweep.
+  if (method === 'GET' && path === '/tuner') return send(res, 200, state.tuner)
+  if (method === 'POST' && path === '/tuner/start') {
+    const body = await readBody(req)
+    if (!TUNE_GOALS.has(body?.goal))
+      return err(res, 400, 'bad_goal', 'goal must be one of MaxFps, BestEfficiency, HoldTarget')
+
+    const rawMin = Number.isFinite(body?.minW) ? body.minW : state.tuner.minW
+    const rawMax = Number.isFinite(body?.maxW) ? body.maxW : state.tuner.maxW
+    const minW = Math.max(5, Math.min(40, Math.min(rawMin, rawMax)))
+    const maxW = Math.max(5, Math.min(40, Math.max(rawMin, rawMax)))
+    const tempCapC = Number.isFinite(body?.tempCapC) ? body.tempCapC : state.tuner.tempCapC
+    const targetFps = Number.isFinite(body?.targetFps) && body.targetFps > 0 ? body.targetFps : null
+
+    const points = simulateTuneSweep(minW, maxW, tempCapC)
+    const best = pickBestTune(points, body.goal, targetFps, tempCapC)
+    state.tuner = {
+      running: false, goal: body.goal, targetFps, minW, maxW, tempCapC,
+      currentStapmW: points.length ? points[points.length - 1].stapmW : minW,
+      points, best,
+      note: points.length === 0 ? 'Sweep finished but recorded no usable points.' : null,
+    }
+    return send(res, 200, state.tuner)
   }
 
   return err(res, 404, 'not_found', `${method} ${path}`)

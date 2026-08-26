@@ -144,6 +144,33 @@ Suspend/resume background processes to free CPU/RAM during a game or a heavy inf
 - `POST { targetFps: number, enable: boolean } → { enabled, targetFps }` — a PID loop then steers sustained
   TDP to hold `targetFps` at the least power, active in gaming mode once FPS telemetry is available.
 
+### `GET /tuner`  ·  `POST /tuner/start`  (auto-tuner TDP sweep)
+- `GET → { running: boolean, goal: 'MaxFps'|'BestEfficiency'|'HoldTarget', targetFps: number|null,
+  minW: number, maxW: number, tempCapC: number, currentStapmW: number,
+  points: Array<{ stapmW: number, fps: number, tempC: number }>,
+  best: { stapmW: number, fps: number, tempC: number, note: string } | null, note: string | null }` —
+  current sweep state.
+- `POST { goal: string, targetFps?: number, minW?: number, maxW?: number, tempCapC?: number } →
+  (same shape as GET)` — (re)starts a sweep from `minW`, clearing any previously recorded points.
+  `400` if `goal` isn't one of `MaxFps` / `BestEfficiency` / `HoldTarget`. `minW`/`maxW` are clamped
+  into the safe TDP band (5–40 W) and normalized if swapped; omitted bounds keep the previous
+  sweep's values (defaults: 8–30 W, 95 °C cap).
+
+The worker steps the sweep once per tick: hold each candidate STAPM (a flat profile — no boost above
+it, so any FPS change is attributable to STAPM alone) for `TunerState.DwellTicks` ticks, then record
+one `(stapmW, fps, tempC)` point and move to the next candidate (`TunerState.StepW` watts higher),
+until `maxW` is covered. `best` is picked by `AutoTuner.PickBest` for the configured `goal`, among
+points at or under `tempCapC`: **MaxFps** — highest fps; **BestEfficiency** — highest fps-per-watt;
+**HoldTarget** — lowest watts whose fps still meets `targetFps`. Any of these can come back `null`
+(no points yet, everything over the temp cap, or the target unreachable) — that's an honest "nothing
+usable" rather than a guess.
+
+**Honesty note:** this HX370 has no FPS telemetry yet (`Fps` is 0 — PresentMon isn't wired). A sweep
+run today therefore records nothing useful (a non-positive `fps` reading is never recorded — see
+`TunerState.Tick`), so it finishes with `points: []`, `best: null`, and `note` explaining why. GPD
+Forge never fakes an FPS reading to produce a result. The mock daemon simulates a small FPS curve so
+the UI/E2E can exercise a populated sweep in dev without real hardware.
+
 ### `GET /guardian`  ·  `POST /guardian`  (thermal / battery guardian)
 - `GET → { enabled, autoThrottle, tempThrottleC, tempCriticalC, throttleFloorW, batteryLowPct,
   batteryCriticalPct, throttling: boolean, throttledToW: number | null, lastAlert: string | null,
@@ -205,6 +232,15 @@ clears once temps recover; on battery it raises low/critical alerts. Throttle ac
 - `GET → { lastDrainPctPerHour: number, topWakeReason: string, blockers: string[], lastRestore: string[] | null }`
 - `POST /standby/restore → { restored: string[] }` — re-applies TDP + fan + HID state (what the daemon does
   automatically on a resume event; this endpoint triggers it on demand).
+
+### `GET /update/check`  (update checker)
+`200 → { current: string, latest: string | null, updateAvailable: boolean, url: string | null }` —
+`current` is this build's version; `latest`/`url` come from GitHub's
+`repos/lexlaboratory/gpd-forge/releases/latest` (short-timeout HTTP, explicit User-Agent);
+`updateAvailable` is `GpdForge.Update.VersionCompare.IsNewer(latest, current)`. Degrades honestly to
+`{ latest: null, updateAvailable: false, url: null }` on any failure (offline, rate-limited,
+malformed response) — never throws, never guesses. Not gated behind `GPDFORGE_ENABLE_HARDWARE` (a
+read-only HTTP call, not a hardware/BIOS write).
 
 ## Error shape
 `{ error: { code: string, message: string } }` with the appropriate HTTP status.

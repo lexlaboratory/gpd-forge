@@ -17,6 +17,8 @@ using GpdForge.SystemControl;
 using GpdForge.Guardian;
 using GpdForge.History;
 using GpdForge.Import;
+using GpdForge.Tuner;
+using GpdForge.Update;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -213,6 +215,17 @@ builder.Services.AddSingleton<FpsTdpController>();
 builder.Services.AddSingleton<AutoFpsState>();
 builder.Services.AddSingleton<GuardianService>();
 
+// Auto-tuner: sweeps STAPM and picks the best point for a goal (max fps / best efficiency / hold a
+// target fps). ForgeWorker steps the sweep each tick; TunerState just holds config + recorded
+// points (see core/Tuner/). Not gated behind GPDFORGE_ENABLE_HARDWARE — it only ever applies TDP
+// through the same ITdpController every other feature here already uses.
+builder.Services.AddSingleton<TunerState>();
+
+// Update checker: read-only GitHub REST call with a short timeout, degrades to "no update" on any
+// failure (see core/Update/). Not a hardware/BIOS write, so NOT gated behind GPDFORGE_ENABLE_HARDWARE.
+builder.Services.AddSingleton<ILatestReleaseSource, GitHubReleaseSource>();
+builder.Services.AddSingleton<UpdateService>();
+
 // Migration + per-power-source config: reading MotionAssistant's saved profiles is read-only
 // filesystem access (same trust level as the WMI reads above), so it is NOT gated behind
 // GPDFORGE_ENABLE_HARDWARE.
@@ -241,6 +254,14 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Json(new { ok = true, version = "0.1.0", model = "GPD Win 4 (G1618-04)" }));
+
+// Update checker: compares the running version against the latest GitHub release. Never throws — any
+// failure (offline, rate-limited, malformed response) degrades honestly to updateAvailable:false.
+app.MapGet("/update/check", async (UpdateService updates, CancellationToken ct) =>
+{
+    var r = await updates.CheckAsync(ct);
+    return Results.Json(new { current = r.Current, latest = r.Latest, updateAvailable = r.UpdateAvailable, url = r.Url });
+});
 
 app.MapGet("/telemetry", async (ITelemetryService t, CancellationToken ct) => Results.Json(await t.ReadAsync(ct)));
 
@@ -458,6 +479,30 @@ app.MapPost("/auto-fps", (AutoFpsRequest req, AutoFpsState s) =>
     return Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps });
 });
 
+// Auto-tuner: sweeps STAPM and picks the best point for a goal (ForgeWorker steps the sweep each
+// tick — see TunerState.Tick). Honesty gate: on hardware without FPS telemetry wired yet (this
+// HX370, today), a sweep runs but records nothing usable, so `best` stays null with a `note`
+// explaining why rather than a faked reading — see core/Tuner/TunerState.cs.
+app.MapGet("/tuner", (TunerState tuner) => Results.Json(new
+{
+    running = tuner.Running, goal = tuner.Goal.ToString(), targetFps = tuner.TargetFps,
+    minW = tuner.MinW, maxW = tuner.MaxW, tempCapC = tuner.TempCapC, currentStapmW = tuner.CurrentStapmW,
+    points = tuner.Points, best = tuner.Best, note = tuner.Note,
+}));
+app.MapPost("/tuner/start", (TunerStartRequest req, TunerState tuner) =>
+{
+    if (!Enum.TryParse<TuneGoal>(req.Goal, ignoreCase: true, out var goal))
+        return Results.BadRequest(new { error = new { code = "bad_goal", message = "goal must be one of MaxFps, BestEfficiency, HoldTarget" } });
+
+    tuner.Start(goal, req.TargetFps, req.MinW, req.MaxW, req.TempCapC);
+    return Results.Json(new
+    {
+        running = tuner.Running, goal = tuner.Goal.ToString(), targetFps = tuner.TargetFps,
+        minW = tuner.MinW, maxW = tuner.MaxW, tempCapC = tuner.TempCapC, currentStapmW = tuner.CurrentStapmW,
+        points = tuner.Points, best = tuner.Best, note = tuner.Note,
+    });
+});
+
 // Thermal/battery guardian: auto-throttles TDP on overheat and surfaces the latest alert.
 app.MapGet("/guardian", (GuardianService g) => Results.Json(new
 {
@@ -590,6 +635,9 @@ namespace GpdForge.Api
     public sealed record AutoFpsRequest(double TargetFps, bool Enable);
     public sealed class AutoFpsState { public bool Enabled { get; set; } public double TargetFps { get; set; } = 60; public int CurrentStapm { get; set; } = 25; }
     public sealed record GuardianRequest(bool? Enabled, bool? AutoThrottle, double? TempThrottleC, double? TempCriticalC, int? ThrottleFloorW, int? BatteryLowPct, int? BatteryCriticalPct);
+
+    // --- Auto-tuner (POST /tuner/start body) — see core/Tuner/TunerState.cs for the rest. ---
+    public sealed record TunerStartRequest(string? Goal, int? TargetFps, int? MinW, int? MaxW, int? TempCapC);
 
     // --- Migration + config: per-power-source auto mode-switch + settings backup/restore ---
     /// <summary>Mutable holder for the per-power-source config, alongside FanState/AutoFpsState.</summary>

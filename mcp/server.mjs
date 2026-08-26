@@ -146,6 +146,120 @@ const tools = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     call: () => api('/standby/restore', 'POST'),
   },
+  {
+    name: 'get_history',
+    description: 'Recorded telemetry samples from the last N minutes (in-memory ring buffer, ~1/s). Defaults to 5 minutes, clamped to 1..60.',
+    inputSchema: { type: 'object', properties: { minutes: { type: 'number', minimum: 1, maximum: 60 } }, additionalProperties: false },
+    call: (a) => api(`/history${num(a?.minutes) ? `?minutes=${a.minutes}` : ''}`),
+  },
+  {
+    name: 'get_guardian',
+    description: 'Thermal/battery guardian config + live state: thresholds, whether it is currently throttling, and the last alert.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/guardian'),
+  },
+  {
+    name: 'set_guardian',
+    description: 'Update the thermal/battery guardian config (partial — only sent fields change): enabled, autoThrottle, tempThrottleC, tempCriticalC, throttleFloorW, batteryLowPct, batteryCriticalPct. WRITES to the device (changes auto-throttle behavior).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        autoThrottle: { type: 'boolean' },
+        tempThrottleC: { type: 'number' },
+        tempCriticalC: { type: 'number' },
+        throttleFloorW: { type: 'number' },
+        batteryLowPct: { type: 'number' },
+        batteryCriticalPct: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    call: (a) => api('/guardian', 'POST', a || {}),
+  },
+  {
+    name: 'get_ai',
+    description: 'Agents/AI mode state: anti-standby (keep-awake) status + holder count, the sustained flat power profile, and the iGPU VRAM/UMA advisory.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/ai'),
+  },
+  {
+    name: 'set_anti_standby',
+    description: 'Manually hold (or release) the keep-Windows-awake request, independent of any running job. Idempotent per edge (re-posting the same value is a no-op). WRITES to the device — a real, unprivileged, fully reversible Win32 power request (SetThreadExecutionState), not a hardware/BIOS write.',
+    inputSchema: { type: 'object', properties: { enable: { type: 'boolean' } }, required: ['enable'], additionalProperties: false },
+    call: (a) => api('/ai/anti-standby', 'POST', { enable: !!a?.enable }),
+  },
+  {
+    name: 'import_motionassistant',
+    description: 'Read-only: parses every MotionAssistant .ini profile found on disk and returns them (name + stapmW/fastW/slowW/tctlC). Does not apply anything — use set_mode or the profile endpoints to apply one.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/import/motionassistant', 'POST'),
+  },
+  {
+    name: 'get_power_source',
+    description: 'Per-power-source auto mode-switch config: whether it is enabled, and which mode to switch to on battery vs. AC.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/power-source'),
+  },
+  {
+    name: 'set_power_source',
+    description: 'Update the per-power-source auto mode-switch config (partial — only sent fields change). When enabled, the daemon switches the active mode the instant AC connects or disconnects. WRITES to the device.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        onBatteryMode: { type: 'string', enum: MODES },
+        onAcMode: { type: 'string', enum: MODES },
+      },
+      additionalProperties: false,
+    },
+    call: (a) => api('/power-source', 'POST', a || {}),
+  },
+  {
+    name: 'export_settings',
+    description: 'Full settings snapshot — per-mode TDP presets, guardian config, fan mode, brightness, power-source config, auto-FPS — the same JSON the UI\'s "Export settings" button downloads.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/settings/export'),
+  },
+  {
+    name: 'get_display',
+    description: 'Display refresh-rate + night-mode (gamma warmth) state in one call: current/supported Hz, and whether night mode is on with its warmth level.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: async () => {
+      const [refresh, night] = await Promise.all([api('/display/refresh'), api('/display/night')])
+      return { refresh, night }
+    },
+  },
+  {
+    name: 'start_tuner',
+    description: 'Start an auto-tuner TDP sweep: steps STAPM from minW to maxW, dwells at each step, and records (stapmW, fps, tempC) once FPS telemetry is actually available. goal picks how the best point is chosen: MaxFps, BestEfficiency (highest fps-per-watt), or HoldTarget (lowest watts still holding >= targetFps), among points at or under tempCapC. Honesty note: on hardware without FPS telemetry wired (e.g. this HX370 today — PresentMon not yet integrated), the sweep runs but records nothing useful, so best comes back null with a note rather than a faked reading. WRITES to the device (steers real TDP through the same closed loop set_tdp uses).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string', enum: ['MaxFps', 'BestEfficiency', 'HoldTarget'] },
+        targetFps: { type: 'number', minimum: 20, maximum: 240 },
+        minW: { type: 'number', minimum: 5, maximum: 40 },
+        maxW: { type: 'number', minimum: 5, maximum: 40 },
+        tempCapC: { type: 'number', minimum: 60, maximum: 100 },
+      },
+      required: ['goal'], additionalProperties: false,
+    },
+    call: (a) => {
+      if (!['MaxFps', 'BestEfficiency', 'HoldTarget'].includes(a?.goal)) throw new Error('goal must be one of MaxFps, BestEfficiency, HoldTarget')
+      return api('/tuner/start', 'POST', a)
+    },
+  },
+  {
+    name: 'get_tuner',
+    description: 'Current auto-tuner sweep state: whether it is running, the goal, the recorded sweep points, and the best pick (null if nothing usable has been recorded yet).',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/tuner'),
+  },
+  {
+    name: 'check_update',
+    description: 'Checks GitHub for the latest gpd-forge release and compares it to the running version. Degrades to updateAvailable:false on any network failure (offline, rate-limited) — never throws.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/update/check'),
+  },
 ]
 const toolMap = new Map(tools.map((t) => [t.name, t]))
 

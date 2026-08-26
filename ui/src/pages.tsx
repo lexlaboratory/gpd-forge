@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type {
   Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig,
-  RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
+  RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo, TuneGoal, TunerInfo, UpdateCheck,
 } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
@@ -10,6 +10,7 @@ import {
   getAi, setAntiStandby, getHistory, historyExportUrl, importMotionAssistant,
   getPowerSource, setPowerSource, settingsExportUrl, importSettings, type TdpResult,
   getRefreshRate, setRefreshRate, getNightMode, setNightMode, getTabletMode, getKeyboardBacklight,
+  getTuner, startTuner, checkUpdate,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -132,6 +133,68 @@ function AiCard() {
   )
 }
 
+// --- Auto-tuner (TDP sweep) -----------------------------------------------------
+const TUNE_GOALS: { id: TuneGoal; label: string }[] = [
+  { id: 'MaxFps', label: 'Max FPS' },
+  { id: 'BestEfficiency', label: 'Best efficiency' },
+  { id: 'HoldTarget', label: 'Hold target FPS' },
+]
+
+function TunerCard() {
+  const toast = useToast()
+  const [goal, setGoal] = useState<TuneGoal>('MaxFps')
+  const [targetFps, setTargetFps] = useState(60)
+  const [info, setInfo] = useState<TunerInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => { getTuner().then(setInfo).catch(() => {}) }, [])
+
+  const start = async () => {
+    setBusy(true)
+    const r = await startTuner({ goal, targetFps: goal === 'HoldTarget' ? targetFps : undefined }).catch(() => null)
+    setBusy(false)
+    if (!r) { toast.push({ kind: 'error', message: 'Could not start the tuner sweep' }); return }
+    setInfo(r)
+    toast.push({
+      kind: r.best ? 'success' : 'info',
+      message: r.best ? `Best: ${r.best.stapmW} W → ${r.best.fps} fps` : (r.note ?? 'Sweep finished with no usable points'),
+    })
+  }
+
+  const status = !info
+    ? 'Loading…'
+    : info.running
+      ? `Sweeping… ${info.currentStapmW} W now.`
+      : info.best
+        ? `Best: ${info.best.stapmW} W → ${info.best.fps} fps @ ${info.best.tempC}°C — ${info.best.note}`
+        : (info.note ?? 'No result yet — start a sweep.')
+
+  return (
+    <Card title="Auto-tuner" hint="Sweeps TDP and picks the best point for your goal">
+      <div className="chips" data-testid="tuner-goals">
+        {TUNE_GOALS.map((g) => (
+          <button key={g.id} className={`chip-btn ${goal === g.id ? 'on' : ''}`} onClick={() => setGoal(g.id)} data-testid={`tuner-goal-${g.id}`}>{g.label}</button>
+        ))}
+      </div>
+      {goal === 'HoldTarget' && (
+        <Slider label="Target FPS" testid="tuner-target" value={targetFps} min={30} max={144} unit=" fps" onChange={(v) => setTargetFps(v)} />
+      )}
+      <div className="row-end">
+        <button className="btn btn-accent" data-testid="tuner-start" onClick={start} disabled={busy}>{busy ? 'Sweeping…' : 'Start sweep'}</button>
+      </div>
+      <p className="muted" data-testid="tuner-status">{status}</p>
+      {info?.best && (
+        <div className="stats" data-testid="tuner-best">
+          <Tile label="Best STAPM" value={`${info.best.stapmW}`} unit=" W" />
+          <Tile label="FPS" value={`${info.best.fps}`} />
+          <Tile label="Temp" value={`${info.best.tempC}`} unit="°C" />
+        </div>
+      )}
+      <p className="muted">Honesty note: this HX370 has no FPS telemetry yet (PresentMon isn't wired), so a real sweep records nothing useful and honestly reports no result rather than a faked one. The mock daemon simulates FPS so this card is fully exercisable in dev/E2E.</p>
+    </Card>
+  )
+}
+
 // --- Power (editable per-mode TDP presets) ------------------------------------
 export function PowerPage() {
   const [presets, setPresets] = useState<Record<string, Preset>>({})
@@ -181,6 +244,7 @@ export function PowerPage() {
           onChange={(v) => setAfps((s) => ({ ...s, targetFps: v }))} onCommit={commitFps} />
         <p className="muted">Steers TDP with a PID to keep your FPS at target. Activates in gaming mode once FPS telemetry is available (PresentMon).</p>
       </Card>
+      <TunerCard />
       <Card title="GPU" hint={<Soon />}>
         <p className="muted">iGPU clock cap and UMA/VRAM assignment (for the Agents/AI mode) — via the broker, gated behind hardware approval.</p>
       </Card>
@@ -596,6 +660,19 @@ function GuardianCard() {
   )
 }
 
+// Update note — only rendered once an update is actually confirmed available.
+function UpdateNote() {
+  const [info, setInfo] = useState<UpdateCheck | null>(null)
+  useEffect(() => { checkUpdate().then(setInfo).catch(() => {}) }, [])
+  if (!info?.updateAvailable) return null
+  return (
+    <p className="muted" data-testid="update-available">
+      Update available → {info.latest}
+      {info.url && <> · <a href={info.url} target="_blank" rel="noreferrer">Release notes</a></>}
+    </p>
+  )
+}
+
 export function SettingsPage({ auto, setAuto, theme, setTheme }: {
   auto: boolean; setAuto: (v: boolean) => void; theme: 'dark' | 'light'; setTheme: (t: 'dark' | 'light') => void
 }) {
@@ -617,6 +694,7 @@ export function SettingsPage({ auto, setAuto, theme, setTheme }: {
       <BackupRestoreCard />
       <Card title="About">
         <p className="muted">GPD Forge — the definitive open-source tuning tool for GPD handhelds. GPL-3.0 · lexlaboratory · github.com/lexlaboratory/gpd-forge</p>
+        <UpdateNote />
       </Card>
     </>
   )

@@ -8,6 +8,7 @@ import type {
   Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
   HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
+  TuneGoal, TunerInfo, UpdateCheck,
 } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
@@ -100,3 +101,11 @@ export const setPowerSource = (patch: Partial<PowerSourceConfig>) => json<PowerS
 export const exportSettings = () => json<SettingsExport>('/settings/export')
 export const importSettings = (blob: unknown) => json<{ applied: string[] }>('/settings/import', post(blob))
 export const settingsExportUrl = () => `${BASE}/settings/export`
+
+// --- auto-tuner (TDP sweep) ---
+export interface StartTunerRequest { goal: TuneGoal; targetFps?: number; minW?: number; maxW?: number; tempCapC?: number }
+export const getTuner = () => json<TunerInfo>('/tuner')
+export const startTuner = (req: StartTunerRequest) => json<TunerInfo>('/tuner/start', post(req))
+
+// --- update checker ---
+export const checkUpdate = () => json<UpdateCheck>('/update/check')

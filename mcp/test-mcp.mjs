@@ -43,7 +43,7 @@ try {
 
   const list = await req(2, 'tools/list')
   const names = (list.result?.tools || []).map((t) => t.name)
-  check('tools/list has >= 12 tools', names.length >= 12, `(${names.length}: ${names.slice(0, 6).join(',')}…)`)
+  check('tools/list has >= 28 tools', names.length >= 28, `(${names.length}: ${names.slice(0, 6).join(',')}…)`)
   check('every tool has an inputSchema', (list.result?.tools || []).every((t) => t.inputSchema?.type === 'object'))
 
   const tele = await callTool(3, 'get_telemetry')
@@ -61,7 +61,10 @@ try {
   const job = await callTool(7, 'submit_job', { cmd: 'echo hi', constraints: { requireAC: true, maxTempC: 80 } })
   check('submit_job returns an id+status', !job.isError && !!job.data?.id && !!job.data?.status, job.text.slice(0, 60))
 
-  const unknown = await req(8, 'tools/call', { name: 'does_not_exist', arguments: {} })
+  const tuner = await callTool(8, 'get_tuner')
+  check('get_tuner returns running + points', !tuner.isError && typeof tuner.data?.running === 'boolean' && Array.isArray(tuner.data?.points), tuner.text.slice(0, 60))
+
+  const unknown = await req(9, 'tools/call', { name: 'does_not_exist', arguments: {} })
   check('unknown tool -> JSON-RPC error', !!unknown.error)
 } catch (e) {
   check(`harness completed without throwing`, false, e.message)

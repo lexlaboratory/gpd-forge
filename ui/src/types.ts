@@ -66,6 +66,26 @@ export interface SettingsExport {
   autoFps: AutoFps
 }
 
+// Auto-tuner (mirror of core/Tuner/AutoTuner.cs + TunerState.cs).
+export type TuneGoal = 'MaxFps' | 'BestEfficiency' | 'HoldTarget'
+export interface TunePoint { stapmW: number; fps: number; tempC: number }
+export interface TuneResult { stapmW: number; fps: number; tempC: number; note: string }
+export interface TunerInfo {
+  running: boolean
+  goal: TuneGoal
+  targetFps: number | null
+  minW: number
+  maxW: number
+  tempCapC: number
+  currentStapmW: number
+  points: TunePoint[]
+  best: TuneResult | null
+  note: string | null
+}
+
+// Update checker (mirror of GET /update/check).
+export interface UpdateCheck { current: string; latest: string | null; updateAvailable: boolean; url: string | null }
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'blocked'
 
 export interface Job {
