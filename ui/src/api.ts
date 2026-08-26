@@ -4,7 +4,7 @@
 // (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. Calls throw on failure;
 // callers decide how to degrade (the dashboard shows "Offline" and keeps the last values).
 
-import type { Telemetry, ModeId, Job, Standby, Preset } from './types'
+import type { Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
 
@@ -48,3 +48,15 @@ export const setBrightness = async (level: number) =>
 // --- fan mode preference ---
 export const getFan = async () => (await json<{ mode: string }>('/fan')).mode
 export const setFan = async (mode: string) => (await json<{ mode: string }>('/fan', post({ mode }))).mode
+
+// --- battery budget ---
+export const getBudget = () => json<BatteryBudget>('/battery/budget')
+
+// --- freezer ---
+export const getFrozen = async () => (await json<{ frozen: string[] }>('/freezer')).frozen
+export const freeze = (name: string) => json<{ name: string; suspended: number; frozen: string[] }>('/freezer/freeze', post({ name }))
+export const thaw = (name: string) => json<{ name: string; resumed: number; frozen: string[] }>('/freezer/thaw', post({ name }))
+
+// --- auto-TDP to FPS ---
+export const getAutoFps = () => json<AutoFps>('/auto-fps')
+export const setAutoFps = (targetFps: number, enable: boolean) => json<AutoFps>('/auto-fps', post({ targetFps, enable }))

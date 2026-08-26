@@ -1,8 +1,13 @@
 // GPD Forge UI — pages. GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
-import type { Mode, ModeId, Telemetry, Preset } from './types'
-import { setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan, type TdpResult } from './api'
+import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps } from './types'
+import {
+  setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
+  getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, type TdpResult,
+} from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
+import { Sparkline, useHistory } from './Chart'
+import { useToast } from './Toast'
 import { JobsPanel } from './JobsPanel'
 import { StandbyPanel } from './StandbyPanel'
 
@@ -69,6 +74,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
 
       {active === 'ai' && <JobsPanel />}
       {active === 'standby' && <StandbyPanel />}
+      <BatteryBudgetCard />
     </>
   )
 }
@@ -79,12 +85,19 @@ export function PowerPage() {
   const [mode, setMode] = useState<string>('gaming')
   const [draft, setDraft] = useState<Preset | null>(null)
   const [saved, setSaved] = useState(false)
+  const [afps, setAfps] = useState<AutoFps>({ enabled: false, targetFps: 60 })
+  const toast = useToast()
 
-  useEffect(() => { getProfiles().then((p) => { setPresets(p); setDraft(p[mode] ?? null) }).catch(() => {}) }, [])
+  useEffect(() => {
+    getProfiles().then((p) => { setPresets(p); setDraft(p[mode] ?? null) }).catch(() => {})
+    getAutoFps().then(setAfps).catch(() => {})
+  }, [])
   useEffect(() => { setDraft(presets[mode] ?? null); setSaved(false) }, [mode, presets])
 
   const edit = (k: keyof Preset, v: number) => draft && setDraft({ ...draft, [k]: v })
-  const apply = () => { if (draft) setProfile(mode, draft).then(() => setSaved(true)).catch(() => {}) }
+  const apply = () => { if (draft) setProfile(mode, draft).then(() => { setSaved(true); toast.push({ kind: 'success', message: `${mode} preset saved` }) }).catch(() => {}) }
+  const toggleFps = () => { const en = !afps.enabled; setAfps((s) => ({ ...s, enabled: en })); setAutoFps(afps.targetFps, en).then(setAfps).catch(() => {}) }
+  const commitFps = (v: number) => { void setAutoFps(v, afps.enabled).then(setAfps).catch(() => {}) }
 
   return (
     <>
@@ -106,6 +119,14 @@ export function PowerPage() {
           {saved && <span className="badge badge-verified" data-testid="preset-saved">saved</span>}
           <button className="btn btn-accent" data-testid="preset-apply" onClick={apply} disabled={!draft}>Save preset</button>
         </div>
+      </Card>
+      <Card title="Auto-TDP to FPS" hint="Gaming — hold a target FPS at the least power">
+        <div className="row">
+          <Toggle on={afps.enabled} onClick={toggleFps} label={afps.enabled ? 'Enabled' : 'Disabled'} testid="autofps-toggle" />
+        </div>
+        <Slider label="Target FPS" testid="autofps-target" value={afps.targetFps} min={30} max={120} unit=" fps"
+          onChange={(v) => setAfps((s) => ({ ...s, targetFps: v }))} onCommit={commitFps} />
+        <p className="muted">Steers TDP with a PID to keep your FPS at target. Activates in gaming mode once FPS telemetry is available (PresentMon).</p>
       </Card>
       <Card title="GPU" hint={<Soon />}>
         <p className="muted">iGPU clock cap and UMA/VRAM assignment (for the Agents/AI mode) — via the broker, gated behind hardware approval.</p>
@@ -197,31 +218,83 @@ export function ProfilesPage() {
 
 // --- Monitor ------------------------------------------------------------------
 export function MonitorPage({ tele }: { tele: Telemetry | null }) {
+  const cpu = useHistory(tele?.cpuTempC ?? NaN)
+  const watt = useHistory(tele?.packageW ?? NaN)
+  const fps = useHistory(tele?.fps ?? NaN)
   return (
-    <Card title="On-screen display" hint={<Soon>RTSS single-owner</Soon>}>
-      <div className="stats">
-        <Tile label="CPU" value={tele ? `${Math.round(tele.cpuTempC)}` : '--'} unit="°C" />
-        <Tile label="Power" value={tele ? `${Math.round(tele.packageW)}` : '--'} unit="W" />
-        <Tile label="FPS" value={tele ? `${Math.round(tele.fps)}` : '--'} />
-        <Tile label="Clock" value={tele ? `${tele.cpuClockMhz}` : '--'} unit="MHz" />
-      </div>
-      <p className="muted">Overlay via RTSS shared-memory (and an Xbox Game Bar widget) with frame limiter and 1%-low tracking — arbitrated so it never fights MSI Afterburner / GPD Tool.</p>
-    </Card>
+    <>
+      <Card title="Live telemetry" hint="Last 60 seconds">
+        <div className="charts" data-testid="charts">
+          <Sparkline data={cpu} label="CPU" unit="°C" color="var(--accent)" testid="chart-cpu" />
+          <Sparkline data={watt} label="Power" unit="W" color="var(--accent-2)" testid="chart-watt" />
+          <Sparkline data={fps} label="FPS" color="var(--good)" testid="chart-fps" />
+        </div>
+      </Card>
+      <Card title="On-screen display" hint={<Soon>RTSS single-owner</Soon>}>
+        <p className="muted">Overlay via RTSS shared-memory (and an Xbox Game Bar widget) with frame limiter and 1%-low tracking — arbitrated so it never fights MSI Afterburner / GPD Tool.</p>
+      </Card>
+    </>
   )
 }
 
 // --- System -------------------------------------------------------------------
+function FreezerCard() {
+  const toast = useToast()
+  const [name, setName] = useState('')
+  const [frozen, setFrozen] = useState<string[]>([])
+  useEffect(() => { getFrozen().then(setFrozen).catch(() => {}) }, [])
+  const doFreeze = async () => {
+    if (!name.trim()) return
+    const r = await freeze(name.trim()).catch(() => null)
+    if (r) {
+      setFrozen(r.frozen)
+      toast.push({ kind: r.suspended > 0 ? 'success' : 'warn', message: r.suspended > 0 ? `Froze ${r.suspended} process(es): ${name}` : `No process "${name}" (or protected)` })
+    }
+  }
+  const doThaw = async (n: string) => { const r = await thaw(n).catch(() => null); if (r) { setFrozen(r.frozen); toast.push({ kind: 'info', message: `Thawed ${n}` }) } }
+  return (
+    <Card title="Freezer" hint="Suspend background apps to free CPU/RAM">
+      <div className="job-form">
+        <input className="job-input" data-testid="freezer-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="process name (e.g. chrome)" aria-label="process to freeze" />
+        <button className="btn" data-testid="freezer-freeze" onClick={doFreeze}>Freeze</button>
+      </div>
+      <ul className="job-list" data-testid="frozen-list">
+        {frozen.length === 0 && <li className="job-empty">Nothing frozen.</li>}
+        {frozen.map((n) => (
+          <li key={n} className="job-row"><span className="job-cmd-text">{n}</span><button className="chip-btn" onClick={() => doThaw(n)}>Thaw</button></li>
+        ))}
+      </ul>
+      <p className="muted">Critical system processes are protected and never suspended. Affecting other apps needs the elevated service.</p>
+    </Card>
+  )
+}
+
 export function SystemPage({ tele }: { tele: Telemetry | null }) {
   return (
     <>
       <Card title="Power controller" hint="GPD Forge yields while another controller runs.">
         <p className="muted">GPD Forge takes over TDP only when it is the sole owner. Use the installer's <code>-Substitute</code> to stop + disable MotionAssistant / GPD Tool. TDP now: <b>{tele?.tdpVerified ? 'verified' : '—'}</b>.</p>
       </Card>
+      <FreezerCard />
       <StandbyPanel />
-      <Card title="Freezer" hint={<Soon />}>
-        <p className="muted">Suspend background processes to free CPU/RAM during a game or a heavy inference run.</p>
-      </Card>
     </>
+  )
+}
+
+function BatteryBudgetCard() {
+  const [b, setB] = useState<BatteryBudget | null>(null)
+  useEffect(() => {
+    const t = () => getBudget().then(setB).catch(() => {})
+    t(); const id = setInterval(t, 5000); return () => clearInterval(id)
+  }, [])
+  if (!b || b.minutesRemaining == null) return null
+  return (
+    <Card title="Battery budget" hint={`${b.dischargeW.toFixed(1)} W now`}>
+      <div className="battery-budget" data-testid="battery-budget">
+        <div className="bb-main">{b.minutesRemaining}<span className="tile-unit"> min left</span></div>
+        <div className="bb-proj">{b.projections.map((p) => <span key={p.watts} className="bb-chip">{p.watts}W → {p.minutes}m</span>)}</div>
+      </div>
+    </Card>
   )
 }
 

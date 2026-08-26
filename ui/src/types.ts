@@ -24,6 +24,8 @@ export interface Telemetry {
 }
 
 export interface Preset { stapmW: number; fastW: number; slowW: number; tctlC: number }
+export interface BatteryBudget { minutesRemaining: number | null; remainingWh: number; dischargeW: number; projections: { watts: number; minutes: number }[] }
+export interface AutoFps { enabled: boolean; targetFps: number }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'blocked'
 

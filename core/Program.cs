@@ -12,6 +12,7 @@ using GpdForge.Broker;
 using GpdForge.Profiles;
 using GpdForge.Standby;
 using GpdForge.Display;
+using GpdForge.SystemControl;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -174,6 +175,12 @@ builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDe
 builder.Services.AddSingleton<ProfileApplier>();
 builder.Services.AddSingleton<DisplayService>();
 builder.Services.AddSingleton<FanState>();
+builder.Services.AddSingleton<BatteryService>();
+builder.Services.AddSingleton<IProcessSuspender, NtProcessSuspender>();
+builder.Services.AddSingleton<FreezerService>(sp =>
+    new FreezerService(sp.GetRequiredService<IProcessSuspender>(), lister: null, logger: sp.GetService<ILogger<FreezerService>>()));
+builder.Services.AddSingleton<FpsTdpController>();
+builder.Services.AddSingleton<AutoFpsState>();
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
@@ -266,6 +273,29 @@ app.MapPost("/display/brightness", (BrightnessRequest r, DisplayService d) =>
     return Results.Json(new { brightness = d.GetBrightness() ?? r.Level });
 });
 
+// Battery budget (minutes left + projections at other TDPs).
+app.MapGet("/battery/budget", (BatteryService b) => Results.Json(b.GetBudget()));
+
+// Freezer: suspend/resume background processes (critical processes are protected).
+app.MapGet("/freezer", (FreezerService f) => Results.Json(new { frozen = f.Frozen }));
+app.MapPost("/freezer/freeze", (FreezerRequest req, FreezerService f) =>
+    string.IsNullOrWhiteSpace(req.Name)
+        ? Results.BadRequest(new { error = new { code = "bad_name", message = "name required" } })
+        : Results.Json(new { name = req.Name, suspended = f.FreezeByName(req.Name!), frozen = f.Frozen }));
+app.MapPost("/freezer/thaw", (FreezerRequest req, FreezerService f) =>
+    string.IsNullOrWhiteSpace(req.Name)
+        ? Results.BadRequest(new { error = new { code = "bad_name", message = "name required" } })
+        : Results.Json(new { name = req.Name, resumed = f.Thaw(req.Name!), frozen = f.Frozen }));
+
+// Auto-TDP to target FPS (steers TDP in gaming mode once FPS telemetry is available).
+app.MapGet("/auto-fps", (AutoFpsState s) => Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps }));
+app.MapPost("/auto-fps", (AutoFpsRequest req, AutoFpsState s) =>
+{
+    s.Enabled = req.Enable;
+    if (req.TargetFps > 0) s.TargetFps = req.TargetFps;
+    return Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps });
+});
+
 // SPA fallback: any non-API path returns index.html (no-op if wwwroot/index.html is absent).
 app.MapFallbackToFile("index.html");
 
@@ -282,6 +312,9 @@ namespace GpdForge.Api
     public sealed record BrightnessRequest(int Level);
     public sealed class FanState { public string Mode { get; set; } = "Auto"; }
     public sealed record FanRequest(string? Mode);
+    public sealed record FreezerRequest(string? Name);
+    public sealed record AutoFpsRequest(double TargetFps, bool Enable);
+    public sealed class AutoFpsState { public bool Enabled { get; set; } public double TargetFps { get; set; } = 60; public int CurrentStapm { get; set; } = 25; }
 
     public sealed record JobConstraints(bool? RequireAC, int? MaxTempC, string? Window);
     public sealed record JobRequest(string? Cmd, JobConstraints? Constraints);

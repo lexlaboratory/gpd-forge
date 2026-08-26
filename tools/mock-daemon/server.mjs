@@ -36,6 +36,8 @@ const state = {
   jobSeq: 0,
   brightness: 70,
   fanMode: 'Auto',
+  frozen: [],
+  autoFps: { enabled: false, targetFps: 60 },
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
@@ -172,6 +174,32 @@ const server = http.createServer(async (req, res) => {
     if (body?.mode) state.fanMode = body.mode
     return send(res, 200, { mode: state.fanMode })
   }
+  if (method === 'GET' && path === '/battery/budget') return send(res, 200, {
+    minutesRemaining: 78, remainingWh: 40.2, dischargeW: 18.4,
+    projections: [{ watts: 8, minutes: 301 }, { watts: 12, minutes: 201 }, { watts: 15, minutes: 160 }, { watts: 20, minutes: 120 }, { watts: 25, minutes: 96 }],
+  })
+
+  if (method === 'GET' && path === '/freezer') return send(res, 200, { frozen: state.frozen })
+  if (method === 'POST' && path === '/freezer/freeze') {
+    const body = await readBody(req)
+    if (!body?.name) return err(res, 400, 'bad_name', 'name required')
+    if (!state.frozen.includes(body.name)) state.frozen.push(body.name)
+    return send(res, 200, { name: body.name, suspended: 1, frozen: state.frozen })
+  }
+  if (method === 'POST' && path === '/freezer/thaw') {
+    const body = await readBody(req)
+    if (!body?.name) return err(res, 400, 'bad_name', 'name required')
+    state.frozen = state.frozen.filter((n) => n !== body.name)
+    return send(res, 200, { name: body.name, resumed: 1, frozen: state.frozen })
+  }
+
+  if (method === 'GET' && path === '/auto-fps') return send(res, 200, state.autoFps)
+  if (method === 'POST' && path === '/auto-fps') {
+    const body = await readBody(req)
+    state.autoFps = { enabled: !!body?.enable, targetFps: body?.targetFps > 0 ? body.targetFps : state.autoFps.targetFps }
+    return send(res, 200, state.autoFps)
+  }
+
   if (method === 'GET' && path === '/display') return send(res, 200, { brightness: state.brightness })
   if (method === 'POST' && path === '/display/brightness') {
     const body = await readBody(req)
