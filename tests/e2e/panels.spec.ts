@@ -18,7 +18,9 @@ test.describe('Mode panels', () => {
     await page.getByTestId('job-cmd').fill('llama-70b eval')
     await page.getByTestId('job-submit').click()
 
-    const row = page.getByTestId('job-row').first()
+    // Scoped by its own command text, not .first() — the shared mock daemon can already hold
+    // jobs created by other AI-mode specs (e.g. ai.spec.ts) that ran earlier in the suite.
+    const row = page.getByTestId('job-row').filter({ hasText: 'llama-70b eval' })
     await expect(row).toBeVisible()
     await expect(row.getByTestId('job-status')).toHaveText('blocked')
   })

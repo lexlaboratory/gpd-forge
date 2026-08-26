@@ -98,6 +98,29 @@ clears once temps recover; on battery it raises low/critical alerts. Throttle ac
 - `GET /jobs/:id → { id, status, cmd, startedAt?, finishedAt?, log: string[] }`
 - `GET /jobs → Array<...>`
 
+### `GET /ai`  ·  `POST /ai/anti-standby`  ·  `POST /ai/vram`  (Agents / AI mode — anti-standby, sustained profile, VRAM/UMA)
+- `GET /ai → { antiStandby: { active: boolean, holders: number, manual: boolean }, sustainedProfile:
+  { stapmW, fastW, slowW, tctlC }, vram: { reportedMb: number, adapterName: string | null,
+  available: boolean, advisory: string } }`
+  - `antiStandby` — whether GPD Forge is currently holding Windows awake (`SetThreadExecutionState`,
+    `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`) and how many concurrent holders there are. Each running job
+    from `POST /jobs` and the manual toggle below each hold independently (ref-counted); the Win32 call
+    only fires on the 0→1 / 1→0 edges. **REAL** — an unprivileged, fully reversible power request, not
+    gated behind `GPDFORGE_ENABLE_HARDWARE` (it isn't a hardware/BIOS write).
+  - `sustainedProfile` — a FLAT preset (`stapmW = fastW = slowW`, no boost above the sustained target)
+    shaped from the current `ai` mode preset via `ProfileShaper`. Informational; apply it through the
+    normal `POST /profiles/ai` + mode-switch / `POST /tdp` flow.
+  - `vram` — the iGPU's current UMA/VRAM allocation, read live over WMI
+    (`Win32_VideoController.AdapterRAM`, driverless, no elevation). **READ-ONLY**: the frame-buffer
+    split is a BIOS/GOP setting applied at boot, not something Windows lets user-mode reassign; `advisory`
+    always explains that changing it needs BIOS setup or a reboot.
+- `POST /ai/anti-standby { enable: boolean } → { active, holders, manual }` — manual override. Only the
+  `false→true` / `true→false` edge touches the ref count, so re-posting the same value is a no-op (never
+  double-acquires or double-releases the hold).
+- `POST /ai/vram { requestedMb?: number } → { reportedMb, adapterName, available, applied: false,
+  requiresBiosReboot: true, advisory }` — always `applied:false`: GPD Forge does not perform a blind UMA
+  write (see `vram` above). Honest by construction rather than faking success.
+
 ### `GET /standby`  ·  `POST /standby/restore`  (Standby Doctor)
 - `GET → { lastDrainPctPerHour: number, topWakeReason: string, blockers: string[], lastRestore: string[] | null }`
 - `POST /standby/restore → { restored: string[] }` — re-applies TDP + fan + HID state (what the daemon does

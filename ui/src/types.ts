@@ -34,6 +34,10 @@ export interface Guardian {
   lastAlert: string | null; lastSeverity: string
 }
 
+export interface AntiStandby { active: boolean; holders: number; manual: boolean }
+export interface VramInfo { reportedMb: number; adapterName: string | null; available: boolean; advisory: string }
+export interface AiInfo { antiStandby: AntiStandby; sustainedProfile: Preset; vram: VramInfo }
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'blocked'
 
 export interface Job {

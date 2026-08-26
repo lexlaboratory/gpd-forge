@@ -39,6 +39,7 @@ const state = {
   frozen: [],
   autoFps: { enabled: false, targetFps: 60 },
   guardian: { enabled: true, autoThrottle: true, tempThrottleC: 90, tempCriticalC: 96, throttleFloorW: 12, batteryLowPct: 15, batteryCriticalPct: 8 },
+  ai: { manualAntiStandby: false, vramMb: 512, adapterName: 'AMD Radeon 890M' },
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
@@ -86,6 +87,39 @@ function evalJob(job) {
   if (job.constraints?.requireAC && !t.acConnected) return 'blocked'
   if (job.constraints?.maxTempC != null && t.cpuTempC > job.constraints.maxTempC) return 'blocked'
   return 'running'
+}
+
+/** Ref-counted holders: every currently-"running" job + the manual toggle, mirroring the real
+ *  daemon's AntiStandbyService (each running job holds a lock; SetThreadExecutionState only
+ *  matters on the 0->1 / 1->0 edge, which the UI infers from `holders`). */
+function aiHolders() {
+  const runningJobs = [...state.jobs.values()].filter((j) => j.status === 'running').length
+  return runningJobs + (state.ai.manualAntiStandby ? 1 : 0)
+}
+
+/** Mirrors GpdForge.Ai.ProfileShaper.Shape: flat stapm=fast=slow, clamped to the safe band. */
+function shapeSustained(preset) {
+  const w = Math.max(5, Math.min(40, preset.stapmW))
+  const t = Math.max(60, Math.min(95, preset.tctlC))
+  return { stapmW: w, fastW: w, slowW: w, tctlC: t }
+}
+
+const VRAM_ADVISORY =
+  'UMA/VRAM size is set by the BIOS at boot (GOP/_DSM) and only changes after a reboot. ' +
+  'GPD Forge reads the current allocation but will not write it blindly — change it in BIOS ' +
+  'setup, or wait for a verified, reversible write path for this board.'
+
+function vramInfo() {
+  return { reportedMb: state.ai.vramMb, adapterName: state.ai.adapterName, available: true, advisory: VRAM_ADVISORY }
+}
+
+function aiInfo() {
+  const holders = aiHolders()
+  return {
+    antiStandby: { active: holders > 0, holders, manual: state.ai.manualAntiStandby },
+    sustainedProfile: shapeSustained(state.presets.ai),
+    vram: vramInfo(),
+  }
 }
 
 // --- tiny HTTP helpers ---
@@ -211,6 +245,19 @@ const server = http.createServer(async (req, res) => {
       if (b?.[k] !== undefined && b[k] !== null) g[k] = b[k]
     }
     return send(res, 200, g)
+  }
+
+  // Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.
+  if (method === 'GET' && path === '/ai') return send(res, 200, aiInfo())
+  if (method === 'POST' && path === '/ai/anti-standby') {
+    const body = await readBody(req)
+    state.ai.manualAntiStandby = !!body?.enable
+    const holders = aiHolders()
+    return send(res, 200, { active: holders > 0, holders, manual: state.ai.manualAntiStandby })
+  }
+  if (method === 'POST' && path === '/ai/vram') {
+    // Honest by construction: never a real write (UMA size is BIOS-set), so always applied:false.
+    return send(res, 200, { ...vramInfo(), applied: false, requiresBiosReboot: true })
   }
 
   if (method === 'GET' && path === '/display') return send(res, 200, { brightness: state.brightness })

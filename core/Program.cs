@@ -4,6 +4,7 @@
 // (see docs/api.md). The Tauri UI, the overlay, and external agents are clients.
 
 using GpdForge;
+using GpdForge.Ai;
 using GpdForge.Api;
 using GpdForge.Tdp;
 using GpdForge.Fan;
@@ -171,7 +172,17 @@ builder.Services.AddSingleton<ITdpController, ClosedLoopTdpController>();
 builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 builder.Services.AddSingleton<ModeState>();
-builder.Services.AddSingleton<JobsState>();
+
+// Agents / AI mode: anti-Modern-Standby during inference (REAL — an unprivileged, fully reversible
+// Win32 power request, so it is NOT gated behind GPDFORGE_ENABLE_HARDWARE; see
+// core/Ai/AntiStandbyService.cs) + VRAM/UMA advisory (read-only WMI; no write path exists, so it
+// stays advisory-only; see core/Ai/VramAdvisor.cs).
+builder.Services.AddSingleton<IExecutionStateSink, Win32ExecutionStateSink>();
+builder.Services.AddSingleton<AntiStandbyService>();
+builder.Services.AddSingleton<IVramReader, WmiVramReader>();
+builder.Services.AddSingleton<AiState>();
+
+builder.Services.AddSingleton<JobsState>();   // holds an anti-standby lock while a job is "running"
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
 builder.Services.AddSingleton<ProfileApplier>();
 builder.Services.AddSingleton<DisplayService>();
@@ -237,6 +248,41 @@ app.MapPost("/jobs", async (JobRequest req, JobsState j, ITelemetryService t, Ca
     var status = req.Constraints?.RequireAC == true && !tele.AcConnected ? "blocked" : "running";
     var job = j.Add(req.Cmd!, req.Constraints, status);
     return Results.Json(new { id = job.Id, status = job.Status });
+});
+
+// Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.
+app.MapGet("/ai", (AntiStandbyService anti, IVramReader vram, AiState ai) =>
+{
+    var preset = ModeProfiles.For("ai") ?? new TdpProfile(25, 25, 25, 90);
+    var shaped = ProfileShaper.Shape(preset.StapmW, preset.TctlC);
+    var v = vram.Read();
+    return Results.Json(new
+    {
+        antiStandby = new { active = anti.Active, holders = anti.HolderCount, manual = ai.ManualAntiStandby },
+        sustainedProfile = new { stapmW = shaped.StapmW, fastW = shaped.FastW, slowW = shaped.SlowW, tctlC = shaped.TctlC },
+        vram = new { reportedMb = v.ReportedMb, adapterName = v.AdapterName, available = v.Available, advisory = v.Advisory },
+    });
+});
+
+// Manual override for the keep-awake hold. Idempotent: re-posting the same enable value doesn't
+// double-acquire or double-release — only the true→false / false→true edge touches the ref count.
+app.MapPost("/ai/anti-standby", (AntiStandbyRequest r, AntiStandbyService anti, AiState ai) =>
+{
+    if (r.Enable && !ai.ManualAntiStandby) { anti.Start(); ai.ManualAntiStandby = true; }
+    else if (!r.Enable && ai.ManualAntiStandby) { anti.Stop(); ai.ManualAntiStandby = false; }
+    return Results.Json(new { active = anti.Active, holders = anti.HolderCount, manual = ai.ManualAntiStandby });
+});
+
+// VRAM/UMA is a BIOS setting (GOP/_DSM at boot) — GPD Forge reads it live but never writes it
+// blindly. Honest by construction: always applied:false + why, never fake success.
+app.MapPost("/ai/vram", (VramRequest _, IVramReader vram) =>
+{
+    var v = vram.Read();
+    return Results.Json(new
+    {
+        reportedMb = v.ReportedMb, adapterName = v.AdapterName, available = v.Available,
+        applied = false, requiresBiosReboot = true, advisory = v.Advisory,
+    });
 });
 
 // Standby Doctor.
@@ -360,17 +406,55 @@ namespace GpdForge.Api
     public sealed record JobRequest(string? Cmd, JobConstraints? Constraints);
     public sealed record Job(string Id, string Cmd, string Status);
 
-    /// <summary>In-memory job store for the local API.</summary>
-    public sealed class JobsState
+    /// <summary>In-memory job store for the local API. A "running" job holds an anti-standby lock
+    /// for as long as it stays running (see GpdForge.Ai.AntiStandbyService) — an unattended AI batch
+    /// job must not get silently paused by Modern Standby.</summary>
+    public sealed class JobsState(AntiStandbyService antiStandby)
     {
         private readonly List<Job> _jobs = [];
+        private readonly HashSet<string> _holding = new(StringComparer.Ordinal);
+        private readonly object _gate = new();
         private int _seq;
-        public IReadOnlyList<Job> All => _jobs;
+
+        public IReadOnlyList<Job> All { get { lock (_gate) return _jobs.ToArray(); } }
+
         public Job Add(string cmd, JobConstraints? _, string status)
         {
-            var job = new Job($"job-{++_seq}", cmd, status);
-            _jobs.Add(job);
-            return job;
+            lock (_gate)
+            {
+                var job = new Job($"job-{++_seq}", cmd, status);
+                _jobs.Add(job);
+                if (status == "running" && _holding.Add(job.Id))
+                    antiStandby.Start();
+                return job;
+            }
+        }
+
+        /// <summary>
+        /// Marks a job finished (status "done") and releases its anti-standby hold, if it held one.
+        /// Nothing in this phase calls this automatically yet — there is no job executor here, jobs
+        /// resolve their status synchronously on POST /jobs — but the hold/release wiring itself is
+        /// real and unit-tested, ready for whichever future job runner actually drives a job to
+        /// completion. Returns false if the id is unknown.
+        /// </summary>
+        public bool Finish(string id)
+        {
+            lock (_gate)
+            {
+                int idx = _jobs.FindIndex(j => j.Id == id);
+                if (idx < 0) return false;
+                if (_holding.Remove(id)) antiStandby.Stop();
+                _jobs[idx] = _jobs[idx] with { Status = "done" };
+                return true;
+            }
         }
     }
+
+    // --- Agents / AI mode ---
+    public sealed record AntiStandbyRequest(bool Enable);
+    public sealed record VramRequest(double? RequestedMb);
+
+    /// <summary>Tracks whether the manual "keep awake" override (POST /ai/anti-standby) is on, so a
+    /// repeated POST with the same value doesn't double-acquire/-release the ref-counted hold.</summary>
+    public sealed class AiState { public bool ManualAntiStandby { get; set; } }
 }

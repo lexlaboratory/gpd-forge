@@ -1,9 +1,10 @@
 // GPD Forge UI — pages. GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
-import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian } from './types'
+import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
-  getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian, type TdpResult,
+  getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian,
+  getAi, setAntiStandby, type TdpResult,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -78,9 +79,51 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
       </Card>
 
       {active === 'ai' && <JobsPanel />}
+      {active === 'ai' && <AiCard />}
       {active === 'standby' && <StandbyPanel />}
       <BatteryBudgetCard />
     </>
+  )
+}
+
+// --- Agents / AI (anti-standby + sustained profile + VRAM/UMA advisory) ------
+function AiCard() {
+  const toast = useToast()
+  const [info, setInfo] = useState<AiInfo | null>(null)
+
+  useEffect(() => {
+    const t = () => getAi().then(setInfo).catch(() => {})
+    t(); const id = setInterval(t, 2000); return () => clearInterval(id)
+  }, [])
+
+  const toggle = async () => {
+    if (!info) return
+    const r = await setAntiStandby(!info.antiStandby.manual).catch(() => null)
+    if (r) {
+      setInfo((s) => (s ? { ...s, antiStandby: r } : s))
+      toast.push({ kind: 'info', message: r.manual ? 'Anti-standby held (manual)' : 'Manual hold released' })
+    }
+  }
+
+  if (!info) return null
+  const { antiStandby: a, sustainedProfile: p, vram } = info
+  return (
+    <Card title="Anti-standby & sustained power" hint="Keeps Windows awake while an AI job runs">
+      <div className="row">
+        <Toggle on={a.manual} onClick={toggle} label={a.manual ? 'Manual hold on' : 'Manual hold off'} testid="ai-antistandby-toggle" />
+      </div>
+      <p className="muted" data-testid="ai-antistandby-status">
+        {a.active
+          ? `Holding Windows awake — ${a.holders} active hold${a.holders === 1 ? '' : 's'}.`
+          : 'Not holding — Windows may enter Modern Standby normally.'}
+      </p>
+      <div className="stats">
+        <Tile testid="ai-sustained-stapm" label="Sustained" value={`${p.stapmW}`} unit=" W" />
+        <Tile label="Thermal limit" value={`${p.tctlC}`} unit="°C" />
+        <Tile testid="ai-vram" label="iGPU VRAM/UMA" value={vram.available ? `${vram.reportedMb}` : '--'} unit={vram.available ? ' MB' : ''} />
+      </div>
+      <p className="muted" data-testid="ai-vram-advisory">{vram.advisory}</p>
+    </Card>
   )
 }
 
