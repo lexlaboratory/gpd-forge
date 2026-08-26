@@ -33,7 +33,18 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [x] `Profiles/` focus-process profiles with anti-flapping hysteresis (engine unit-tested;
       `--probe-focus` live; opt-in worker via GPDFORGE_AUTO_PROFILES)
 - [ ] Importer: migrate `C:\Program Files\Motion Assistant\Profiles\*.ini` → native profiles
-- [ ] UI: dashboard + per-mode panels + quick-menu overlay (gamepad-navigable)
+- [~] UI: dashboard + per-mode panels shipped — 9 pages (Dashboard/Power/Fan/Controller/Display/Profiles/
+      Monitor/System/Settings), light+dark themes, live SVG sparklines, toasts. Browser-QA'd at the Win 4's
+      native 1280×800 (both themes). Quick-menu overlay (gamepad-navigable) still pending.
+
+### Landed features (software; some mock-backed until the broker/driver land)
+- [x] **Battery budget**: runtime estimate from live discharge + what-if projections across power levels
+      (`BatteryEstimator`, unit-tested; Dashboard card).
+- [x] **Freezer**: suspend/resume background processes with a protected-process guard, via `ntdll`
+      `NtSuspendProcess`/`NtResumeProcess` (unit-tested; System page).
+- [x] **Auto-TDP-to-FPS**: pure-PID controller (anti-windup) that steers STAPM to hold a target FPS at the
+      least power (`FpsTdpController`, unit-tested; Power page; engages in gaming mode once FPS is real).
+- [x] **Editable per-mode TDP presets** + **fan preference** + **live brightness** (WMI) wired end-to-end.
 
 ## Phase 2 — Standby Doctor
 - [ ] Restore TDP + fan + HID on resume event
