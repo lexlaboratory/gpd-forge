@@ -189,6 +189,21 @@ builder.Services.AddSingleton<JobsState>();   // holds an anti-standby lock whil
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
 builder.Services.AddSingleton<ProfileApplier>();
 builder.Services.AddSingleton<DisplayService>();
+
+// Display domain extensions: refresh-rate switching + night mode (gamma ramp) are REAL, unprivileged
+// OS-level APIs (no EC/BIOS), so they are NOT gated. Tablet mode writes a system-wide registry value
+// (see TabletModeService.cs) so, like the TDP backend above, it only WRITES when
+// GPDFORGE_ENABLE_HARDWARE=1 — reads always work. Keyboard backlight has no known safe write path at
+// all (EC-controlled, same blocked path as the fan) and stays advisory-only unconditionally.
+builder.Services.AddSingleton<IDisplayModeSource, Win32DisplayModeSource>();
+builder.Services.AddSingleton<RefreshRateService>();
+builder.Services.AddSingleton<IGammaRampSink, Win32GammaRampSink>();
+builder.Services.AddSingleton<NightModeService>();
+builder.Services.AddSingleton<ITabletModeRegistry, WindowsTabletModeRegistry>();
+builder.Services.AddSingleton(sp => new TabletModeService(
+    sp.GetRequiredService<ITabletModeRegistry>(), enableHardware, sp.GetService<ILogger<TabletModeService>>()));
+builder.Services.AddSingleton<KeyboardBacklightService>();
+
 builder.Services.AddSingleton<FanState>();
 builder.Services.AddSingleton<BatteryService>();
 builder.Services.AddSingleton<IProcessSuspender, NtProcessSuspender>();
@@ -376,6 +391,50 @@ app.MapPost("/display/brightness", (BrightnessRequest r, DisplayService d) =>
     return Results.Json(new { brightness = d.GetBrightness() ?? r.Level });
 });
 
+// Refresh-rate switching (REAL — Win32 EnumDisplaySettingsEx / ChangeDisplaySettingsEx).
+app.MapGet("/display/refresh", (RefreshRateService r) =>
+{
+    var info = r.GetInfo();
+    return Results.Json(new { current = info.CurrentHz, supported = info.SupportedHz });
+});
+app.MapPost("/display/refresh", (RefreshRateRequest req, RefreshRateService r) =>
+{
+    var (info, error) = r.SetHz(req.Hz);
+    return Results.Json(new { current = info.CurrentHz, supported = info.SupportedHz, error });
+});
+
+// Night mode (REAL — GDI gamma ramp; deliberately NOT Windows Night Light, see NightModeService.cs).
+app.MapGet("/display/night", (NightModeService n) => Results.Json(new { on = n.On, warmth = n.Warmth }));
+app.MapPost("/display/night", (NightModeRequest req, NightModeService n) =>
+{
+    var (on, warmth) = n.Set(req.On, req.Warmth);
+    return Results.Json(new { on, warmth });
+});
+
+// Tablet mode (ADVISORY; write GATED behind GPDFORGE_ENABLE_HARDWARE=1 — see TabletModeService.cs).
+app.MapGet("/display/tablet", (TabletModeService t) =>
+{
+    var s = t.Get();
+    return Results.Json(new { convertible = s.Convertible, raw = s.Raw, applied = s.Applied, advisory = s.Advisory });
+});
+app.MapPost("/display/tablet", (TabletModeRequest req, TabletModeService t) =>
+{
+    var s = t.Set(req.Enable);
+    return Results.Json(new { convertible = s.Convertible, raw = s.Raw, applied = s.Applied, advisory = s.Advisory });
+});
+
+// Keyboard backlight (ADVISORY — EC-controlled, no known safe write path; see KeyboardBacklightService.cs).
+app.MapGet("/display/keyboard-backlight", (KeyboardBacklightService k) =>
+{
+    var s = k.Get();
+    return Results.Json(new { controllable = s.Controllable, applied = s.Applied, advisory = s.Advisory });
+});
+app.MapPost("/display/keyboard-backlight", (KeyboardBacklightService k) =>
+{
+    var s = k.Set();
+    return Results.Json(new { controllable = s.Controllable, applied = s.Applied, advisory = s.Advisory });
+});
+
 // Battery budget (minutes left + projections at other TDPs).
 app.MapGet("/battery/budget", (BatteryService b) => Results.Json(b.GetBudget()));
 
@@ -522,6 +581,9 @@ namespace GpdForge.Api
     public sealed record TdpRequest(int StapmW);
     public sealed record ProfileEdit(int StapmW, int FastW, int SlowW, int TctlC);
     public sealed record BrightnessRequest(int Level);
+    public sealed record RefreshRateRequest(int Hz);
+    public sealed record NightModeRequest(bool On, int? Warmth);
+    public sealed record TabletModeRequest(bool Enable);
     public sealed class FanState { public string Mode { get; set; } = "Auto"; }
     public sealed record FanRequest(string? Mode);
     public sealed record FreezerRequest(string? Name);

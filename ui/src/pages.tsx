@@ -1,11 +1,15 @@
 // GPD Forge UI — pages. GPL-3.0-or-later.
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig } from './types'
+import type {
+  Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig,
+  RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
+} from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
   getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian,
   getAi, setAntiStandby, getHistory, historyExportUrl, importMotionAssistant,
   getPowerSource, setPowerSource, settingsExportUrl, importSettings, type TdpResult,
+  getRefreshRate, setRefreshRate, getNightMode, setNightMode, getTabletMode, getKeyboardBacklight,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -184,7 +188,7 @@ export function PowerPage() {
   )
 }
 
-// --- Display (brightness real) ------------------------------------------------
+// --- Display (brightness, refresh rate, night mode: real; tablet mode, keyboard backlight: advisory) ---
 export function DisplayPage() {
   const [bri, setBri] = useState<number | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -200,10 +204,86 @@ export function DisplayPage() {
         <Slider label="Screen brightness" testid="brightness" value={bri ?? 0} min={0} max={100} unit=" %" onChange={onBri} />
         {bri === null && <p className="muted">Brightness not available from this context.</p>}
       </Card>
-      <Card title="Screen" hint={<Soon />}>
-        <p className="muted">Tablet-mode toggle, resolution and refresh-rate switching, night light.</p>
-      </Card>
+      <RefreshRateCard />
+      <NightModeCard />
+      <ScreenAdvisoryCard />
     </>
+  )
+}
+
+// Refresh-rate switching — REAL (EnumDisplaySettingsEx / ChangeDisplaySettingsEx).
+function RefreshRateCard() {
+  const toast = useToast()
+  const [info, setInfo] = useState<RefreshRateInfo | null>(null)
+  useEffect(() => { getRefreshRate().then(setInfo).catch(() => {}) }, [])
+
+  const pick = async (hz: number) => {
+    const r = await setRefreshRate(hz).catch(() => null)
+    if (!r) return
+    setInfo(r)
+    toast.push(r.error ? { kind: 'warn', message: r.error } : { kind: 'success', message: `Refresh rate set to ${r.current} Hz` })
+  }
+
+  return (
+    <Card title="Refresh rate" hint="Live — EnumDisplaySettingsEx / ChangeDisplaySettingsEx">
+      {info ? (
+        <div className="chips" data-testid="refresh-modes">
+          {info.supported.map((hz) => (
+            <button key={hz} className={`chip-btn ${info.current === hz ? 'on' : ''}`}
+              onClick={() => pick(hz)} data-testid={`refresh-${hz}`}>{hz} Hz</button>
+          ))}
+        </div>
+      ) : <p className="muted">Loading…</p>}
+      <p className="muted">Applied for this session only — not written to the registry, so a bad pick never survives a reboot.</p>
+    </Card>
+  )
+}
+
+// Night mode — REAL (GDI gamma ramp). Deliberately NOT Windows Night Light.
+function NightModeCard() {
+  const [night, setNight] = useState<NightMode>({ on: false, warmth: 0 })
+  useEffect(() => { getNightMode().then(setNight).catch(() => {}) }, [])
+
+  const toggle = () => { void setNightMode(!night.on, night.warmth || 50).then(setNight).catch(() => {}) }
+  const onWarmth = (v: number) => {
+    setNight((s) => ({ ...s, warmth: v }))
+    if (night.on) void setNightMode(true, v).then(setNight).catch(() => {})
+  }
+
+  return (
+    <Card title="Night mode" hint="Gamma ramp — not Windows Night Light">
+      <div className="row">
+        <Toggle on={night.on} onClick={toggle} label={night.on ? 'On' : 'Off'} testid="night-toggle" />
+      </div>
+      <Slider label="Warmth" testid="night-warmth" value={night.warmth} min={0} max={100} unit="%" disabled={!night.on} onChange={onWarmth} />
+      <p className="muted">Warms the screen by reducing blue in the GDI gamma ramp. Independent of Windows Night Light, which GPD Forge deliberately leaves untouched.</p>
+    </Card>
+  )
+}
+
+// Tablet mode + keyboard backlight — ADVISORY. Tablet mode's WRITE is gated behind
+// GPDFORGE_ENABLE_HARDWARE=1; keyboard backlight has no known safe write path at all (EC-owned).
+function ScreenAdvisoryCard() {
+  const [tablet, setTablet] = useState<TabletModeInfo | null>(null)
+  const [kb, setKb] = useState<KeyboardBacklightInfo | null>(null)
+  useEffect(() => {
+    getTabletMode().then(setTablet).catch(() => {})
+    getKeyboardBacklight().then(setKb).catch(() => {})
+  }, [])
+
+  return (
+    <Card title="Screen" hint={<Soon>advisory</Soon>}>
+      <div className="row" data-testid="tablet-row">
+        <span>Tablet mode</span>
+        <Soon>{tablet?.applied ? 'writable' : 'gated'}</Soon>
+      </div>
+      <p className="muted" data-testid="tablet-advisory">{tablet?.advisory ?? 'Loading…'}</p>
+      <div className="row" data-testid="keyboard-backlight-row">
+        <span>Keyboard backlight</span>
+        <Soon>EC-only</Soon>
+      </div>
+      <p className="muted" data-testid="keyboard-backlight-advisory">{kb?.advisory ?? 'Loading…'}</p>
+    </Card>
   )
 }
 

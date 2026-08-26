@@ -89,6 +89,43 @@ power controller (MotionAssistant/GPD Tool) is running.
 - `GET → { brightness: number }` — 0–100, read live over WMI.
 - `POST /display/brightness { level: number } → { brightness: number }` — clamped to 0–100.
 
+### `GET /display/refresh`  ·  `POST /display/refresh`  (refresh-rate switching — REAL)
+- `GET → { current: number, supported: number[] }` — the primary display's current refresh rate
+  (Hz) and every rate it supports at the current resolution/color depth, read live via
+  `EnumDisplaySettingsEx`.
+- `POST { hz: number } → { current, supported, error: string | null }` — switches via
+  `ChangeDisplaySettingsEx`, applied for this session only (not written to the registry, so a bad
+  pick never survives a reboot). `hz` must be one of `supported`; otherwise `current` is left
+  unchanged and `error` explains why.
+
+### `GET /display/night`  ·  `POST /display/night`  (warm-screen night mode — REAL, gamma ramp)
+- `GET → { on: boolean, warmth: number }`
+- `POST { on: boolean, warmth?: number } → { on, warmth }` — warms the screen via the GDI gamma
+  ramp (`SetDeviceGammaRamp`), reducing blue (and, less, green) as `warmth` (0–100) rises;
+  `warmth` always reports what's actually applied right now, so `on:false` reports `warmth: 0` (the
+  identity ramp really is what's on screen, not just remembered). **This is not Windows Night
+  Light** — that feature's state lives in an undocumented, build-fragile registry blob GPD Forge
+  deliberately does not touch; this is an independent, real, fully reversible gamma-based warm mode.
+
+### `GET /display/tablet`  ·  `POST /display/tablet`  (tablet-mode advisory — ADVISORY, GATED)
+- `GET → { convertible: boolean | null, raw: number | null, applied: false, advisory: string }` —
+  reads the `ConvertibilityEnabled` registry DWORD
+  (`HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl`), the documented Windows 11 22H2+
+  override for a device's chassis-type/DeviceForm convertible detection (the Win 4 reports as a
+  convertible in SMBIOS, the root of its known "everything opens maximized" behavior). `raw: null`
+  means the value isn't set (default OS detection applies).
+- `POST { enable: boolean } → { convertible, raw, applied, advisory }` — writes `1` (convertible)
+  or `0` (the known fix) to that value. **Gated behind `GPDFORGE_ENABLE_HARDWARE=1`**: with the gate
+  closed this only reads and returns `applied:false` with an advisory explaining why — the registry
+  is never written otherwise.
+
+### `GET /display/keyboard-backlight`  ·  `POST /display/keyboard-backlight`  (ADVISORY)
+`200 → { controllable: false, applied: false, advisory: string }` for both verbs. The Win 4's
+keyboard backlight is EC/Fn-controlled — the same access path already blocked on this board's
+firmware (see the `--probe-ec` notes in `core/Program.cs`) — so GPD Forge has no verified write
+path and never attempts a blind one; this always reports the honest advisory rather than faking
+success.
+
 ### `GET /battery/budget`
 `200 → { minutesRemaining: number | null, remainingWh: number, dischargeW: number,
   projections: Array<{ watts: number, minutes: number }> }`

@@ -50,6 +50,12 @@ export interface ImportResult { found: number; profiles: ImportedProfile[]; path
 // Per-power-source (AC vs battery) auto mode-switch config.
 export interface PowerSourceConfig { enabled: boolean; onBatteryMode: string; onAcMode: string }
 
+// Display domain extensions (mirror of core/Display/*.cs).
+export interface RefreshRateInfo { current: number; supported: number[]; error: string | null }
+export interface NightMode { on: boolean; warmth: number }
+export interface TabletModeInfo { convertible: boolean | null; raw: number | null; applied: boolean; advisory: string }
+export interface KeyboardBacklightInfo { controllable: boolean; applied: boolean; advisory: string }
+
 // Full settings snapshot (mirror of GET /settings/export).
 export interface SettingsExport {
   modePresets: Record<string, Preset>

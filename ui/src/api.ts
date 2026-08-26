@@ -7,6 +7,7 @@
 import type {
   Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
   HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
+  RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
 } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
@@ -47,6 +48,16 @@ export const setProfile = (mode: string, p: Preset) =>
 export const getBrightness = async () => (await json<{ brightness: number | null }>('/display')).brightness
 export const setBrightness = async (level: number) =>
   (await json<{ brightness: number }>('/display/brightness', post({ level }))).brightness
+
+// --- display: refresh rate + night mode (real), tablet mode + keyboard backlight (advisory) ---
+export const getRefreshRate = () => json<RefreshRateInfo>('/display/refresh')
+export const setRefreshRate = (hz: number) => json<RefreshRateInfo>('/display/refresh', post({ hz }))
+export const getNightMode = () => json<NightMode>('/display/night')
+export const setNightMode = (on: boolean, warmth?: number) => json<NightMode>('/display/night', post({ on, warmth }))
+export const getTabletMode = () => json<TabletModeInfo>('/display/tablet')
+export const setTabletMode = (enable: boolean) => json<TabletModeInfo>('/display/tablet', post({ enable }))
+export const getKeyboardBacklight = () => json<KeyboardBacklightInfo>('/display/keyboard-backlight')
+export const setKeyboardBacklight = () => json<KeyboardBacklightInfo>('/display/keyboard-backlight', post())
 
 // --- fan mode preference ---
 export const getFan = async () => (await json<{ mode: string }>('/fan')).mode

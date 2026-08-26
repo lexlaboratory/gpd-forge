@@ -35,6 +35,9 @@ const state = {
   jobs: new Map(),
   jobSeq: 0,
   brightness: 70,
+  refresh: { current: 60, supported: [48, 60] },
+  night: { on: false, warmth: 0 },
+  tablet: { raw: null }, // null = ConvertibilityEnabled not set (default OS chassis detection)
   fanMode: 'Auto',
   frozen: [],
   history: [], // { unixMs, snap } ring, capped at HISTORY_CAPACITY — see pushHistory()
@@ -136,6 +139,24 @@ const VRAM_ADVISORY =
 
 function vramInfo() {
   return { reportedMb: state.ai.vramMb, adapterName: state.ai.adapterName, available: true, advisory: VRAM_ADVISORY }
+}
+
+// --- Display domain extensions: tablet mode (advisory/gated) + keyboard backlight (advisory) ---
+// Mirrors core/Display/TabletModeAdvisor.cs and KeyboardBacklightAdvisor.cs.
+const TABLET_GATE_CLOSED_ADVISORY =
+  'Tablet-mode detection is a system-wide registry value (ConvertibilityEnabled) that changes how Windows treats every window on this PC, not just GPD Forge — set GPDFORGE_ENABLE_HARDWARE=1 to allow a write. Read-only until then.'
+const KEYBOARD_BACKLIGHT_ADVISORY =
+  "Keyboard backlight is controlled by the embedded controller (the same EC path already blocked on this board's firmware) or the Fn hotkey directly. GPD Forge has no verified write path for it yet, so this stays read-only/advisory."
+
+function describeTablet(raw) {
+  if (raw === null || raw === undefined)
+    return "ConvertibilityEnabled is not set — Windows falls back to chassis-type/DeviceForm detection (the source of the Win 4's known 'everything opens maximized' behavior)."
+  if (raw === 0) return 'ConvertibilityEnabled = 0 — Windows is told this is NOT convertible (the known fix).'
+  return `ConvertibilityEnabled = ${raw} — Windows treats this as convertible/tablet-capable.`
+}
+function tabletInfo(applied, advisory) {
+  const raw = state.tablet.raw
+  return { convertible: raw === null || raw === undefined ? null : raw !== 0, raw, applied, advisory: advisory ?? describeTablet(raw) }
 }
 
 function aiInfo() {
@@ -357,6 +378,44 @@ const server = http.createServer(async (req, res) => {
     state.brightness = Math.max(0, Math.min(100, Number(body?.level ?? state.brightness)))
     return send(res, 200, { brightness: state.brightness })
   }
+
+  // Refresh-rate switching (REAL on the daemon; mirrors core/Display/RefreshRateService.cs).
+  if (method === 'GET' && path === '/display/refresh') return send(res, 200, { ...state.refresh, error: null })
+  if (method === 'POST' && path === '/display/refresh') {
+    const body = await readBody(req)
+    const hz = Number(body?.hz)
+    if (!state.refresh.supported.includes(hz)) {
+      const error = `${hz} Hz is not supported on this display (supported: ${state.refresh.supported.join(', ')})`
+      return send(res, 200, { ...state.refresh, error })
+    }
+    state.refresh.current = hz
+    return send(res, 200, { ...state.refresh, error: null })
+  }
+
+  // Night mode (REAL gamma ramp on the daemon; mirrors core/Display/NightModeService.cs). warmth
+  // always reflects what's actually applied — 0 while off, never a merely-remembered value.
+  if (method === 'GET' && path === '/display/night') return send(res, 200, state.night)
+  if (method === 'POST' && path === '/display/night') {
+    const body = await readBody(req)
+    const on = !!body?.on
+    const requested = body?.warmth !== undefined && body?.warmth !== null ? Math.max(0, Math.min(100, Number(body.warmth))) : (state.night.warmth || 50)
+    state.night = { on, warmth: on ? requested : 0 }
+    return send(res, 200, state.night)
+  }
+
+  // Tablet mode (ADVISORY; write gated behind GPDFORGE_ENABLE_HARDWARE=1 — mirrors TabletModeService.cs).
+  if (method === 'GET' && path === '/display/tablet') return send(res, 200, tabletInfo(false))
+  if (method === 'POST' && path === '/display/tablet') {
+    const gateOpen = process.env.GPDFORGE_ENABLE_HARDWARE === '1'
+    if (!gateOpen) return send(res, 200, tabletInfo(false, TABLET_GATE_CLOSED_ADVISORY))
+    const body = await readBody(req)
+    state.tablet.raw = body?.enable ? 1 : 0
+    return send(res, 200, tabletInfo(true))
+  }
+
+  // Keyboard backlight (ADVISORY only — mirrors KeyboardBacklightService.cs; no state, no writes).
+  if (method === 'GET' && path === '/display/keyboard-backlight') return send(res, 200, { controllable: false, applied: false, advisory: KEYBOARD_BACKLIGHT_ADVISORY })
+  if (method === 'POST' && path === '/display/keyboard-backlight') return send(res, 200, { controllable: false, applied: false, advisory: KEYBOARD_BACKLIGHT_ADVISORY })
 
   if (method === 'GET' && path === '/standby') return send(res, 200, state.standby)
   if (method === 'POST' && path === '/standby/restore') {
