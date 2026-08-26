@@ -1,7 +1,7 @@
 // GPD Forge UI — pages. GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
 import type { Mode, ModeId, Telemetry, Preset } from './types'
-import { setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, type TdpResult } from './api'
+import { setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan, type TdpResult } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { JobsPanel } from './JobsPanel'
 import { StandbyPanel } from './StandbyPanel'
@@ -141,9 +141,11 @@ export function DisplayPage() {
 const FAN_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive', 'Manual']
 export function FanPage({ tele }: { tele: Telemetry | null }) {
   const [fanMode, setFanMode] = useState('Auto')
+  useEffect(() => { getFan().then(setFanMode).catch(() => {}) }, [])
+  const pick = (f: string) => { setFanMode(f); setFan(f).catch(() => {}) }
   return (
     <>
-      <Card title="Fan" hint={<Soon>EC control pending PawnIO-stable</Soon>}>
+      <Card title="Fan" hint="Preference saved now; curve applied when the fan driver lands.">
         <div className="stats">
           <Tile label="Fan" value={tele ? `${tele.fanRpm}` : '--'} unit="rpm" />
           <Tile label="CPU" value={tele ? `${Math.round(tele.cpuTempC)}` : '--'} unit="°C" />
@@ -151,10 +153,10 @@ export function FanPage({ tele }: { tele: Telemetry | null }) {
         </div>
         <div className="chips">
           {FAN_MODES.map((f) => (
-            <button key={f} className={`chip-btn ${fanMode === f ? 'on' : ''}`} onClick={() => setFanMode(f)} data-testid={`fan-${f.toLowerCase()}`}>{f}</button>
+            <button key={f} className={`chip-btn ${fanMode === f ? 'on' : ''}`} onClick={() => pick(f)} data-testid={`fan-${f.toLowerCase()}`}>{f}</button>
           ))}
         </div>
-        <p className="muted">Curve editor with hysteresis + EC re-init on boot/resume lands with the fan driver.</p>
+        <p className="muted">Curve editor with hysteresis + EC re-init on boot/resume lands with the fan driver (EC access pending PawnIO-stable).</p>
       </Card>
     </>
   )

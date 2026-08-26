@@ -44,3 +44,7 @@ export const setProfile = (mode: string, p: Preset) =>
 export const getBrightness = async () => (await json<{ brightness: number | null }>('/display')).brightness
 export const setBrightness = async (level: number) =>
   (await json<{ brightness: number }>('/display/brightness', post({ level }))).brightness
+
+// --- fan mode preference ---
+export const getFan = async () => (await json<{ mode: string }>('/fan')).mode
+export const setFan = async (mode: string) => (await json<{ mode: string }>('/fan', post({ mode }))).mode

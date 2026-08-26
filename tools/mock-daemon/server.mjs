@@ -35,6 +35,7 @@ const state = {
   jobs: new Map(),
   jobSeq: 0,
   brightness: 70,
+  fanMode: 'Auto',
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
@@ -164,6 +165,12 @@ const server = http.createServer(async (req, res) => {
     if (!body) return err(res, 400, 'bad', 'json')
     state.presets[mode] = { stapmW: body.stapmW, fastW: body.fastW, slowW: body.slowW, tctlC: body.tctlC }
     return send(res, 200, { mode, ...state.presets[mode] })
+  }
+  if (method === 'GET' && path === '/fan') return send(res, 200, { mode: state.fanMode })
+  if (method === 'POST' && path === '/fan') {
+    const body = await readBody(req)
+    if (body?.mode) state.fanMode = body.mode
+    return send(res, 200, { mode: state.fanMode })
   }
   if (method === 'GET' && path === '/display') return send(res, 200, { brightness: state.brightness })
   if (method === 'POST' && path === '/display/brightness') {

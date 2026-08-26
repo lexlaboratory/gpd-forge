@@ -173,6 +173,7 @@ builder.Services.AddSingleton<JobsState>();
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
 builder.Services.AddSingleton<ProfileApplier>();
 builder.Services.AddSingleton<DisplayService>();
+builder.Services.AddSingleton<FanState>();
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
@@ -249,6 +250,15 @@ app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
 });
 
 // Display brightness (WMI, no driver).
+// Fan mode preference (Auto/Quiet/Balanced/Aggressive/Manual). Stored now; applied when the EC
+// fan driver lands. A real setting, not a dead control.
+app.MapGet("/fan", (FanState f) => Results.Json(new { mode = f.Mode }));
+app.MapPost("/fan", (FanRequest r, FanState f) =>
+{
+    if (!string.IsNullOrWhiteSpace(r.Mode)) f.Mode = r.Mode!;
+    return Results.Json(new { mode = f.Mode });
+});
+
 app.MapGet("/display", (DisplayService d) => Results.Json(new { brightness = d.GetBrightness() }));
 app.MapPost("/display/brightness", (BrightnessRequest r, DisplayService d) =>
 {
@@ -270,6 +280,8 @@ namespace GpdForge.Api
     public sealed record TdpRequest(int StapmW);
     public sealed record ProfileEdit(int StapmW, int FastW, int SlowW, int TctlC);
     public sealed record BrightnessRequest(int Level);
+    public sealed class FanState { public string Mode { get; set; } = "Auto"; }
+    public sealed record FanRequest(string? Mode);
 
     public sealed record JobConstraints(bool? RequireAC, int? MaxTempC, string? Window);
     public sealed record JobRequest(string? Cmd, JobConstraints? Constraints);
