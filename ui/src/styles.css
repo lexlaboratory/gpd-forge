@@ -109,6 +109,8 @@ body {
 .chip-btn.on { color: #06131c; background: linear-gradient(120deg, var(--accent), var(--accent-2)); border-color: transparent; }
 
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px 20px; }
+.charts .gf-spark { width: 100%; }
+.charts .gf-spark svg { width: 100%; height: auto; }
 
 .battery-budget { display: flex; flex-direction: column; gap: 12px; }
 .bb-main { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }

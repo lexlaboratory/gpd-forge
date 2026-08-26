@@ -19,6 +19,11 @@ export const MODES: Mode[] = [
   { id: 'standby', label: 'Standby Doctor',icon: '🩺', blurb: 'Restore TDP+fan+HID on resume, fix drain.' },
 ]
 
+// Short, correctly-cased chip labels for the preset keys (so 'ai' shows as 'AI', not 'Ai').
+const PRESET_LABEL: Record<string, string> = {
+  battery: 'Battery', windows: 'Windows', gaming: 'Gaming', ai: 'AI', standby: 'Standby',
+}
+
 export interface Shared {
   tele: Telemetry | null
   active: ModeId
@@ -95,7 +100,7 @@ export function PowerPage() {
   useEffect(() => { setDraft(presets[mode] ?? null); setSaved(false) }, [mode, presets])
 
   const edit = (k: keyof Preset, v: number) => draft && setDraft({ ...draft, [k]: v })
-  const apply = () => { if (draft) setProfile(mode, draft).then(() => { setSaved(true); toast.push({ kind: 'success', message: `${mode} preset saved` }) }).catch(() => {}) }
+  const apply = () => { if (draft) setProfile(mode, draft).then(() => { setSaved(true); toast.push({ kind: 'success', message: `${PRESET_LABEL[mode] ?? mode} preset saved` }) }).catch(() => {}) }
   const toggleFps = () => { const en = !afps.enabled; setAfps((s) => ({ ...s, enabled: en })); setAutoFps(afps.targetFps, en).then(setAfps).catch(() => {}) }
   const commitFps = (v: number) => { void setAutoFps(v, afps.enabled).then(setAfps).catch(() => {}) }
 
@@ -104,7 +109,7 @@ export function PowerPage() {
       <Card title="Power presets" hint="Tune each mode's TDP — GPD Forge applies it through the closed loop.">
         <div className="chips" data-testid="preset-modes">
           {Object.keys(presets).map((k) => (
-            <button key={k} className={`chip-btn ${mode === k ? 'on' : ''}`} onClick={() => setMode(k)} data-testid={`preset-${k}`}>{k}</button>
+            <button key={k} className={`chip-btn ${mode === k ? 'on' : ''}`} onClick={() => setMode(k)} data-testid={`preset-${k}`}>{PRESET_LABEL[k] ?? k}</button>
           ))}
         </div>
         {draft ? (
@@ -225,9 +230,9 @@ export function MonitorPage({ tele }: { tele: Telemetry | null }) {
     <>
       <Card title="Live telemetry" hint="Last 60 seconds">
         <div className="charts" data-testid="charts">
-          <Sparkline data={cpu} label="CPU" unit="°C" color="var(--accent)" testid="chart-cpu" />
-          <Sparkline data={watt} label="Power" unit="W" color="var(--accent-2)" testid="chart-watt" />
-          <Sparkline data={fps} label="FPS" color="var(--good)" testid="chart-fps" />
+          <Sparkline data={cpu} label="CPU" unit="°C" color="var(--accent)" width={360} height={92} surface="var(--bg-elev)" testid="chart-cpu" />
+          <Sparkline data={watt} label="Power" unit="W" color="var(--accent-2)" width={360} height={92} surface="var(--bg-elev)" testid="chart-watt" />
+          <Sparkline data={fps} label="FPS" color="var(--good)" width={360} height={92} surface="var(--bg-elev)" testid="chart-fps" />
         </div>
       </Card>
       <Card title="On-screen display" hint={<Soon>RTSS single-owner</Soon>}>
@@ -312,7 +317,7 @@ export function SettingsPage({ auto, setAuto, theme, setTheme }: {
       </Card>
       <Card title="Appearance">
         <div className="row">
-          <Toggle on={theme === 'light'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} label={theme === 'light' ? 'Light theme' : 'Dark theme'} testid="settings-theme" />
+          <Toggle on={theme === 'dark'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} label="Dark theme" testid="settings-theme" />
         </div>
       </Card>
       <Card title="About">
