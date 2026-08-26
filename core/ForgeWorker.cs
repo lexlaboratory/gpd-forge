@@ -4,6 +4,7 @@
 using GpdForge.Api;
 using GpdForge.Fan;
 using GpdForge.Guardian;
+using GpdForge.History;
 using GpdForge.Profiles;
 using GpdForge.SystemControl;
 using GpdForge.Tdp;
@@ -24,7 +25,8 @@ public sealed class ForgeWorker(
     AutoFpsState autoFps,
     FpsTdpController fpsController,
     FreezerService freezer,
-    GuardianService guardian) : BackgroundService
+    GuardianService guardian,
+    TelemetryHistory history) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -36,6 +38,7 @@ public sealed class ForgeWorker(
             while (!stoppingToken.IsCancellationRequested)
             {
                 var snapshot = await telemetry.ReadAsync(stoppingToken);
+                history.Add(new HistorySample(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), snapshot));
 
                 // Thermal/battery guardian — evaluated every tick. A safety throttle takes priority
                 // over auto-FPS; alerts are logged and surfaced via GET /guardian.

@@ -15,6 +15,7 @@ using GpdForge.Standby;
 using GpdForge.Display;
 using GpdForge.SystemControl;
 using GpdForge.Guardian;
+using GpdForge.History;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -172,6 +173,7 @@ builder.Services.AddSingleton<ITdpController, ClosedLoopTdpController>();
 builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 builder.Services.AddSingleton<ModeState>();
+builder.Services.AddSingleton<TelemetryHistory>();
 
 // Agents / AI mode: anti-Modern-Standby during inference (REAL — an unprivileged, fully reversible
 // Win32 power request, so it is NOT gated behind GPDFORGE_ENABLE_HARDWARE; see
@@ -218,6 +220,19 @@ app.UseStaticFiles();
 app.MapGet("/health", () => Results.Json(new { ok = true, version = "0.1.0", model = "GPD Win 4 (G1618-04)" }));
 
 app.MapGet("/telemetry", async (ITelemetryService t, CancellationToken ct) => Results.Json(await t.ReadAsync(ct)));
+
+// Telemetry history (ring buffer, filled once per worker tick) + CSV export.
+app.MapGet("/history", (int? minutes, TelemetryHistory history) =>
+{
+    int clampedMinutes = Math.Clamp(minutes ?? 5, 1, 60);
+    long since = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - clampedMinutes * 60_000L;
+    return Results.Json(new { samples = history.Since(since) });
+});
+app.MapGet("/history/export.csv", (HttpContext ctx, TelemetryHistory history) =>
+{
+    ctx.Response.Headers["Content-Disposition"] = "attachment; filename=\"gpd-forge-telemetry.csv\"";
+    return Results.Text(CsvExport.ToCsv(history.Since(0)), "text/csv");
+});
 
 app.MapGet("/mode", (ModeState m) => Results.Json(new { active = m.Active }));
 

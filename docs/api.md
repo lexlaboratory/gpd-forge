@@ -33,6 +33,16 @@ interface Telemetry {
 ### `GET /telemetry/stream` (SSE in mock, WS in prod)
 Server pushes `Telemetry` JSON events ~4 Hz.
 
+### `GET /history`  ·  `GET /history/export.csv`  (telemetry history + CSV export)
+- `GET /history?minutes=N → { samples: Array<{ unixMs: number, snap: Telemetry }> }` — samples from the
+  last `N` minutes, oldest first. `minutes` defaults to 5, clamped to 1..60. Backed by an in-memory ring
+  buffer the worker fills once per tick (capacity 3600 = 1h at 1Hz) — a freshly (re)started daemon holds
+  less history than that until the buffer fills.
+- `GET /history/export.csv` → `text/csv`, `Content-Disposition: attachment;
+  filename="gpd-forge-telemetry.csv"` — every currently-held sample as CSV, one row each: `unixMs,
+  isoTime, cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fps, batteryPct, dischargeW, acConnected,
+  tdpVerified`.
+
 ### `GET /mode`  ·  `POST /mode`
 - `GET  → { active: ModeId }`
 - `POST { name: ModeId } → { active: ModeId }` — switches the active mode (applies its TDP + fan curve).

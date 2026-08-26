@@ -4,7 +4,7 @@ import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian,
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
   getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian,
-  getAi, setAntiStandby, type TdpResult,
+  getAi, setAntiStandby, getHistory, historyExportUrl, type TdpResult,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -269,6 +269,13 @@ export function MonitorPage({ tele }: { tele: Telemetry | null }) {
   const cpu = useHistory(tele?.cpuTempC ?? NaN)
   const watt = useHistory(tele?.packageW ?? NaN)
   const fps = useHistory(tele?.fps ?? NaN)
+  const [sampleCount, setSampleCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    const t = () => getHistory(5).then((h) => setSampleCount(h.samples.length)).catch(() => {})
+    t(); const id = setInterval(t, 5000); return () => clearInterval(id)
+  }, [])
+
   return (
     <>
       <Card title="Live telemetry" hint="Last 60 seconds">
@@ -276,6 +283,14 @@ export function MonitorPage({ tele }: { tele: Telemetry | null }) {
           <Sparkline data={cpu} label="CPU" unit="°C" color="var(--accent)" width={360} height={92} surface="var(--bg-elev)" testid="chart-cpu" />
           <Sparkline data={watt} label="Power" unit="W" color="var(--accent-2)" width={360} height={92} surface="var(--bg-elev)" testid="chart-watt" />
           <Sparkline data={fps} label="FPS" color="var(--good)" width={360} height={92} surface="var(--bg-elev)" testid="chart-fps" />
+        </div>
+      </Card>
+      <Card title="History" hint="Recorded once per second by the daemon">
+        <p className="muted" data-testid="history-count">
+          {sampleCount === null ? 'Loading…' : `${sampleCount} sample${sampleCount === 1 ? '' : 's'} in the last 5 minutes`}
+        </p>
+        <div className="row-end">
+          <a className="btn btn-accent" data-testid="history-export" href={historyExportUrl()} download="gpd-forge-telemetry.csv">Export CSV</a>
         </div>
       </Card>
       <Card title="On-screen display" hint={<Soon>RTSS single-owner</Soon>}>

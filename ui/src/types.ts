@@ -23,6 +23,11 @@ export interface Telemetry {
   tdpVerified: boolean
 }
 
+// One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon
+// read it (Unix epoch ms, UTC), stamped by ForgeWorker. Fed by the ring buffer behind GET /history.
+export interface HistorySample { unixMs: number; snap: Telemetry }
+export interface HistoryResponse { samples: HistorySample[] }
+
 export interface Preset { stapmW: number; fastW: number; slowW: number; tctlC: number }
 export interface BatteryBudget { minutesRemaining: number | null; remainingWh: number; dischargeW: number; projections: { watts: number; minutes: number }[] }
 export interface AutoFps { enabled: boolean; targetFps: number }

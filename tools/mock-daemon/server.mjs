@@ -37,6 +37,7 @@ const state = {
   brightness: 70,
   fanMode: 'Auto',
   frozen: [],
+  history: [], // { unixMs, snap } ring, capped at HISTORY_CAPACITY — see pushHistory()
   autoFps: { enabled: false, targetFps: 60 },
   guardian: { enabled: true, autoThrottle: true, tempThrottleC: 90, tempCriticalC: 96, throttleFloorW: 12, batteryLowPct: 15, batteryCriticalPct: 8 },
   ai: { manualAntiStandby: false, vramMb: 512, adapterName: 'AMD Radeon 890M' },
@@ -70,6 +71,23 @@ function telemetry() {
     acConnected: state.acConnected,
     tdpVerified: state.tdpVerified,
   }
+}
+
+// Telemetry history: a small in-memory ring, mirroring GpdForge.History.TelemetryHistory (core/History/).
+// The real daemon's worker appends once per tick; here we append once per GET /telemetry so the E2E
+// (and manual dev use) always has data to show without a background timer.
+const HISTORY_CAPACITY = 3600 // 1h at 1 sample/s, same mental model as the real ring buffer's default
+function pushHistory(snap) {
+  state.history.push({ unixMs: Date.now(), snap })
+  if (state.history.length > HISTORY_CAPACITY) state.history.shift()
+}
+
+const CSV_HEADER = 'unixMs,isoTime,cpuTempC,gpuTempC,packageW,cpuClockMhz,fanRpm,fps,batteryPct,dischargeW,acConnected,tdpVerified'
+/** Mirrors GpdForge.History.CsvExport.ToCsv: header + one row per sample, always header-terminated. */
+function csvFromHistory(samples) {
+  const rows = samples.map(({ unixMs, snap: t }) =>
+    [unixMs, new Date(unixMs).toISOString(), t.cpuTempC, t.gpuTempC, t.packageW, t.cpuClockMhz, t.fanRpm, t.fps, t.batteryPct, t.dischargeW, t.acConnected, t.tdpVerified].join(','))
+  return [CSV_HEADER, ...rows].join('\n') + '\n'
 }
 
 /** Simulate the closed loop: high requests get reverted by "firmware". */
@@ -153,8 +171,27 @@ const server = http.createServer(async (req, res) => {
   if (method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
 
   if (method === 'GET' && path === '/health') return send(res, 200, { ok: true, version: VERSION, model: MODEL })
-  if (method === 'GET' && path === '/telemetry') return send(res, 200, telemetry())
+  if (method === 'GET' && path === '/telemetry') {
+    const t = telemetry()
+    pushHistory(t)
+    return send(res, 200, t)
+  }
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
+
+  if (method === 'GET' && path === '/history') {
+    const minutes = Math.max(1, Math.min(60, Number(url.searchParams.get('minutes')) || 5))
+    const since = Date.now() - minutes * 60_000
+    return send(res, 200, { samples: state.history.filter((s) => s.unixMs >= since) })
+  }
+  if (method === 'GET' && path === '/history/export.csv') {
+    const csv = csvFromHistory(state.history)
+    res.writeHead(200, {
+      'content-type': 'text/csv',
+      'content-disposition': 'attachment; filename="gpd-forge-telemetry.csv"',
+      ...CORS,
+    })
+    return res.end(csv)
+  }
 
   if (method === 'GET' && path === '/telemetry/stream') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', ...CORS })

@@ -4,7 +4,7 @@
 // (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. Calls throw on failure;
 // callers decide how to degrade (the dashboard shows "Offline" and keeps the last values).
 
-import type { Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo } from './types'
+import type { Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo, HistoryResponse } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
 
@@ -70,3 +70,7 @@ export const getAi = () => json<AiInfo>('/ai')
 export const setAntiStandby = (enable: boolean) => json<AntiStandby>('/ai/anti-standby', post({ enable }))
 export const requestVram = (requestedMb?: number) =>
   json<VramInfo & { applied: boolean; requiresBiosReboot: boolean }>('/ai/vram', post({ requestedMb }))
+
+// --- telemetry history + CSV export ---
+export const getHistory = (minutes?: number) => json<HistoryResponse>(`/history${minutes ? `?minutes=${minutes}` : ''}`)
+export const historyExportUrl = () => `${BASE}/history/export.csv`
