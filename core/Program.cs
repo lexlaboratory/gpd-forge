@@ -122,7 +122,11 @@ if (args.Contains("--probe-standby"))
     return;
 }
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,   // find wwwroot next to the binary, not the service CWD
+});
 
 builder.Services.AddWindowsService(options => options.ServiceName = "GPD Forge");
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
@@ -172,6 +176,10 @@ builder.WebHost.UseUrls("http://127.0.0.1:8787");
 
 var app = builder.Build();
 app.UseCors();
+// Serve the web UI (wwwroot) so it can be opened in a browser at http://127.0.0.1:8787 — no
+// unsigned desktop binary needed (works under Smart App Control).
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Json(new { ok = true, version = "0.0.0", model = "GPD Win 4 (G1618-04)" }));
 
@@ -212,6 +220,9 @@ app.MapGet("/standby", () => Results.Json(new
     lastRestore = (string[]?)null,
 }));
 app.MapPost("/standby/restore", () => Results.Json(new { restored = new[] { "tdp", "fan", "hid" } }));
+
+// SPA fallback: any non-API path returns index.html (no-op if wwwroot/index.html is absent).
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

@@ -1,7 +1,7 @@
 // GPD Forge UI — dashboard shell. GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
 import type { Mode, ModeId, Telemetry } from './types'
-import { getTelemetry, getMode, setMode as apiSetMode, setTdp as apiSetTdp, HAS_API, type TdpResult } from './api'
+import { getTelemetry, getMode, setMode as apiSetMode, setTdp as apiSetTdp, type TdpResult } from './api'
 import { JobsPanel } from './JobsPanel'
 import { StandbyPanel } from './StandbyPanel'
 
@@ -30,7 +30,7 @@ export function App() {
   const [auto, setAuto] = useState(true)          // automatic: pick the mode from the app in focus
   const [tdp, setTdp] = useState(20)
   const [tdpResult, setTdpResult] = useState<TdpResult | null>(null)
-  const [connected, setConnected] = useState(!HAS_API)
+  const [connected, setConnected] = useState(false)
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Telemetry poll — drives the tiles and the connection state.
@@ -71,7 +71,7 @@ export function App() {
 
   const verified = tdpResult ? tdpResult.verified : (tele?.tdpVerified ?? true)
   const tdpBadge = verified ? 'verified' : 'unverified'
-  const connLabel = HAS_API ? (connected ? 'Live' : 'Offline') : 'Demo'
+  const connLabel = connected ? 'Live' : 'Offline'
   const activeMode = MODES.find((m) => m.id === active)
 
   return (
