@@ -160,6 +160,8 @@ builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<JobsState>();
+builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
+builder.Services.AddSingleton<ProfileApplier>();
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
@@ -187,10 +189,15 @@ app.MapGet("/telemetry", async (ITelemetryService t, CancellationToken ct) => Re
 
 app.MapGet("/mode", (ModeState m) => Results.Json(new { active = m.Active }));
 
-app.MapPost("/mode", (ModeRequest req, ModeState m) =>
+app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier, CancellationToken ct) =>
 {
-    if (!string.IsNullOrWhiteSpace(req.Name)) m.Active = req.Name!;
-    return Results.Json(new { active = m.Active });
+    string outcome = "unchanged";
+    if (!string.IsNullOrWhiteSpace(req.Name))
+    {
+        m.Active = req.Name!;
+        outcome = (await applier.ApplyAsync(m.Active, ct)).ToString();   // apply the mode's TDP (yields if a rival runs)
+    }
+    return Results.Json(new { active = m.Active, tdp = outcome });
 });
 
 // Safe today: the wired backend is a stub (no hardware write). Becomes real in #3 behind approval.

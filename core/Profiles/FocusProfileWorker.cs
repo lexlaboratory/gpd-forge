@@ -12,6 +12,7 @@ public sealed class FocusProfileWorker(
     IForegroundApp foreground,
     ITelemetryService telemetry,
     ModeState mode,
+    ProfileApplier applier,
     ILogger<FocusProfileWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -30,6 +31,7 @@ public sealed class FocusProfileWorker(
                 {
                     mode.Active = switched;
                     logger.LogInformation("Auto-profile -> {Mode} (foreground={Proc})", switched, proc ?? "(none)");
+                    await applier.ApplyAsync(switched, ct);   // apply the mode's TDP (yields if a rival is running)
                 }
             }
             catch (Exception ex) { logger.LogDebug(ex, "focus tick"); }

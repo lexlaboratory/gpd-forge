@@ -48,10 +48,12 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [ ] Optional MCP server exposing telemetry/control
 
 ## Phase 4 — Replacement
-- [ ] **Conflict guard**: MotionAssistant + GPD Tool running *at the same time* clash and collapse the
-      device's performance (field-confirmed). On startup, detect either/both running and offer to stop them
-      before GPD Forge takes over — never let two power controllers fight.
-- [ ] Uninstall/disable MA + GPDT services safely
+- [x] **Conflict guard**: detection + **auto-yield** done — `ProfileApplier` skips the TDP write while
+      MotionAssistant / GPD Tool are running (field-confirmed clash), so GPD Forge takes over power only
+      when it is the sole controller. `install-gpd-forge.ps1 -Substitute` stops/disables the incumbents.
+- [x] **Auto-TDP per mode**: the active mode (auto or manual) applies its TDP preset through the closed
+      loop, guarded by the conflict check. Unit-tested.
+- [ ] Uninstall/disable MA + GPDT services safely (installer `-Substitute` covers stop+disable)
 - [ ] Take ownership of RTSS / driver / autostart
 - [ ] Firmware-update assistant with preconditions
 - [ ] First public OSS release (semantic version + changelog)
