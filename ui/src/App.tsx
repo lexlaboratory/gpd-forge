@@ -27,6 +27,12 @@ export function App() {
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
   const [connected, setConnected] = useState(false)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('forge-theme') as 'dark' | 'light') || 'dark')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('forge-theme', theme)
+  }, [theme])
 
   useEffect(() => {
     let alive = true
@@ -91,7 +97,7 @@ export function App() {
           {page === 'profiles'   && <ProfilesPage />}
           {page === 'monitor'    && <MonitorPage tele={tele} />}
           {page === 'system'     && <SystemPage tele={tele} />}
-          {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} />}
+          {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} />}
         </div>
       </main>
     </div>

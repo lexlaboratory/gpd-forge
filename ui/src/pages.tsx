@@ -224,7 +224,9 @@ export function SystemPage({ tele }: { tele: Telemetry | null }) {
 }
 
 // --- Settings -----------------------------------------------------------------
-export function SettingsPage({ auto, setAuto }: { auto: boolean; setAuto: (v: boolean) => void }) {
+export function SettingsPage({ auto, setAuto, theme, setTheme }: {
+  auto: boolean; setAuto: (v: boolean) => void; theme: 'dark' | 'light'; setTheme: (t: 'dark' | 'light') => void
+}) {
   return (
     <>
       <Card title="Automation">
@@ -232,6 +234,11 @@ export function SettingsPage({ auto, setAuto }: { auto: boolean; setAuto: (v: bo
           <Toggle on={auto} onClick={() => setAuto(!auto)} label="Auto-optimize by app in focus" testid="settings-auto" />
         </div>
         <p className="muted">When on, GPD Forge switches modes automatically from the foreground app.</p>
+      </Card>
+      <Card title="Appearance">
+        <div className="row">
+          <Toggle on={theme === 'light'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} label={theme === 'light' ? 'Light theme' : 'Dark theme'} testid="settings-theme" />
+        </div>
       </Card>
       <Card title="About">
         <p className="muted">GPD Forge — the definitive open-source tuning tool for GPD handhelds. GPL-3.0 · lexlaboratory · github.com/lexlaboratory/gpd-forge</p>
