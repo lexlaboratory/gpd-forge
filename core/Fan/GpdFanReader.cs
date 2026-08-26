@@ -55,7 +55,11 @@ public static class GpdFanReader
         }
         catch (Exception ex)
         {
-            return new EcProbeResult(vendor, product, version, dev, null, ex.Message);
+            // Reflection into LHM's PawnIo wraps the real failure in a TargetInvocationException;
+            // unwrap to the root so the probe reports the actual cause (e.g. driver not installed).
+            var root = ex;
+            while (root.InnerException is not null) root = root.InnerException;
+            return new EcProbeResult(vendor, product, version, dev, null, $"{root.GetType().Name}: {root.Message}");
         }
     }
 }

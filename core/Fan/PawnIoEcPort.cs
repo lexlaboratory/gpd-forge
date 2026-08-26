@@ -13,7 +13,7 @@ namespace GpdForge.Fan;
 
 public sealed class PawnIoEcPort : IEcPort
 {
-    private const string ModuleResource = "LibreHardwareMonitor.Resources.PawnIO.LpcIO.bin";
+    private const string ModuleResource = "LibreHardwareMonitor.Resources.PawnIo.LpcIO.bin";
 
     private readonly object _pawn;
     private readonly MethodInfo _execute;

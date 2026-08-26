@@ -20,11 +20,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
     <!-- Read-only telemetry via WMI (no kernel driver) — the default, zero-risk path. -->
-    <PackageReference Include="System.Management" Version="9.0.0" />
+    <PackageReference Include="System.Management" Version="10.0.11" />
     <!-- Optional richer read-only sensors (package power, temps, fan RPM) via LibreHardwareMonitor.
          Loads its own read-only kernel driver, so it is ONLY used when GPDFORGE_ENABLE_HARDWARE=1
          + elevation. Default telemetry stays pure-WMI. -->
-    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.4" />
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.7-pre726" />
   </ItemGroup>
 
 </Project>
