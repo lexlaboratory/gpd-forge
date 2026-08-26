@@ -1,0 +1,83 @@
+name: release
+
+# Cut a release when a vX.Y.Z tag is pushed (or run manually).
+# The PORTABLE bundle (Via 0: signed dotnet host + browser UI, no unsigned binary) is always built
+# and attached. The native desktop .exe/installer is built and SIGNED only when signing is enabled
+# (repo variable SIGN_RELEASE=true + the Azure Trusted Signing secrets) — an unsigned native binary
+# would be blocked by Smart App Control anyway, so it stays gated until you activate signing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without the leading v (e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: write   # create the GitHub Release
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '9.0.x' }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install UI deps
+        run: npm --prefix ui ci
+      - name: Package portable bundle
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          if (-not $v) { $v = "${{ github.ref_name }}".TrimStart('v') }
+          Write-Host "Packaging portable v$v"
+          ./scripts/package-portable.ps1 -Version $v
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable
+          path: dist-release/*.zip
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*.zip
+          body_path: CHANGELOG.md
+
+  signed-native:
+    runs-on: windows-latest
+    needs: portable
+    # Only when signing is configured. Until then this whole job is skipped, so the release still
+    # ships the portable bundle. See docs/signing.md to activate.
+    if: startsWith(github.ref, 'refs/tags/') && vars.SIGN_RELEASE == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install UI deps
+        run: npm --prefix ui ci
+      - name: Build the native desktop app (Tauri) + installer
+        run: npm --prefix ui run tauri -- build
+      - name: Sign with Azure Trusted Signing
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: ui/src-tauri/target/release/bundle
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+      - name: Attach signed artifacts to the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ui/src-tauri/target/release/bundle/nsis/*.exe
+            ui/src-tauri/target/release/bundle/msi/*.msi

@@ -10,7 +10,7 @@
 import http from 'node:http'
 
 const PORT = Number(process.env.PORT ?? 8787)
-const VERSION = '0.0.0-mock'
+const VERSION = '0.1.0-mock'
 const MODEL = 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370'
 
 const MODES = new Set(['gaming', 'ai', 'windows', 'battery', 'standby'])
