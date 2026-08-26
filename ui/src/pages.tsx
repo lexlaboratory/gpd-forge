@@ -1,10 +1,11 @@
 // GPD Forge UI — pages. GPL-3.0-or-later.
-import { useEffect, useRef, useState } from 'react'
-import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo } from './types'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import type { Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
   getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian,
-  getAi, setAntiStandby, getHistory, historyExportUrl, type TdpResult,
+  getAi, setAntiStandby, getHistory, historyExportUrl, importMotionAssistant,
+  getPowerSource, setPowerSource, settingsExportUrl, importSettings, type TdpResult,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -251,16 +252,60 @@ const RULES = [
   { app: 'anything else (on AC)', mode: 'Windows' },
   { app: 'anything else (on battery)', mode: 'Battery' },
 ]
+function MotionAssistantImportCard() {
+  const toast = useToast()
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const doImport = async () => {
+    setBusy(true)
+    const r = await importMotionAssistant().catch(() => null)
+    setBusy(false)
+    if (!r) { toast.push({ kind: 'error', message: 'MotionAssistant import failed' }); return }
+    setResult(r)
+    toast.push({
+      kind: r.found > 0 ? 'success' : 'info',
+      message: r.found > 0 ? `Imported ${r.found} profile${r.found === 1 ? '' : 's'} from MotionAssistant` : `No MotionAssistant profiles found at ${r.path}`,
+    })
+  }
+
+  return (
+    <Card title="Import from MotionAssistant" hint="Reads MotionAssistant's saved per-profile TDP">
+      <div className="row">
+        <button className="btn btn-accent" data-testid="import-ma" onClick={doImport} disabled={busy}>
+          {busy ? 'Importing…' : 'Import from MotionAssistant'}
+        </button>
+      </div>
+      {result && (
+        <ul className="rules" data-testid="import-ma-results">
+          {result.profiles.length === 0 && <li className="rule">No profiles found at {result.path}</li>}
+          {result.profiles.map((p) => (
+            <li key={p.name} className="rule">
+              <span className="rule-app">{p.name}</span>
+              <span className="rule-arrow">→</span>
+              <span className="rule-mode">{p.stapmW}/{p.fastW}/{p.slowW} W · {p.tctlC}°C</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="muted">Apply an imported profile's numbers on the Power page's presets — this only reads and lists them.</p>
+    </Card>
+  )
+}
+
 export function ProfilesPage() {
   return (
-    <Card title="Per-app profiles" hint="Foreground app → mode (with anti-flapping)">
-      <ul className="rules">
-        {RULES.map((r) => (
-          <li key={r.app} className="rule"><span className="rule-app">{r.app}</span><span className="rule-arrow">→</span><span className="rule-mode">{r.mode}</span></li>
-        ))}
-      </ul>
-      <p className="muted">Custom, versioned, shareable per-game profiles (import from the community) — <Soon />.</p>
-    </Card>
+    <>
+      <MotionAssistantImportCard />
+      <Card title="Per-app profiles" hint="Foreground app → mode (with anti-flapping)">
+        <ul className="rules">
+          {RULES.map((r) => (
+            <li key={r.app} className="rule"><span className="rule-app">{r.app}</span><span className="rule-arrow">→</span><span className="rule-mode">{r.mode}</span></li>
+          ))}
+        </ul>
+        <p className="muted">Custom, versioned, shareable per-game profiles (import from the community) — <Soon />.</p>
+      </Card>
+    </>
   )
 }
 
@@ -362,6 +407,84 @@ function BatteryBudgetCard() {
 }
 
 // --- Settings -----------------------------------------------------------------
+function PowerSourceCard() {
+  const toast = useToast()
+  const [cfg, setCfg] = useState<PowerSourceConfig | null>(null)
+  useEffect(() => { getPowerSource().then(setCfg).catch(() => {}) }, [])
+
+  const patch = async (p: Partial<PowerSourceConfig>) => {
+    const n = await setPowerSource(p).catch(() => null)
+    if (n) { setCfg(n); toast.push({ kind: 'info', message: 'Power source config updated' }) }
+  }
+
+  if (!cfg) return null
+  return (
+    <Card title="Power source" hint="Switch mode automatically when AC connects or disconnects">
+      <div className="row">
+        <Toggle on={cfg.enabled} onClick={() => patch({ enabled: !cfg.enabled })} label={cfg.enabled ? 'Enabled' : 'Disabled'} testid="powersource-enabled" />
+      </div>
+      <p className="muted">On battery</p>
+      <div className="chips" data-testid="powersource-battery-modes">
+        {MODES.map((m) => (
+          <button key={m.id} className={`chip-btn ${cfg.onBatteryMode === m.id ? 'on' : ''}`}
+            onClick={() => patch({ onBatteryMode: m.id })} data-testid={`powersource-battery-${m.id}`}>{m.label}</button>
+        ))}
+      </div>
+      <p className="muted">On AC</p>
+      <div className="chips" data-testid="powersource-ac-modes">
+        {MODES.map((m) => (
+          <button key={m.id} className={`chip-btn ${cfg.onAcMode === m.id ? 'on' : ''}`}
+            onClick={() => patch({ onAcMode: m.id })} data-testid={`powersource-ac-${m.id}`}>{m.label}</button>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+function BackupRestoreCard() {
+  const toast = useToast()
+  const [pending, setPending] = useState<unknown>(null)
+  const [fileName, setFileName] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFileName(file.name)
+    setPending(null)
+    file.text().then((text) => {
+      try { setPending(JSON.parse(text)) }
+      catch { toast.push({ kind: 'error', message: `${file.name} is not valid JSON` }) }
+    }).catch(() => toast.push({ kind: 'error', message: `Could not read ${file.name}` }))
+  }
+
+  const onApply = async () => {
+    if (!pending) return
+    setBusy(true)
+    const r = await importSettings(pending).catch(() => null)
+    setBusy(false)
+    if (!r) { toast.push({ kind: 'error', message: 'Restore failed' }); return }
+    toast.push({ kind: 'success', message: r.applied.length ? `Restored: ${r.applied.join(', ')}` : 'Nothing recognized in that file' })
+    setPending(null)
+    setFileName(null)
+  }
+
+  return (
+    <Card title="Backup / restore" hint="Export a full settings snapshot, or apply one back">
+      <div className="row">
+        <a className="btn btn-accent" data-testid="settings-export" href={settingsExportUrl()} download="gpd-forge-settings.json">Export settings</a>
+      </div>
+      <div className="row">
+        <input type="file" accept="application/json" data-testid="settings-import-file" aria-label="Settings backup file" onChange={onFile} />
+        <button className="btn" data-testid="settings-import-apply" onClick={onApply} disabled={!pending || busy}>
+          {busy ? 'Restoring…' : 'Restore backup'}
+        </button>
+      </div>
+      {fileName && <p className="muted" data-testid="settings-import-filename">Loaded: {fileName}</p>}
+    </Card>
+  )
+}
+
 function GuardianCard() {
   const toast = useToast()
   const [g, setG] = useState<Guardian | null>(null)
@@ -409,7 +532,9 @@ export function SettingsPage({ auto, setAuto, theme, setTheme }: {
           <Toggle on={theme === 'dark'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} label="Dark theme" testid="settings-theme" />
         </div>
       </Card>
+      <PowerSourceCard />
       <GuardianCard />
+      <BackupRestoreCard />
       <Card title="About">
         <p className="muted">GPD Forge — the definitive open-source tuning tool for GPD handhelds. GPL-3.0 · lexlaboratory · github.com/lexlaboratory/gpd-forge</p>
       </Card>

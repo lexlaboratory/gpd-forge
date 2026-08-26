@@ -40,6 +40,13 @@ const state = {
   history: [], // { unixMs, snap } ring, capped at HISTORY_CAPACITY — see pushHistory()
   autoFps: { enabled: false, targetFps: 60 },
   guardian: { enabled: true, autoThrottle: true, tempThrottleC: 90, tempCriticalC: 96, throttleFloorW: 12, batteryLowPct: 15, batteryCriticalPct: 8 },
+  powerSource: { enabled: false, onBatteryMode: 'battery', onAcMode: 'windows' },
+  // Canned MotionAssistant import result — enough for the UI/E2E to exercise the flow without a
+  // real MotionAssistant install.
+  motionAssistantProfiles: [
+    { name: 'Gaming', stapmW: 25, fastW: 33, slowW: 28, tctlC: 95 },
+    { name: 'Silent', stapmW: 10, fastW: 15, slowW: 12, tctlC: 85 },
+  ],
   ai: { manualAntiStandby: false, vramMb: 512, adapterName: 'AMD Radeon 890M' },
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
@@ -282,6 +289,53 @@ const server = http.createServer(async (req, res) => {
       if (b?.[k] !== undefined && b[k] !== null) g[k] = b[k]
     }
     return send(res, 200, g)
+  }
+
+  // MotionAssistant .ini importer — mock returns a small canned set so the E2E has something to
+  // import without a real MotionAssistant install.
+  if (method === 'POST' && path === '/import/motionassistant') {
+    const profiles = state.motionAssistantProfiles
+    return send(res, 200, { found: profiles.length, profiles, path: 'C:\\Program Files\\Motion Assistant\\Profiles' })
+  }
+
+  // Per-power-source auto mode-switch (AC vs battery).
+  if (method === 'GET' && path === '/power-source') return send(res, 200, state.powerSource)
+  if (method === 'POST' && path === '/power-source') {
+    const b = await readBody(req)
+    const p = state.powerSource
+    if (b?.enabled !== undefined && b.enabled !== null) p.enabled = !!b.enabled
+    if (b?.onBatteryMode) p.onBatteryMode = b.onBatteryMode
+    if (b?.onAcMode) p.onAcMode = b.onAcMode
+    return send(res, 200, p)
+  }
+
+  // Settings backup/restore — aggregates the same tunables the real daemon does; tolerant import.
+  if (method === 'GET' && path === '/settings/export') {
+    return send(res, 200, {
+      modePresets: state.presets,
+      guardian: state.guardian,
+      fanMode: state.fanMode,
+      brightness: state.brightness,
+      powerSource: state.powerSource,
+      autoFps: state.autoFps,
+    })
+  }
+  if (method === 'POST' && path === '/settings/import') {
+    const b = await readBody(req)
+    const applied = []
+    if (b?.modePresets) { Object.assign(state.presets, b.modePresets); applied.push('modePresets') }
+    if (b?.guardian) { Object.assign(state.guardian, b.guardian); applied.push('guardian') }
+    if (b?.fanMode) { state.fanMode = b.fanMode; applied.push('fanMode') }
+    if (b?.brightness !== undefined && b.brightness !== null) {
+      state.brightness = Math.max(0, Math.min(100, Number(b.brightness)))
+      applied.push('brightness')
+    }
+    if (b?.powerSource) { Object.assign(state.powerSource, b.powerSource); applied.push('powerSource') }
+    if (b?.autoFps) {
+      state.autoFps = { enabled: !!b.autoFps.enable, targetFps: b.autoFps.targetFps > 0 ? b.autoFps.targetFps : state.autoFps.targetFps }
+      applied.push('autoFps')
+    }
+    return send(res, 200, { applied })
   }
 
   // Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.

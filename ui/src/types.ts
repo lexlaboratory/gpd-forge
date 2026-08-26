@@ -43,6 +43,23 @@ export interface AntiStandby { active: boolean; holders: number; manual: boolean
 export interface VramInfo { reportedMb: number; adapterName: string | null; available: boolean; advisory: string }
 export interface AiInfo { antiStandby: AntiStandby; sustainedProfile: Preset; vram: VramInfo }
 
+// One profile recovered from a MotionAssistant .ini file (mirror of core/Import/ImportedProfile).
+export interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: number; tctlC: number }
+export interface ImportResult { found: number; profiles: ImportedProfile[]; path: string }
+
+// Per-power-source (AC vs battery) auto mode-switch config.
+export interface PowerSourceConfig { enabled: boolean; onBatteryMode: string; onAcMode: string }
+
+// Full settings snapshot (mirror of GET /settings/export).
+export interface SettingsExport {
+  modePresets: Record<string, Preset>
+  guardian: Guardian
+  fanMode: string
+  brightness: number | null
+  powerSource: PowerSourceConfig
+  autoFps: AutoFps
+}
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'blocked'
 
 export interface Job {

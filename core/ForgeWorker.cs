@@ -26,8 +26,14 @@ public sealed class ForgeWorker(
     FpsTdpController fpsController,
     FreezerService freezer,
     GuardianService guardian,
-    TelemetryHistory history) : BackgroundService
+    TelemetryHistory history,
+    ProfileApplier profileApplier,
+    PowerSourceState powerSource) : BackgroundService
 {
+    // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
+    // than re-applying every tick. Null until the first snapshot arrives.
+    private bool? _lastAcConnected;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("GPD Forge service starting.");
@@ -39,6 +45,20 @@ public sealed class ForgeWorker(
             {
                 var snapshot = await telemetry.ReadAsync(stoppingToken);
                 history.Add(new HistorySample(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), snapshot));
+
+                // Per-power-source auto mode-switch — only on the AC/battery edge, mirroring how
+                // POST /mode applies: flip ModeState.Active, then apply it through the same
+                // ProfileApplier (yields if another power controller owns TDP).
+                if (_lastAcConnected is bool prevAc && prevAc != snapshot.AcConnected)
+                {
+                    string? desired = PowerSourceProfiles.Resolve(snapshot.AcConnected, powerSource.Config, mode.Active);
+                    if (desired is not null)
+                    {
+                        mode.Active = desired;
+                        await profileApplier.ApplyAsync(mode.Active, stoppingToken);
+                    }
+                }
+                _lastAcConnected = snapshot.AcConnected;
 
                 // Thermal/battery guardian — evaluated every tick. A safety throttle takes priority
                 // over auto-FPS; alerts are logged and surfaced via GET /guardian.

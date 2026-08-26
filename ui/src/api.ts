@@ -4,7 +4,10 @@
 // (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. Calls throw on failure;
 // callers decide how to degrade (the dashboard shows "Offline" and keeps the last values).
 
-import type { Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo, HistoryResponse } from './types'
+import type {
+  Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
+  HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
+} from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
 
@@ -74,3 +77,15 @@ export const requestVram = (requestedMb?: number) =>
 // --- telemetry history + CSV export ---
 export const getHistory = (minutes?: number) => json<HistoryResponse>(`/history${minutes ? `?minutes=${minutes}` : ''}`)
 export const historyExportUrl = () => `${BASE}/history/export.csv`
+
+// --- MotionAssistant .ini importer ---
+export const importMotionAssistant = () => json<ImportResult>('/import/motionassistant', post())
+
+// --- per-power-source (AC vs battery) auto mode-switch ---
+export const getPowerSource = () => json<PowerSourceConfig>('/power-source')
+export const setPowerSource = (patch: Partial<PowerSourceConfig>) => json<PowerSourceConfig>('/power-source', post(patch))
+
+// --- settings backup / restore ---
+export const exportSettings = () => json<SettingsExport>('/settings/export')
+export const importSettings = (blob: unknown) => json<{ applied: string[] }>('/settings/import', post(blob))
+export const settingsExportUrl = () => `${BASE}/settings/export`

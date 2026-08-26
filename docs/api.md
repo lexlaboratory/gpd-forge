@@ -20,6 +20,8 @@ interface Telemetry {
   fanRpm: number; fanDutyPct: number; fps: number
   batteryPct: number; dischargeW: number; acConnected: boolean; tdpVerified: boolean
 }
+
+interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: number; tctlC: number }
 ```
 
 ## Endpoints
@@ -59,6 +61,24 @@ behavior that replaces MotionAssistant's blind 30s re-apply). `400` if `stapmW` 
   preset for every mode, keyed by mode id.
 - `POST /profiles/:mode { stapmW, fastW, slowW, tctlC } → { mode: ModeId, stapmW, fastW, slowW, tctlC }` —
   persists that mode's preset (what the Power page's "Save preset" writes).
+
+### `POST /import/motionassistant`  (MotionAssistant `.ini` profile importer)
+`200 → { found: number, profiles: ImportedProfile[], path: string }` — reads every `*.ini` file
+under MotionAssistant's saved-profiles directory (default `C:\Program Files\Motion
+Assistant\Profiles`) and parses each `[ProfileName]` section into an `ImportedProfile`. Read-only
+and tolerant: an absent directory or a malformed file never throws — worst case is `found: 0` with
+`profiles: []` and `path` set to where GPD Forge looked. This endpoint only *returns* the parsed
+profiles; to apply one, POST its numbers to the existing `POST /profiles/:mode`.
+
+### `GET /power-source`  ·  `POST /power-source`  (per-power-source auto mode-switch)
+- `GET → { enabled: boolean, onBatteryMode: ModeId, onAcMode: ModeId }`
+- `POST { enabled?, onBatteryMode?, onAcMode? } → { …config }` — partial update (only sent fields
+  change; a blank/whitespace mode string is ignored rather than clearing the field).
+
+When enabled, the daemon switches the active mode the instant AC connects or disconnects (edge-
+triggered, not every tick) — e.g. auto-drop to Battery mode on unplug, back to Windows mode on
+plug-in. Applied the same way `POST /mode` is: through `ProfileApplier`, which yields if another
+power controller (MotionAssistant/GPD Tool) is running.
 
 ### `GET /fan`  ·  `POST /fan`
 - `GET → { mode: 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive' | 'Manual' }`
@@ -130,6 +150,19 @@ clears once temps recover; on battery it raises low/critical alerts. Throttle ac
 - `POST /ai/vram { requestedMb?: number } → { reportedMb, adapterName, available, applied: false,
   requiresBiosReboot: true, advisory }` — always `applied:false`: GPD Forge does not perform a blind UMA
   write (see `vram` above). Honest by construction rather than faking success.
+
+### `GET /settings/export`  ·  `POST /settings/import`  (settings backup / restore)
+- `GET /settings/export → { modePresets: Record<ModeId, Preset>, guardian: Guardian-config,
+  fanMode: string, brightness: number | null, powerSource: PowerSource-config, autoFps: AutoFps }`
+  — a straightforward aggregation of every tunable above; no new persistence layer, this just reads
+  the same services `GET /profiles`, `GET /guardian`, `GET /fan`, `GET /display`, `GET
+  /power-source`, and `GET /auto-fps` each already expose.
+- `POST /settings/import { modePresets?, guardian?, fanMode?, brightness?, powerSource?, autoFps? }
+  → { applied: string[] }` — tolerant: every top-level section is optional and applied only if
+  present (unknown JSON fields are ignored), and each section goes through the exact same
+  clamping/merge its own POST endpoint uses (e.g. `modePresets` entries are clamped via
+  `ModeProfiles.Set`, `guardian` merges partially like `POST /guardian`). `applied` lists which
+  sections were actually recognized and applied.
 
 ### `GET /standby`  ·  `POST /standby/restore`  (Standby Doctor)
 - `GET → { lastDrainPctPerHour: number, topWakeReason: string, blockers: string[], lastRestore: string[] | null }`

@@ -16,6 +16,7 @@ using GpdForge.Display;
 using GpdForge.SystemControl;
 using GpdForge.Guardian;
 using GpdForge.History;
+using GpdForge.Import;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -196,6 +197,13 @@ builder.Services.AddSingleton<FreezerService>(sp =>
 builder.Services.AddSingleton<FpsTdpController>();
 builder.Services.AddSingleton<AutoFpsState>();
 builder.Services.AddSingleton<GuardianService>();
+
+// Migration + per-power-source config: reading MotionAssistant's saved profiles is read-only
+// filesystem access (same trust level as the WMI reads above), so it is NOT gated behind
+// GPDFORGE_ENABLE_HARDWARE.
+builder.Services.AddSingleton<IIniFileSource, FileIniSource>();
+builder.Services.AddSingleton<PowerSourceState>();
+
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
@@ -319,6 +327,38 @@ app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
     return Results.Json(new { mode, stapmW = s.StapmW, fastW = s.FastW, slowW = s.SlowW, tctlC = s.TctlC });
 });
 
+// MotionAssistant .ini importer: read-only, never throws. Only RETURNS parsed profiles — applying
+// one reuses the existing POST /profiles/:mode above.
+app.MapPost("/import/motionassistant", (IIniFileSource src) =>
+{
+    string path = src.ProfilesDirectory;
+    if (!src.DirectoryExists())
+        return Results.Json(new { found = 0, profiles = Array.Empty<ImportedProfile>(), path });
+
+    var profiles = new List<ImportedProfile>();
+    foreach (var text in src.ReadAllIniFiles())
+        profiles.AddRange(MotionAssistantImporter.ParseIni(text));
+
+    return Results.Json(new { found = profiles.Count, profiles, path });
+});
+
+// Per-power-source auto mode-switch (AC vs battery). ForgeWorker applies it on the AC/battery edge.
+app.MapGet("/power-source", (PowerSourceState s) => Results.Json(new
+{
+    enabled = s.Config.Enabled, onBatteryMode = s.Config.OnBatteryMode, onAcMode = s.Config.OnAcMode,
+}));
+app.MapPost("/power-source", (PowerSourceRequest r, PowerSourceState s) =>
+{
+    var c = s.Config;
+    s.Config = c with
+    {
+        Enabled = r.Enabled ?? c.Enabled,
+        OnBatteryMode = string.IsNullOrWhiteSpace(r.OnBatteryMode) ? c.OnBatteryMode : r.OnBatteryMode,
+        OnAcMode = string.IsNullOrWhiteSpace(r.OnAcMode) ? c.OnAcMode : r.OnAcMode,
+    };
+    return Results.Json(new { enabled = s.Config.Enabled, onBatteryMode = s.Config.OnBatteryMode, onAcMode = s.Config.OnAcMode });
+});
+
 // Display brightness (WMI, no driver).
 // Fan mode preference (Auto/Quiet/Balanced/Aggressive/Manual). Stored now; applied when the EC
 // fan driver lands. A real setting, not a dead control.
@@ -396,6 +436,78 @@ app.MapPost("/guardian", (GuardianRequest r, GuardianService g) =>
     });
 });
 
+// Settings backup / restore: a straightforward aggregation over the existing services/state above
+// (no new persistence layer). Import is tolerant — each section applies only if present, unknown
+// JSON fields are ignored by the default deserializer, and every value still goes through the same
+// clamping/merge the section's own POST endpoint uses.
+app.MapGet("/settings/export", (GuardianService guardian, FanState fan, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
+    Results.Json(new
+    {
+        modePresets = ModeProfiles.Map.ToDictionary(k => k.Key, v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC }),
+        guardian = new
+        {
+            enabled = guardian.Config.Enabled, autoThrottle = guardian.Config.AutoThrottle,
+            tempThrottleC = guardian.Config.TempThrottleC, tempCriticalC = guardian.Config.TempCriticalC,
+            throttleFloorW = guardian.Config.ThrottleFloorW, batteryLowPct = guardian.Config.BatteryLowPct,
+            batteryCriticalPct = guardian.Config.BatteryCriticalPct,
+        },
+        fanMode = fan.Mode,
+        brightness = display.GetBrightness(),
+        powerSource = new { enabled = powerSource.Config.Enabled, onBatteryMode = powerSource.Config.OnBatteryMode, onAcMode = powerSource.Config.OnAcMode },
+        autoFps = new { enabled = autoFps.Enabled, targetFps = autoFps.TargetFps },
+    }));
+
+app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
+{
+    var applied = new List<string>();
+
+    if (req.ModePresets is not null)
+    {
+        foreach (var (presetMode, edit) in req.ModePresets)
+        {
+            if (string.IsNullOrWhiteSpace(presetMode) || edit is null) continue;
+            ModeProfiles.Set(presetMode, new GpdForge.Tdp.TdpProfile(edit.StapmW, edit.FastW, edit.SlowW, edit.TctlC));
+        }
+        applied.Add("modePresets");
+    }
+    if (req.Guardian is not null)
+    {
+        var r = req.Guardian; var c = guardian.Config;
+        guardian.Configure(c with
+        {
+            Enabled = r.Enabled ?? c.Enabled,
+            AutoThrottle = r.AutoThrottle ?? c.AutoThrottle,
+            TempThrottleC = r.TempThrottleC ?? c.TempThrottleC,
+            TempCriticalC = r.TempCriticalC ?? c.TempCriticalC,
+            ThrottleFloorW = r.ThrottleFloorW ?? c.ThrottleFloorW,
+            BatteryLowPct = r.BatteryLowPct ?? c.BatteryLowPct,
+            BatteryCriticalPct = r.BatteryCriticalPct ?? c.BatteryCriticalPct,
+        });
+        applied.Add("guardian");
+    }
+    if (!string.IsNullOrWhiteSpace(req.FanMode)) { fan.Mode = req.FanMode; applied.Add("fanMode"); }
+    if (req.Brightness is int level) { display.SetBrightness(level); applied.Add("brightness"); }
+    if (req.PowerSource is not null)
+    {
+        var r = req.PowerSource; var c = powerSource.Config;
+        powerSource.Config = c with
+        {
+            Enabled = r.Enabled ?? c.Enabled,
+            OnBatteryMode = string.IsNullOrWhiteSpace(r.OnBatteryMode) ? c.OnBatteryMode : r.OnBatteryMode,
+            OnAcMode = string.IsNullOrWhiteSpace(r.OnAcMode) ? c.OnAcMode : r.OnAcMode,
+        };
+        applied.Add("powerSource");
+    }
+    if (req.AutoFps is not null)
+    {
+        autoFps.Enabled = req.AutoFps.Enable;
+        if (req.AutoFps.TargetFps > 0) autoFps.TargetFps = req.AutoFps.TargetFps;
+        applied.Add("autoFps");
+    }
+
+    return Results.Json(new { applied });
+});
+
 // SPA fallback: any non-API path returns index.html (no-op if wwwroot/index.html is absent).
 app.MapFallbackToFile("index.html");
 
@@ -416,6 +528,23 @@ namespace GpdForge.Api
     public sealed record AutoFpsRequest(double TargetFps, bool Enable);
     public sealed class AutoFpsState { public bool Enabled { get; set; } public double TargetFps { get; set; } = 60; public int CurrentStapm { get; set; } = 25; }
     public sealed record GuardianRequest(bool? Enabled, bool? AutoThrottle, double? TempThrottleC, double? TempCriticalC, int? ThrottleFloorW, int? BatteryLowPct, int? BatteryCriticalPct);
+
+    // --- Migration + config: per-power-source auto mode-switch + settings backup/restore ---
+    /// <summary>Mutable holder for the per-power-source config, alongside FanState/AutoFpsState.</summary>
+    public sealed class PowerSourceState { public PowerSourceConfig Config { get; set; } = new(); }
+    public sealed record PowerSourceRequest(bool? Enabled, string? OnBatteryMode, string? OnAcMode);
+
+    /// <summary>Tolerant settings-restore payload: every section is optional, and each one that IS
+    /// present is applied through the same logic its own POST endpoint uses (see
+    /// POST /settings/import). Unknown top-level JSON fields are ignored by the default
+    /// deserializer, matching the "apply what's present, ignore unknown" contract.</summary>
+    public sealed record SettingsImportRequest(
+        Dictionary<string, ProfileEdit>? ModePresets,
+        GuardianRequest? Guardian,
+        string? FanMode,
+        int? Brightness,
+        PowerSourceRequest? PowerSource,
+        AutoFpsRequest? AutoFps);
 
     public sealed record JobConstraints(bool? RequireAC, int? MaxTempC, string? Window);
     public sealed record JobRequest(string? Cmd, JobConstraints? Constraints);
