@@ -22,6 +22,8 @@ using GpdForge.Update;
 using GpdForge.Led;
 using GpdForge.Battery;
 using GpdForge.Undervolt;
+using GpdForge.Health;
+using GpdForge.Onboarding;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -315,6 +317,18 @@ app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, CancellationToken
     return Results.Json(new { requested = r.Requested.StapmW, observed = r.Observed.StapmW, verified = r.Verified });
 });
 
+// Panic cool: an immediate, dead-simple safety floor. Applies a flat 8W ceiling through the same
+// closed-loop controller every other TDP write uses (so it's honestly reported, not a blind write)
+// and pushes the fan preference to Aggressive. `applied` mirrors the closed loop's verification —
+// never claims success the firmware didn't actually hold.
+app.MapPost("/panic", async (ITdpController tdp, FanState fan, CancellationToken ct) =>
+{
+    var floor = new TdpProfile(8, 8, 8, 90);
+    var r = await tdp.ApplyAsync(floor, ct);
+    fan.Mode = "Aggressive";
+    return Results.Json(new { applied = r.Verified, stapmW = floor.StapmW });
+});
+
 // Agents / AI — job queue. Runs a job only while its constraints hold (here: requireAC on battery → blocked).
 app.MapGet("/jobs", (JobsState j) => Results.Json(j.All));
 app.MapPost("/jobs", async (JobRequest req, JobsState j, ITelemetryService t, CancellationToken ct) =>
@@ -393,6 +407,16 @@ app.MapPost("/import/motionassistant", (IIniFileSource src) =>
         profiles.AddRange(MotionAssistantImporter.ParseIni(text));
 
     return Results.Json(new { found = profiles.Count, profiles, path });
+});
+
+// First-run setup wizard: are MotionAssistant / GPD Tool currently running? Reuses the same
+// IPowerControllerDetector ProfileApplier already yields to, so the wizard's advice ("run the
+// installer's -Substitute") and the daemon's actual yield-while-running behavior can never disagree.
+app.MapGet("/system/incumbents", (IPowerControllerDetector detector) =>
+{
+    detector.OthersRunning(out var names);
+    var s = IncumbentsCheck.From(names);
+    return Results.Json(new { motionAssistant = s.MotionAssistant, gpdTool = s.GpdTool });
 });
 
 // Per-power-source auto mode-switch (AC vs battery). ForgeWorker applies it on the AC/battery edge.
@@ -604,6 +628,16 @@ app.MapPost("/guardian", (GuardianRequest r, GuardianService g) =>
         throttleFloorW = g.Config.ThrottleFloorW, batteryLowPct = g.Config.BatteryLowPct,
         batteryCriticalPct = g.Config.BatteryCriticalPct,
     });
+});
+
+// System health check / anomaly detection: pure rules (GpdForge.Health.HealthCheck) evaluated
+// against a REAL live snapshot. Catches things like this unit's parked-fan-while-warm state, a
+// firmware that's silently reverting TDP, or a critical-temp / high-discharge condition.
+app.MapGet("/health/check", async (ITelemetryService t, CancellationToken ct) =>
+{
+    var snapshot = await t.ReadAsync(ct);
+    var report = HealthCheck.Evaluate(snapshot, new HealthContext());
+    return Results.Json(report);
 });
 
 // Settings backup / restore: a straightforward aggregation over the existing services/state above

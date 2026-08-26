@@ -7,6 +7,7 @@ import {
   MODES, DashboardPage, PowerPage, FanPage, ControllerPage, DisplayPage,
   ProfilesPage, MonitorPage, SystemPage, SettingsPage, type Shared,
 } from './pages'
+import { Wizard, isSetupDone } from './Wizard'
 
 const NAV = [
   { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
@@ -28,11 +29,18 @@ export function App() {
   const [auto, setAuto] = useState(true)
   const [connected, setConnected] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('forge-theme') as 'dark' | 'light') || 'dark')
+  const [textScale, setTextScale] = useState<'normal' | 'large'>(() => (localStorage.getItem('forge-textscale') as 'normal' | 'large') || 'normal')
+  const [showWizard, setShowWizard] = useState(() => !isSetupDone())
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('forge-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    document.documentElement.dataset.textscale = textScale
+    localStorage.setItem('forge-textscale', textScale)
+  }, [textScale])
 
   useEffect(() => {
     let alive = true
@@ -97,9 +105,11 @@ export function App() {
           {page === 'profiles'   && <ProfilesPage />}
           {page === 'monitor'    && <MonitorPage tele={tele} />}
           {page === 'system'     && <SystemPage tele={tele} />}
-          {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} />}
+          {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} textScale={textScale} setTextScale={setTextScale} />}
         </div>
       </main>
+
+      {showWizard && <Wizard onClose={() => setShowWizard(false)} />}
     </div>
   )
 }

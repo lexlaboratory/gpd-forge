@@ -56,6 +56,13 @@ Applies a sustained TDP through the **closed loop**: the daemon re-reads the PM 
 reverted the limit, `verified:false` and `observed` reflects what actually held (this is the honest
 behavior that replaces MotionAssistant's blind 30s re-apply). `400` if `stapmW` is out of the safe band.
 
+### `POST /panic`  (Panic cool — safety)
+`200 → { applied: boolean, stapmW: 8 }` — immediately applies a flat 8 W floor TDP profile
+(`stapmW=fastW=slowW=8`, `tctlC=90`) through the same closed-loop `ITdpController` every other TDP
+write uses, and sets the fan preference (`GET /fan`) to `Aggressive`. `applied` mirrors the closed
+loop's verification (`false` if the firmware reverted the floor) — never a faked success. No request
+body; dead simple by design so it's safe to wire to a single always-visible button.
+
 ### `GET /profiles`  ·  `POST /profiles/:mode`  (editable per-mode TDP presets)
 - `GET → Record<ModeId, { stapmW: number, fastW: number, slowW: number, tctlC: number }>` — the saved
   preset for every mode, keyed by mode id.
@@ -69,6 +76,14 @@ Assistant\Profiles`) and parses each `[ProfileName]` section into an `ImportedPr
 and tolerant: an absent directory or a malformed file never throws — worst case is `found: 0` with
 `profiles: []` and `path` set to where GPD Forge looked. This endpoint only *returns* the parsed
 profiles; to apply one, POST its numbers to the existing `POST /profiles/:mode`.
+
+### `GET /system/incumbents`  (first-run setup wizard)
+`200 → { motionAssistant: boolean, gpdTool: boolean }` — whether MotionAssistant / GPD Tool is
+currently running, reusing the same `IPowerControllerDetector` (`ProcessPowerControllerDetector`,
+watching `MotionAssistant`/`pmgui` and `GPDTool`/`GPDToolService`) that `ProfileApplier` already
+yields to — so the wizard's advice and the daemon's actual yield-while-running behavior can never
+disagree. Read-only. The setup wizard calls this once on its incumbents-check step: if either is
+`true`, it advises running the installer with `-Substitute`; otherwise it reports clear.
 
 ### `GET /power-source`  ·  `POST /power-source`  (per-power-source auto mode-switch)
 - `GET → { enabled: boolean, onBatteryMode: ModeId, onAcMode: ModeId }`
@@ -215,6 +230,16 @@ The worker evaluates every tick: above `tempThrottleC` it eases the STAPM ceilin
 `throttleFloorW` by `tempCriticalC` (a safety throttle that takes priority over Auto-TDP-to-FPS), and
 clears once temps recover; on battery it raises low/critical alerts. Throttle actions are gated by
 `autoThrottle`; alerts always surface via `lastAlert`.
+
+### `GET /health/check`  (system health check / anomaly detection)
+`200 → { status: 'ok'|'warn'|'critical', issues: Array<{ level: string, code: string, message: string }> }`
+Pure rules (`GpdForge.Health.HealthCheck.Evaluate`, unit-tested exhaustively) evaluated against a REAL
+live telemetry snapshot — never a hardware write, purely diagnostic. `status` is the max severity
+across `issues` (`ok` when empty). Rules today: fan reads 0 rpm while `cpuTempC` is above 70 °C → warn
+(this literally catches a parked-fan-while-warm state); `cpuTempC >= 95` → critical; `!tdpVerified` →
+warn (firmware silently reverting TDP); on battery with `dischargeW > 30` → warn (high discharge). The
+System page's health card polls this and shows a green "All good" when `issues` is empty, or the
+issue list colored by severity otherwise.
 
 ### `POST /jobs`  ·  `GET /jobs/:id`  ·  `GET /jobs`  (Agents / AI mode)
 - `POST { cmd: string, constraints?: { requireAC?: boolean, maxTempC?: number, window?: string } }`

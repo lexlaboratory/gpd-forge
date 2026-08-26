@@ -325,6 +325,13 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, applyTdp(w))
   }
 
+  // Panic cool — flat 8W floor + Aggressive fan. Mirrors core/Program.cs's POST /panic.
+  if (method === 'POST' && path === '/panic') {
+    const r = applyTdp(8)
+    state.fanMode = 'Aggressive'
+    return send(res, 200, { applied: r.verified, stapmW: 8 })
+  }
+
   if (method === 'POST' && path === '/jobs') {
     const body = await readBody(req)
     if (!body?.cmd) return err(res, 400, 'bad_job', 'cmd required')
@@ -381,6 +388,18 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, state.autoFps)
   }
 
+  // System health check / anomaly detection. Mirrors core/Health/HealthCheck.cs's rules. The mock
+  // returns a canned "fan not spinning while warm" warn so the System page's health card always has
+  // something to show in dev/E2E without needing a real parked fan.
+  if (method === 'GET' && path === '/health/check') {
+    return send(res, 200, {
+      status: 'warn',
+      issues: [
+        { level: 'warn', code: 'fan_not_spinning', message: 'Fan not spinning while warm — 0 rpm at 74°C CPU.' },
+      ],
+    })
+  }
+
   if (method === 'GET' && path === '/guardian') return send(res, 200, {
     ...state.guardian, throttling: false, throttledToW: null, lastAlert: null, lastSeverity: 'ok',
   })
@@ -398,6 +417,12 @@ const server = http.createServer(async (req, res) => {
   if (method === 'POST' && path === '/import/motionassistant') {
     const profiles = state.motionAssistantProfiles
     return send(res, 200, { found: profiles.length, profiles, path: 'C:\\Program Files\\Motion Assistant\\Profiles' })
+  }
+
+  // First-run setup wizard — incumbent power-controller check. The mock always reports clear so the
+  // wizard/E2E can exercise the "no conflict" path without a real MotionAssistant/GPD Tool install.
+  if (method === 'GET' && path === '/system/incumbents') {
+    return send(res, 200, { motionAssistant: false, gpdTool: false })
   }
 
   // Per-power-source auto mode-switch (AC vs battery).

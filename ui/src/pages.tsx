@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type {
   Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo, TuneGoal, TunerInfo, UpdateCheck,
-  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
+  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo, HealthReport,
 } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
@@ -13,6 +13,7 @@ import {
   getRefreshRate, setRefreshRate, getNightMode, setNightMode, getTabletMode, getKeyboardBacklight,
   getTuner, startTuner, checkUpdate,
   getLed, setLed, getChargeLimit, setChargeLimit, getUndervolt, setUndervolt,
+  getHealthCheck, panicCool,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -627,9 +628,75 @@ function FreezerCard() {
   )
 }
 
+// System health check / anomaly detection — pure rules on the daemon (core/Health/HealthCheck.cs)
+// evaluated against a real telemetry snapshot. Polls slowly; this is diagnostic, not live telemetry.
+const HEALTH_LEVEL_LABEL: Record<string, string> = { warn: 'Warning', critical: 'Critical' }
+function HealthCard() {
+  const [report, setReport] = useState<HealthReport | null>(null)
+  useEffect(() => {
+    const t = () => getHealthCheck().then(setReport).catch(() => {})
+    t(); const id = setInterval(t, 5000); return () => clearInterval(id)
+  }, [])
+
+  return (
+    <Card title="System health" testid="health-card"
+      hint={report && <span className={`badge badge-health-${report.status}`} data-testid="health-status">{report.status}</span>}>
+      {!report ? (
+        <p className="muted">Loading…</p>
+      ) : report.issues.length === 0 ? (
+        <p className="health-ok-msg" data-testid="health-ok">✓ All good — no anomalies detected.</p>
+      ) : (
+        <ul className="rules" data-testid="health-issues">
+          {report.issues.map((i) => (
+            <li key={i.code} className={`rule health-issue-${i.level}`} data-testid={`health-issue-${i.code}`}>
+              <span className="rule-app">{HEALTH_LEVEL_LABEL[i.level] ?? i.level}</span>
+              <span className="rule-arrow">→</span>
+              <span className="rule-mode">{i.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="muted">Checked every 5s from live telemetry — fan state, thermal ceiling, TDP verification, and battery discharge.</p>
+    </Card>
+  )
+}
+
+// Panic cool — a dead-simple, always-available safety action: floor TDP + max fan, right now.
+const PANIC_STAPM_W = 8
+function PanicCoolButton() {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+
+  const go = async () => {
+    setBusy(true)
+    const r = await panicCool().catch(() => null)
+    setBusy(false)
+    if (!r) { toast.push({ kind: 'error', message: 'Panic cool failed — could not reach the daemon' }); return }
+    toast.push({
+      kind: r.applied ? 'success' : 'warn',
+      message: r.applied
+        ? `Panic cool applied — floored to ${r.stapmW} W, fan Aggressive.`
+        : `Panic cool requested (fan set to Aggressive), but the ${r.stapmW} W floor was not verified.`,
+    })
+  }
+
+  return (
+    <Card title="Panic cool" testid="panic-card" hint="Immediate safety floor">
+      <p className="muted">Too hot, right now? Drop straight to an {PANIC_STAPM_W} W sustained floor and max out the fan — no waiting, no menus.</p>
+      <div className="row-end">
+        <button className="btn btn-danger" data-testid="panic-cool" onClick={go} disabled={busy}>
+          {busy ? 'Cooling…' : '🧊 Panic cool'}
+        </button>
+      </div>
+    </Card>
+  )
+}
+
 export function SystemPage({ tele }: { tele: Telemetry | null }) {
   return (
     <>
+      <HealthCard />
+      <PanicCoolButton />
       <Card title="Power controller" hint="GPD Forge yields while another controller runs.">
         <p className="muted">GPD Forge takes over TDP only when it is the sole owner. Use the installer's <code>-Substitute</code> to stop + disable MotionAssistant / GPD Tool. TDP now: <b>{tele?.tdpVerified ? 'verified' : '—'}</b>.</p>
       </Card>
@@ -779,8 +846,9 @@ function UpdateNote() {
   )
 }
 
-export function SettingsPage({ auto, setAuto, theme, setTheme }: {
+export function SettingsPage({ auto, setAuto, theme, setTheme, textScale, setTextScale }: {
   auto: boolean; setAuto: (v: boolean) => void; theme: 'dark' | 'light'; setTheme: (t: 'dark' | 'light') => void
+  textScale: 'normal' | 'large'; setTextScale: (t: 'normal' | 'large') => void
 }) {
   return (
     <>
@@ -794,6 +862,10 @@ export function SettingsPage({ auto, setAuto, theme, setTheme }: {
         <div className="row">
           <Toggle on={theme === 'dark'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} label="Dark theme" testid="settings-theme" />
         </div>
+        <div className="row">
+          <Toggle on={textScale === 'large'} onClick={() => setTextScale(textScale === 'large' ? 'normal' : 'large')} label="Large text" testid="settings-textscale" />
+        </div>
+        <p className="muted">Scales up text size across the UI — for readability on the Win 4's small screen.</p>
       </Card>
       <PowerSourceCard />
       <GuardianCard />

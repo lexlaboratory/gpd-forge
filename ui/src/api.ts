@@ -10,6 +10,7 @@ import type {
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
+  HealthReport, PanicResult, IncumbentsInfo,
 } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
@@ -119,3 +120,12 @@ export const setChargeLimit = (percent: number) => json<ChargeLimitInfo>('/batte
 export const getUndervolt = () => json<UndervoltInfo>('/undervolt')
 export const setUndervolt = (coCount?: number, offsetMv?: number) =>
   json<UndervoltInfo>('/undervolt', post({ coCount, offsetMv }))
+
+// --- system health check / anomaly detection ---
+export const getHealthCheck = () => json<HealthReport>('/health/check')
+
+// --- panic cool (safety) ---
+export const panicCool = () => json<PanicResult>('/panic', post())
+
+// --- first-run setup wizard: incumbent power-controller check ---
+export const getIncumbents = () => json<IncumbentsInfo>('/system/incumbents')

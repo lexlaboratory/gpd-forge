@@ -111,3 +111,14 @@ export interface Standby {
   blockers: string[]
   lastRestore: string[] | null
 }
+
+// System health check / anomaly detection (mirror of core/Health/HealthCheck.cs).
+export type HealthLevel = 'warn' | 'critical'
+export interface HealthIssue { level: HealthLevel; code: string; message: string }
+export interface HealthReport { status: 'ok' | 'warn' | 'critical'; issues: HealthIssue[] }
+
+// Panic cool (mirror of POST /panic).
+export interface PanicResult { applied: boolean; stapmW: number }
+
+// First-run setup wizard: incumbent power-controller check (mirror of GET /system/incumbents).
+export interface IncumbentsInfo { motionAssistant: boolean; gpdTool: boolean }
