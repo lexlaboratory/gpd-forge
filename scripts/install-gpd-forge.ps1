@@ -102,8 +102,18 @@ if ($Substitute) {
     }
     $gsvc = Get-Service 'GPDToolService' -ErrorAction SilentlyContinue
     if ($gsvc) { Stop-Service 'GPDToolService' -Force -ErrorAction SilentlyContinue; Set-Service 'GPDToolService' -StartupType Disabled }
-    foreach ($t in @('MotionAssistant','GPDTool')) { schtasks /Change /TN $t /DISABLE 2>$null | Out-Null }
-    Write-Host "  incumbents stopped/disabled." -ForegroundColor Green
+    # disable their autostart (Run keys), REVERSIBLY (renamed, not deleted)
+    foreach ($hive in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\Software\Microsoft\Windows\CurrentVersion\Run')) {
+        $props = Get-ItemProperty $hive -ErrorAction SilentlyContinue
+        if ($props) {
+            $props.PSObject.Properties | Where-Object { $_.Value -match 'GPD\\GPDTool|Motion Assistant|MotionAssistant' } | ForEach-Object {
+                try { Rename-ItemProperty -Path $hive -Name $_.Name -NewName ($_.Name + '_disabledByGPDForge') -ErrorAction Stop; Write-Host "    autostart disabled: $($_.Name)" } catch {}
+            }
+        }
+    }
+    # scheduled tasks (best-effort; ignore if they do not exist)
+    foreach ($t in @('MotionAssistant','GPDTool')) { try { & schtasks /Change /TN $t /DISABLE *> $null } catch {} }
+    Write-Host "  incumbents stopped, service + autostart disabled." -ForegroundColor Green
 }
 
 # --- 6) verify + open ---
