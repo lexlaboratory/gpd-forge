@@ -61,8 +61,10 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [ ] VRAM/UMA reassignment preset
 - [ ] Sustained-CPU power shaping + "sustained" fan curve
 - [ ] Anti-Modern-Standby during inference (SetThreadExecutionState / power request)
-- [ ] Job queue + local API endpoints for external agents
-- [ ] Optional MCP server exposing telemetry/control
+- [x] Job queue + local API endpoints for external agents (`/jobs` with requireAC/maxTempC/window)
+- [x] **MCP server exposing telemetry/control** — `mcp/server.mjs`, zero-dep stdio MCP with 15 tools
+      (read + closed-loop writes + constraint-gated `submit_job`). Verified end-to-end against the live
+      service: `set_mode` → `AppliedVerified`, `submit_job` → running. Lets KRÓNOS/CYBERLEX drive the handheld.
 
 ## Phase 4 — Replacement
 - [x] **Conflict guard**: detection + **auto-yield** done — `ProfileApplier` skips the TDP write while
