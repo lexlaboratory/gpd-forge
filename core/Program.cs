@@ -158,9 +158,10 @@ builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<JobsState>();
 builder.Services.AddHostedService<ForgeWorker>();
 
-// Opt-in auto-profiles: switch the active mode based on the foreground app. Updates the mode
-// label only; applying a mode's TDP still requires the hardware gate. No hardware writes here.
-if (Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES") == "1")
+// Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
+// "automatic"); disable with GPDFORGE_AUTO_PROFILES=0. Updates the mode label only; applying a
+// mode's TDP still requires the hardware gate. No hardware writes here.
+if (Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES") != "0")
 {
     builder.Services.AddSingleton<IForegroundApp, Win32ForegroundApp>();
     builder.Services.AddHostedService<FocusProfileWorker>();

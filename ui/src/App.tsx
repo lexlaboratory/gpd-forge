@@ -27,13 +27,11 @@ function StatTile({ label, value, unit, testid }: { label: string; value: string
 export function App() {
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [active, setActive] = useState<ModeId>('windows')
+  const [auto, setAuto] = useState(true)          // automatic: pick the mode from the app in focus
   const [tdp, setTdp] = useState(20)
   const [tdpResult, setTdpResult] = useState<TdpResult | null>(null)
   const [connected, setConnected] = useState(!HAS_API)
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Initial mode from the daemon (falls back to local default in demo mode).
-  useEffect(() => { getMode().then(setActive).catch(() => {}) }, [])
 
   // Telemetry poll — drives the tiles and the connection state.
   useEffect(() => {
@@ -47,9 +45,19 @@ export function App() {
     return () => { alive = false; clearInterval(id) }
   }, [])
 
+  // While Auto is on, the daemon chooses the mode from the foreground app — reflect it live.
+  useEffect(() => {
+    let alive = true
+    getMode().then((m) => alive && setActive(m)).catch(() => {})
+    if (!auto) return
+    const id = setInterval(() => { getMode().then((m) => alive && setActive(m)).catch(() => {}) }, 2000)
+    return () => { alive = false; clearInterval(id) }
+  }, [auto])
+
   const onPickMode = (id: ModeId) => {
+    setAuto(false)                 // manual selection overrides automatic
     setActive(id)
-    setTdpResult(null) // switching modes re-applies TDP; badge follows telemetry again
+    setTdpResult(null)
     apiSetMode(id).catch(() => {})
   }
 
@@ -64,18 +72,29 @@ export function App() {
   const verified = tdpResult ? tdpResult.verified : (tele?.tdpVerified ?? true)
   const tdpBadge = verified ? 'verified' : 'unverified'
   const connLabel = HAS_API ? (connected ? 'Live' : 'Offline') : 'Demo'
+  const activeMode = MODES.find((m) => m.id === active)
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden>⚙️</span>
+          <img className="brand-logo" src="/logo.png" alt="" aria-hidden width={44} height={44} />
           <div>
             <h1 className="brand-name">GPD Forge</h1>
             <p className="brand-sub" data-testid="device">GPD Win 4 · Ryzen AI 9 HX 370</p>
           </div>
         </div>
         <div className="topbar-right">
+          <button
+            type="button"
+            className={`auto-toggle ${auto ? 'on' : ''}`}
+            data-testid="auto-toggle"
+            aria-pressed={auto}
+            onClick={() => setAuto((v) => !v)}
+            title="Automatically pick the best mode for the app in focus"
+          >
+            <span className="auto-dot" aria-hidden />Auto
+          </button>
           <span className={`conn conn-${connLabel.toLowerCase()}`} data-testid="conn">{connLabel}</span>
           <span className={`power-pill ${tele?.acConnected ? 'ac' : 'dc'}`} data-testid="power-source">
             {tele?.acConnected ? 'AC' : `Battery ${tele?.batteryPct ?? '--'}%`}
@@ -92,7 +111,12 @@ export function App() {
       </section>
 
       <section className="modes" aria-label="Usage modes">
-        <h2 className="section-title">Modes</h2>
+        <div className="modes-head">
+          <h2 className="section-title">Modes</h2>
+          <span className="modes-hint" data-testid="modes-hint">
+            {auto ? 'Auto — optimizing for the app in focus' : 'Manual — you chose the mode'}
+          </span>
+        </div>
         <div className="mode-grid" role="listbox" aria-label="Usage mode">
           {MODES.map((m) => (
             <button
@@ -103,6 +127,7 @@ export function App() {
               className={`mode-card ${active === m.id ? 'active' : ''}`}
               onClick={() => onPickMode(m.id)}
             >
+              {auto && active === m.id && <span className="mode-auto" data-testid="mode-auto">AUTO</span>}
               <span className="mode-icon" aria-hidden>{m.icon}</span>
               <span className="mode-label">{m.label}</span>
               <span className="mode-blurb">{m.blurb}</span>
@@ -135,7 +160,7 @@ export function App() {
 
       <footer className="foot">
         <span>GPL-3.0 · lexlaboratory</span>
-        <span data-testid="active-mode">Active: {MODES.find((m) => m.id === active)?.label}</span>
+        <span data-testid="active-mode">{auto ? 'Auto' : 'Manual'}: {activeMode?.label}</span>
       </footer>
     </div>
   )

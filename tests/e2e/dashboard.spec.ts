@@ -30,6 +30,16 @@ test.describe('Dashboard', () => {
     await expect(dash.activeMode).toContainText('Agents / AI')
   })
 
+  test('auto mode is on by default and a manual pick turns it off', async ({ page }) => {
+    const auto = page.getByTestId('auto-toggle')
+    await expect(auto).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('modes-hint')).toContainText('Auto')
+
+    await dash.pickMode('gaming')
+    await expect(auto).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByTestId('modes-hint')).toContainText('Manual')
+  })
+
   test('TDP slider updates its readout', async () => {
     await dash.tdpSlider.fill('28')
     await expect(dash.tdpValue).toHaveText('28 W')
