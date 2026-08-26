@@ -4,7 +4,7 @@
 // (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. Calls throw on failure;
 // callers decide how to degrade (the dashboard shows "Offline" and keeps the last values).
 
-import type { Telemetry, ModeId, Job, Standby } from './types'
+import type { Telemetry, ModeId, Job, Standby, Preset } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
 
@@ -34,3 +34,13 @@ export const createJob = (cmd: string, constraints?: Job['constraints']) =>
   json<{ id: string; status: Job['status'] }>('/jobs', post({ cmd, constraints }))
 export const getStandby = () => json<Standby>('/standby')
 export const restoreStandby = () => json<{ restored: string[] }>('/standby/restore', post())
+
+// --- editable TDP presets (per mode) ---
+export const getProfiles = () => json<Record<string, Preset>>('/profiles')
+export const setProfile = (mode: string, p: Preset) =>
+  json<Preset & { mode: string }>(`/profiles/${mode}`, post(p))
+
+// --- display ---
+export const getBrightness = async () => (await json<{ brightness: number | null }>('/display')).brightness
+export const setBrightness = async (level: number) =>
+  (await json<{ brightness: number }>('/display/brightness', post({ level }))).brightness

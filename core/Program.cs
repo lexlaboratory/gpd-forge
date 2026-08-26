@@ -11,6 +11,7 @@ using GpdForge.Telemetry;
 using GpdForge.Broker;
 using GpdForge.Profiles;
 using GpdForge.Standby;
+using GpdForge.Display;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -94,6 +95,15 @@ if (args.Contains("--probe-ec-types"))
     return;
 }
 
+// Read-only display probe: current brightness via WMI.
+if (args.Contains("--probe-display"))
+{
+    var d = new DisplayService();
+    Console.WriteLine("GPD Forge display probe (WMI):");
+    Console.WriteLine($"  brightness = {d.GetBrightness()?.ToString() ?? "(not available)"}");
+    return;
+}
+
 // Read-only focus probe: which app is in front, and which mode it resolves to. No elevation needed.
 if (args.Contains("--probe-focus"))
 {
@@ -162,6 +172,7 @@ builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<JobsState>();
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
 builder.Services.AddSingleton<ProfileApplier>();
+builder.Services.AddSingleton<DisplayService>();
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
@@ -228,6 +239,23 @@ app.MapGet("/standby", () => Results.Json(new
 }));
 app.MapPost("/standby/restore", () => Results.Json(new { restored = new[] { "tdp", "fan", "hid" } }));
 
+// Editable per-mode TDP presets (like MotionAssistant profiles).
+app.MapGet("/profiles", () => Results.Json(
+    ModeProfiles.Map.ToDictionary(k => k.Key, v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC })));
+app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
+{
+    var s = ModeProfiles.Set(mode, new GpdForge.Tdp.TdpProfile(e.StapmW, e.FastW, e.SlowW, e.TctlC));
+    return Results.Json(new { mode, stapmW = s.StapmW, fastW = s.FastW, slowW = s.SlowW, tctlC = s.TctlC });
+});
+
+// Display brightness (WMI, no driver).
+app.MapGet("/display", (DisplayService d) => Results.Json(new { brightness = d.GetBrightness() }));
+app.MapPost("/display/brightness", (BrightnessRequest r, DisplayService d) =>
+{
+    d.SetBrightness(r.Level);
+    return Results.Json(new { brightness = d.GetBrightness() ?? r.Level });
+});
+
 // SPA fallback: any non-API path returns index.html (no-op if wwwroot/index.html is absent).
 app.MapFallbackToFile("index.html");
 
@@ -240,6 +268,8 @@ namespace GpdForge.Api
 
     public sealed record ModeRequest(string? Name);
     public sealed record TdpRequest(int StapmW);
+    public sealed record ProfileEdit(int StapmW, int FastW, int SlowW, int TctlC);
+    public sealed record BrightnessRequest(int Level);
 
     public sealed record JobConstraints(bool? RequireAC, int? MaxTempC, string? Window);
     public sealed record JobRequest(string? Cmd, JobConstraints? Constraints);

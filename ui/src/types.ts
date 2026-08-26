@@ -23,6 +23,8 @@ export interface Telemetry {
   tdpVerified: boolean
 }
 
+export interface Preset { stapmW: number; fastW: number; slowW: number; tctlC: number }
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'blocked'
 
 export interface Job {

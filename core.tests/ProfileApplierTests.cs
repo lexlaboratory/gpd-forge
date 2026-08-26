@@ -28,6 +28,14 @@ public class ModeProfilesTests
         Assert.Equal(p.StapmW, p.FastW);   // fast == stapm (flat, sustained)
         Assert.Equal(p.StapmW, p.SlowW);
     }
+
+    [Fact]
+    public void Set_clamps_to_safe_bounds()
+    {
+        var saved = ModeProfiles.Set("gaming", new GpdForge.Tdp.TdpProfile(999, 999, 999, 999));
+        Assert.True(saved.StapmW <= 40 && saved.FastW <= 45 && saved.TctlC <= 95);
+        ModeProfiles.Set("gaming", new GpdForge.Tdp.TdpProfile(25, 33, 28, 95)); // restore default
+    }
 }
 
 public class ProfileApplierTests

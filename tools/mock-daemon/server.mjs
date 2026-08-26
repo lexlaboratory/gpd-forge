@@ -34,6 +34,14 @@ const state = {
   batteryPct: 78,
   jobs: new Map(),
   jobSeq: 0,
+  brightness: 70,
+  presets: {
+    battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
+    windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
+    gaming:  { stapmW: 25, fastW: 33, slowW: 28, tctlC: 95 },
+    ai:      { stapmW: 25, fastW: 25, slowW: 25, tctlC: 90 },
+    standby: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
+  },
   standby: {
     lastDrainPctPerHour: 6.2,
     topWakeReason: 'Fingerprint device (Win 4)',
@@ -108,7 +116,6 @@ const server = http.createServer(async (req, res) => {
 
   if (method === 'GET' && path === '/health') return send(res, 200, { ok: true, version: VERSION, model: MODEL })
   if (method === 'GET' && path === '/telemetry') return send(res, 200, telemetry())
-  if (method === 'GET' && path === '/profiles') return send(res, 200, PROFILES)
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
 
   if (method === 'GET' && path === '/telemetry/stream') {
@@ -148,6 +155,21 @@ const server = http.createServer(async (req, res) => {
   if (method === 'GET' && path.startsWith('/jobs/')) {
     const job = state.jobs.get(path.slice('/jobs/'.length))
     return job ? send(res, 200, job) : err(res, 404, 'no_job', 'not found')
+  }
+
+  if (method === 'GET' && path === '/profiles') return send(res, 200, state.presets)
+  if (method === 'POST' && path.startsWith('/profiles/')) {
+    const mode = path.slice('/profiles/'.length)
+    const body = await readBody(req)
+    if (!body) return err(res, 400, 'bad', 'json')
+    state.presets[mode] = { stapmW: body.stapmW, fastW: body.fastW, slowW: body.slowW, tctlC: body.tctlC }
+    return send(res, 200, { mode, ...state.presets[mode] })
+  }
+  if (method === 'GET' && path === '/display') return send(res, 200, { brightness: state.brightness })
+  if (method === 'POST' && path === '/display/brightness') {
+    const body = await readBody(req)
+    state.brightness = Math.max(0, Math.min(100, Number(body?.level ?? state.brightness)))
+    return send(res, 200, { brightness: state.brightness })
   }
 
   if (method === 'GET' && path === '/standby') return send(res, 200, state.standby)

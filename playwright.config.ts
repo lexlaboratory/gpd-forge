@@ -24,17 +24,19 @@ export default defineConfig({
   // served by `vite preview` (static, deterministic) — not the dev server, whose on-the-fly
   // dep re-optimization flakes under rapid reloads. VITE_FORGE_API is inlined at build time.
   // Dedicated ports so we never bind to another dev server (e.g. jano on 5173).
+  // Test port 8799 (the real installed service may own 8787).
   webServer: [
     {
       command: 'node tools/mock-daemon/server.mjs',
-      url: 'http://127.0.0.1:8787/health',
+      env: { PORT: '8799' },
+      url: 'http://127.0.0.1:8799/health',
       reuseExistingServer: false,
       timeout: 30_000,
     },
     {
       command: 'npm --prefix ui run build && npm --prefix ui run preview',
       url: 'http://localhost:4173',
-      env: { VITE_FORGE_API: 'http://127.0.0.1:8787' },
+      env: { VITE_FORGE_API: 'http://127.0.0.1:8799' },
       reuseExistingServer: false,
       timeout: 180_000,
     },
