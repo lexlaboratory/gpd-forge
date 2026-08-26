@@ -1,4 +1,24 @@
-# scripts/ — supervised hardware bring-up
+# scripts/
+
+## Install (recommended)
+
+`install-gpd-forge.ps1` installs GPD Forge and sets it to run automatically. It self-elevates, then:
+- publishes the core service and registers it as a **Windows Service** (SYSTEM, autostart) so the local
+  API + real telemetry come up at boot,
+- installs the **desktop app** (runs the built NSIS setup if present, else drops a Start-Menu shortcut),
+- starts the service and verifies the API.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\install-gpd-forge.ps1
+```
+Flags: `-Substitute` also stops + disables MotionAssistant / GPD Tool (the takeover — two power
+controllers must not run together); `-NoHardware` installs telemetry in driverless WMI mode only;
+`-Uninstall` removes everything. TDP/fan writes stay gated regardless. The NSIS installer itself is built
+with `npx tauri build` in `ui/` (output: `ui/src-tauri/target/release/bundle/nsis/*-setup.exe`).
+
+---
+
+# Supervised hardware bring-up
 
 These scripts let you take GPD Forge to the metal **safely and on your terms**. They are the
 gate between "tested code" and "writing to your device". Read this before running any of them.
