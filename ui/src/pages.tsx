@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type {
   Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo, TuneGoal, TunerInfo, UpdateCheck,
-  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo, HealthReport, FanInfo,
+  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo, HealthReport, FanInfo, AlertEvent,
 } from './types'
 import {
   setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, setFan, getFanInfo, setFanManualDuty,
@@ -13,7 +13,7 @@ import {
   getRefreshRate, setRefreshRate, getNightMode, setNightMode, getTabletMode, getKeyboardBacklight,
   getTuner, startTuner, checkUpdate,
   getLed, setLed, getChargeLimit, setChargeLimit, getUndervolt, setUndervolt,
-  getHealthCheck, panicCool,
+  getHealthCheck, panicCool, getAlerts, acknowledgeAlert, acknowledgeAllAlerts, deleteAlert,
 } from './api'
 import { Tile, Card, Slider, Toggle, Soon } from './ui'
 import { Sparkline, useHistory } from './Chart'
@@ -887,5 +887,37 @@ export function SettingsPage({ auto, setAuto, theme, setTheme, textScale, setTex
         <UpdateNote />
       </Card>
     </>
+  )
+}
+
+export function AlertsPage({ onChanged }: { onChanged?: () => void }) {
+  const [items, setItems] = useState<AlertEvent[]>([])
+  const [filter, setFilter] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const load = () => getAlerts(false, 500).then((r) => setItems(r.alerts)).catch(() => {}).finally(() => setLoading(false))
+  useEffect(() => { load() }, [])
+  const visible = filter === 'all' ? items : items.filter((x) => x.severity.toLowerCase() === filter.toLowerCase())
+  const ack = async (id: string) => { await acknowledgeAlert(id).catch(() => {}); await load(); onChanged?.() }
+  const ackAll = async () => { await acknowledgeAllAlerts().catch(() => {}); await load(); onChanged?.() }
+  const remove = async (id: string) => { await deleteAlert(id).catch(() => {}); await load(); onChanged?.() }
+  return (
+    <div className="alerts-page">
+      <Card title="Alert center" hint="Local events from GPD Forge">
+        <div className="chips" role="group" aria-label="Alert severity filter">
+          {['all', 'info', 'aviso', 'critica'].map((f) => <button key={f} className={`chip-btn ${filter === f ? 'on' : ''}`} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : f}</button>)}
+          <button className="btn btn-ghost" onClick={ackAll} disabled={!items.some((x) => !x.acknowledged)}>Mark all read</button>
+        </div>
+        {loading && <p className="muted">Loading alerts…</p>}
+        {!loading && visible.length === 0 && <p className="muted" data-testid="alerts-empty">No alerts — your system is quiet.</p>}
+        <div className="alert-list" aria-live="polite">
+          {visible.map((a) => <article key={a.id} className={`alert-card alert-${a.severity.toLowerCase()} ${a.acknowledged ? 'read' : 'unread'}`}>
+            <div className="alert-card-head"><span className="badge">{a.severity}</span><span className="muted">{new Date(a.timestampUtc).toLocaleString()}</span></div>
+            <h3>{a.title}</h3><p>{a.message}</p>
+            {a.technicalData && <details><summary>Technical details</summary><pre>{a.technicalData}</pre></details>}
+            <div className="row-end">{!a.acknowledged && <button className="btn btn-ghost" onClick={() => ack(a.id)}>Mark read</button>}<button className="btn btn-ghost" onClick={() => remove(a.id)}>Delete</button></div>
+          </article>)}
+        </div>
+      </Card>
+    </div>
   )
 }

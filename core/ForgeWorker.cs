@@ -10,6 +10,7 @@ using GpdForge.SystemControl;
 using GpdForge.Tdp;
 using GpdForge.Telemetry;
 using GpdForge.Tuner;
+using GpdForge.Alerts;
 
 namespace GpdForge;
 
@@ -34,7 +35,8 @@ public sealed class ForgeWorker(
     PowerSourceState powerSource,
     TunerState tuner,
     FanState fanState,
-    IGpdFanController fanControl) : BackgroundService
+    IGpdFanController fanControl,
+    AlertService alerts) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
     // than re-applying every tick. Null until the first snapshot arrives.
@@ -76,7 +78,11 @@ public sealed class ForgeWorker(
                 // over auto-FPS; alerts are logged and surfaced via GET /guardian.
                 var g = guardian.Observe(snapshot);
                 if (g.Alert is not null)
+                {
                     logger.LogWarning("Guardian [{Severity}]: {Alert}", g.Severity, g.Alert);
+                    var severity = g.Severity switch { "critical" => AlertSeverity.Critica, "warn" => AlertSeverity.Aviso, _ => AlertSeverity.Info };
+                    alerts.Publish(AlertCategory.Thermal, severity, "Thermal guardian", g.Alert, $"cpuTempC={snapshot.CpuTempC:F1}; batteryPct={snapshot.BatteryPct}", $"guardian:{g.Severity}:{g.Alert}");
+                }
 
                 if (g.ThrottleToW is int throttleW)
                 {

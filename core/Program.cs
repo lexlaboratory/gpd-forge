@@ -24,6 +24,7 @@ using GpdForge.Battery;
 using GpdForge.Undervolt;
 using GpdForge.Health;
 using GpdForge.Onboarding;
+using GpdForge.Alerts;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -326,6 +327,13 @@ builder.Services.AddSingleton<FreezerService>(sp =>
 builder.Services.AddSingleton<FpsTdpController>();
 builder.Services.AddSingleton<AutoFpsState>();
 builder.Services.AddSingleton<GuardianService>();
+builder.Services.AddSingleton<IAlertClock, SystemAlertClock>();
+builder.Services.AddSingleton<AlertStore>(sp =>
+{
+    var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge");
+    return new AlertStore(root, sp.GetRequiredService<IAlertClock>());
+});
+builder.Services.AddSingleton<AlertService>();
 
 // Auto-tuner: sweeps STAPM and picks the best point for a goal (max fps / best efficiency / hold a
 // target fps). ForgeWorker steps the sweep each tick; TunerState just holds config + recorded
@@ -366,6 +374,21 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Json(new { ok = true, version = "0.1.0", model = "GPD Win 4 (G1618-04)" }));
+
+app.MapGet("/alerts", (HttpContext ctx, AlertService alerts) =>
+{
+    var rawLimit = ctx.Request.Query["limit"].FirstOrDefault();
+    if (rawLimit is not null && (!int.TryParse(rawLimit, out var parsed) || parsed is < 1 or > 500))
+        return Results.BadRequest(new { error = "limit must be between 1 and 500" });
+    var unreadOnly = string.Equals(ctx.Request.Query["unreadOnly"].FirstOrDefault(), "true", StringComparison.OrdinalIgnoreCase);
+    return Results.Json(new { alerts = alerts.List(unreadOnly, rawLimit is null ? null : int.Parse(rawLimit)) });
+});
+app.MapGet("/alerts/summary", (AlertService alerts) => Results.Json(alerts.Summary()));
+app.MapPost("/alerts/{id:guid}/ack", (Guid id, AlertService alerts) =>
+    alerts.Acknowledge(id) ? Results.Json(new { acknowledged = true, id }) : Results.NotFound(new { error = "alert not found or already acknowledged" }));
+app.MapPost("/alerts/ack-all", (AlertService alerts) => Results.Json(new { acknowledged = alerts.AcknowledgeAll() }));
+app.MapDelete("/alerts/{id:guid}", (Guid id, AlertService alerts) =>
+    alerts.Delete(id) ? Results.NoContent() : Results.NotFound(new { error = "alert not found" }));
 
 // Update checker: compares the running version against the latest GitHub release. Never throws — any
 // failure (offline, rate-limited, malformed response) degrades honestly to updateAvailable:false.

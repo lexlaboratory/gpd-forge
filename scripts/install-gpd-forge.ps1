@@ -29,6 +29,7 @@ $ServiceName = 'GPDForge'
 $InstallDir  = 'C:\Program Files\GPD Forge'
 $RepoDir     = Split-Path $PSScriptRoot -Parent
 $StartMenu   = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+$StartupDir  = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $Url         = 'http://127.0.0.1:8787'
 
 # --- self-elevate ---
@@ -55,6 +56,7 @@ if ($Uninstall) {
     Remove-ForgeService
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
+    foreach ($p in @("$StartMenu\GPD Forge.lnk", "$StartupDir\GPD Forge Tray.lnk")) { if (Test-Path $p) { Remove-Item -Force $p } }
     Write-Host "GPD Forge removed." -ForegroundColor Green
     return
 }
@@ -73,6 +75,8 @@ $env:VITE_FORGE_API = ''   # same-origin: the service serves the UI and the API 
 npm --prefix "$RepoDir\ui" run build --silent
 New-Item -ItemType Directory -Force -Path "$InstallDir\service\wwwroot" | Out-Null
 Copy-Item "$RepoDir\ui\dist\*" "$InstallDir\service\wwwroot\" -Recurse -Force
+Copy-Item "$RepoDir\ui\src-tauri\icons\icon.ico" "$InstallDir\icon.ico" -Force
+Copy-Item "$RepoDir\scripts\forge-notify.ps1" "$InstallDir\forge-notify.ps1" -Force
 
 # --- 3) register the service via the signed dotnet host (SAC-safe) ---
 Write-Host "== 3/6  Registering the Windows Service ==" -ForegroundColor Cyan
@@ -84,9 +88,18 @@ if (-not $NoHardware) { $envLines += "GPDFORGE_ENABLE_HARDWARE=1" }
 New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name Environment `
     -PropertyType MultiString -Value $envLines -Force | Out-Null
 
-# --- 4) browser shortcut to the dashboard (no unsigned binary) ---
-Write-Host "== 4/6  Creating the dashboard shortcut ==" -ForegroundColor Cyan
-"[InternetShortcut]`r`nURL=$Url" | Set-Content "$StartMenu\GPD Forge.url" -Encoding ascii
+# --- 4) Start Menu + session tray shortcuts (signed hosts) ---
+Write-Host "== 4/6  Creating Start Menu and tray shortcuts ==" -ForegroundColor Cyan
+if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
+$wsh = New-Object -ComObject WScript.Shell
+$startLink = $wsh.CreateShortcut("$StartMenu\GPD Forge.lnk")
+$startLink.TargetPath = "$env:WINDIR\explorer.exe"; $startLink.Arguments = $Url; $startLink.WorkingDirectory = $InstallDir
+$startLink.IconLocation = "$InstallDir\icon.ico"; $startLink.Description = 'Open GPD Forge dashboard'; $startLink.Save()
+New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
+$trayLink = $wsh.CreateShortcut("$StartupDir\GPD Forge Tray.lnk")
+$trayLink.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$trayLink.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\forge-notify.ps1`""
+$trayLink.WorkingDirectory = $InstallDir; $trayLink.IconLocation = "$InstallDir\icon.ico"; $trayLink.Description = 'GPD Forge premium tray icon'; $trayLink.Save()
 
 # --- 5) start the service ---
 Write-Host "== 5/6  Starting the service ==" -ForegroundColor Cyan

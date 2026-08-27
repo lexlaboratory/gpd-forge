@@ -126,3 +126,11 @@ export interface PanicResult { applied: boolean; stapmW: number }
 
 // First-run setup wizard: incumbent power-controller check (mirror of GET /system/incumbents).
 export interface IncumbentsInfo { motionAssistant: boolean; gpdTool: boolean }
+
+export type AlertSeverity = 'Info' | 'Aviso' | 'Critica'
+export type AlertCategory = 'Thermal' | 'Hardware' | 'Service' | 'Configuration' | 'System'
+export interface AlertEvent {
+  id: string; timestampUtc: string; severity: AlertSeverity; category: AlertCategory
+  title: string; message: string; technicalData?: string | null; acknowledged: boolean; dedupeKey?: string | null
+}
+export interface AlertSummary { unread: number; unreadInfo: number; unreadAviso: number; unreadCritica: number; latest: AlertEvent | null }

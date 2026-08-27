@@ -10,7 +10,7 @@ import type {
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
-  HealthReport, PanicResult, IncumbentsInfo, FanInfo,
+  HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
 } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
@@ -131,3 +131,8 @@ export const panicCool = () => json<PanicResult>('/panic', post())
 
 // --- first-run setup wizard: incumbent power-controller check ---
 export const getIncumbents = () => json<IncumbentsInfo>('/system/incumbents')
+export const getAlerts = (unreadOnly = false, limit = 100) => json<{ alerts: AlertEvent[] }>(`/alerts?limit=${limit}&unreadOnly=${unreadOnly}`)
+export const getAlertSummary = () => json<AlertSummary>('/alerts/summary')
+export const acknowledgeAlert = (id: string) => json<{ acknowledged: boolean }>(`/alerts/${id}/ack`, post())
+export const acknowledgeAllAlerts = () => json<{ acknowledged: number }>('/alerts/ack-all', post())
+export const deleteAlert = (id: string) => json<void>(`/alerts/${id}`, { method: 'DELETE' })

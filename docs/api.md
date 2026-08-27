@@ -315,6 +315,12 @@ issue list colored by severity otherwise.
 malformed response) — never throws, never guesses. Not gated behind `GPDFORGE_ENABLE_HARDWARE` (a
 read-only HTTP call, not a hardware/BIOS write).
 
+### `GET /alerts` · `GET /alerts/summary` · alert actions
+- `GET /alerts?limit=1..500&unreadOnly=true|false → { alerts: AlertEvent[] }` ordenado de más nuevo a más antiguo.
+- `GET /alerts/summary → { unread, unreadInfo, unreadAviso, unreadCritica, latest }`.
+- `POST /alerts/{id}/ack → { acknowledged: true, id }`, `POST /alerts/ack-all → { acknowledged: number }`.
+- `DELETE /alerts/{id} → 204`; las alertas se guardan localmente en `%ProgramData%\GPD Forge\alerts.json`, con retención de 500 eventos/30 días.
+
 ## Error shape
 `{ error: { code: string, message: string } }` with the appropriate HTTP status.
 

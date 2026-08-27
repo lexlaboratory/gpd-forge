@@ -50,6 +50,7 @@ const state = {
   history: [], // { unixMs, snap } ring, capped at HISTORY_CAPACITY — see pushHistory()
   autoFps: { enabled: false, targetFps: 60 },
   guardian: { enabled: true, autoThrottle: true, tempThrottleC: 90, tempCriticalC: 96, throttleFloorW: 12, batteryLowPct: 15, batteryCriticalPct: 8 },
+  alerts: [],
   powerSource: { enabled: false, onBatteryMode: 'battery', onAcMode: 'windows' },
   // Canned MotionAssistant import result — enough for the UI/E2E to exercise the flow without a
   // real MotionAssistant install.
@@ -290,6 +291,18 @@ const server = http.createServer(async (req, res) => {
   if (method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
 
   if (method === 'GET' && path === '/health') return send(res, 200, { ok: true, version: VERSION, model: MODEL })
+  if (method === 'GET' && path === '/alerts') {
+    const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 100))
+    const unread = url.searchParams.get('unreadOnly') === 'true'
+    return send(res, 200, { alerts: state.alerts.filter((a) => !unread || !a.acknowledged).slice(0, limit) })
+  }
+  if (method === 'GET' && path === '/alerts/summary') {
+    const unread = state.alerts.filter((a) => !a.acknowledged)
+    return send(res, 200, { unread: unread.length, unreadInfo: unread.filter((a) => a.severity === 'Info').length, unreadAviso: unread.filter((a) => a.severity === 'Aviso').length, unreadCritica: unread.filter((a) => a.severity === 'Critica').length, latest: state.alerts[0] ?? null })
+  }
+  if (method === 'POST' && path === '/alerts/ack-all') { const n = state.alerts.filter((a) => !a.acknowledged).length; state.alerts.forEach((a) => { a.acknowledged = true }); return send(res, 200, { acknowledged: n }) }
+  if (method === 'POST' && path.match(/^\/alerts\/[^/]+\/ack$/)) { const a = state.alerts.find((x) => x.id === path.split('/')[2]); if (!a || a.acknowledged) return err(res, 404, 'not_found', 'alert not found or already acknowledged'); a.acknowledged = true; return send(res, 200, { acknowledged: true, id: a.id }) }
+  if (method === 'DELETE' && path.startsWith('/alerts/')) { const id = path.slice('/alerts/'.length); const n = state.alerts.length; state.alerts = state.alerts.filter((a) => a.id !== id); return state.alerts.length < n ? send(res, 204, null) : err(res, 404, 'not_found', 'alert not found') }
   if (method === 'GET' && path === '/telemetry') {
     const t = telemetry()
     pushHistory(t)

@@ -1,11 +1,11 @@
 // GPD Forge UI — app shell (multi-page). GPL-3.0-or-later.
 import { useEffect, useState } from 'react'
 import type { ModeId, Telemetry } from './types'
-import { getTelemetry, getMode, setMode as apiSetMode } from './api'
+import { getTelemetry, getMode, setMode as apiSetMode, getAlertSummary } from './api'
 import { Toggle } from './ui'
 import {
   MODES, DashboardPage, PowerPage, FanPage, ControllerPage, DisplayPage,
-  ProfilesPage, MonitorPage, SystemPage, SettingsPage, type Shared,
+  ProfilesPage, MonitorPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
 import { Wizard, isSetupDone } from './Wizard'
 
@@ -19,11 +19,12 @@ const NAV = [
   { id: 'monitor',    label: 'Monitor',    icon: '📈' },
   { id: 'system',     label: 'System',     icon: '🩺' },
   { id: 'settings',   label: 'Settings',   icon: '⚙️' },
+  { id: 'alerts',     label: 'Alerts',     icon: '🔔' },
 ] as const
 type PageId = typeof NAV[number]['id']
 
 export function App() {
-  const [page, setPage] = useState<PageId>('dashboard')
+  const [page, setPage] = useState<PageId>(() => window.location.hash === '#alerts' ? 'alerts' : 'dashboard')
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
@@ -31,6 +32,7 @@ export function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('forge-theme') as 'dark' | 'light') || 'dark')
   const [textScale, setTextScale] = useState<'normal' | 'large'>(() => (localStorage.getItem('forge-textscale') as 'normal' | 'large') || 'normal')
   const [showWizard, setShowWizard] = useState(() => !isSetupDone())
+  const [unreadAlerts, setUnreadAlerts] = useState(0)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -59,6 +61,13 @@ export function App() {
     return () => { alive = false; clearInterval(id) }
   }, [auto])
 
+  useEffect(() => {
+    let alive = true
+    const tick = () => getAlertSummary().then((s) => alive && setUnreadAlerts(s.unread)).catch(() => {})
+    tick(); const id = setInterval(tick, 5000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
   const pickMode = (id: ModeId) => { setAuto(false); setActive(id); apiSetMode(id).catch(() => {}) }
   const shared: Shared = { tele, active, auto, setAuto, pickMode }
   const connLabel = connected ? 'Live' : 'Offline'
@@ -75,6 +84,7 @@ export function App() {
           {NAV.map((n) => (
             <button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} data-testid={`nav-${n.id}`} onClick={() => setPage(n.id)}>
               <span className="nav-icon" aria-hidden>{n.icon}</span><span className="nav-label">{n.label}</span>
+              {n.id === 'alerts' && unreadAlerts > 0 && <span className="nav-badge" aria-label={`${unreadAlerts} unread alerts`}>{unreadAlerts > 99 ? '99+' : unreadAlerts}</span>}
             </button>
           ))}
         </nav>
@@ -106,6 +116,7 @@ export function App() {
           {page === 'monitor'    && <MonitorPage tele={tele} />}
           {page === 'system'     && <SystemPage tele={tele} />}
           {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} textScale={textScale} setTextScale={setTextScale} />}
+          {page === 'alerts'     && <AlertsPage onChanged={() => getAlertSummary().then((s) => setUnreadAlerts(s.unread)).catch(() => {})} />}
         </div>
       </main>
 

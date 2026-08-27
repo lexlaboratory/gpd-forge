@@ -387,3 +387,14 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var
 @media (max-width: 720px) {
   .stats { grid-template-columns: repeat(2, 1fr); }
 }
+/* Alert center */
+.nav-badge { margin-left: auto; min-width: 1.35rem; padding: .12rem .35rem; border-radius: 999px; background: var(--accent, #00c8ff); color: #071016; font-size: .72rem; font-weight: 800; text-align: center; }
+.alert-list { display: grid; gap: .75rem; margin-top: 1rem; }
+.alert-card { border: 1px solid var(--line, #263543); border-left: 3px solid var(--muted, #607080); border-radius: .7rem; padding: .85rem 1rem; background: var(--surface-2, rgba(255,255,255,.025)); }
+.alert-card.unread { box-shadow: 0 0 0 1px rgba(0,200,255,.12); }
+.alert-card.alert-aviso { border-left-color: #f0b429; }
+.alert-card.alert-critica { border-left-color: #ef5350; }
+.alert-card-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.alert-card h3 { margin: .5rem 0 .25rem; }
+.alert-card p { margin: 0 0 .65rem; }
+.alert-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; }
