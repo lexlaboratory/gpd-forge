@@ -169,8 +169,10 @@ if (enableHardware)
     builder.Services.AddSingleton<ITdpBackend>(sp =>
         new RyzenAdjBackend(sp.GetRequiredService<IProcessRunner>(), ryzenPath,
             sp.GetService<ILogger<RyzenAdjBackend>>()));
-    // Read-only richer sensors (package watts, temps, fan RPM). LHM loads its own read-only driver.
+    // Read-only richer sensors (package watts, temps). LHM loads its own read-only driver.
     builder.Services.AddSingleton<IHardwareSensors, LhmHardwareSensors>();
+    // Real GPD fan RPM via the PawnIO EC read (LHM doesn't expose it). Read-only, keeps one port open.
+    builder.Services.AddSingleton<GpdForge.Fan.IFanRpm, GpdForge.Fan.PawnIoFanRpm>();
 }
 else
 {

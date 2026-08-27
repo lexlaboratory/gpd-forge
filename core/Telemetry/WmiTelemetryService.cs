@@ -5,12 +5,14 @@
 // broker / PresentMon and are filled in later, behind hardware-access approval — they stay 0
 // here and are reported as "n/a".
 using System.Management;
+using GpdForge.Fan;
 using Microsoft.Extensions.Logging;
 
 namespace GpdForge.Telemetry;
 
 public sealed class WmiTelemetryService(
     IHardwareSensors? sensors = null,
+    IFanRpm? fanRpmSource = null,
     ILogger<WmiTelemetryService>? logger = null) : ITelemetryService
 {
     public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct)
@@ -34,6 +36,10 @@ public sealed class WmiTelemetryService(
             if (hw.CpuTempC > 0) cpuTempC = hw.CpuTempC; // LHM per-core temp beats the ACPI zone
             if (hw.FanRpm > 0) fanRpm = hw.FanRpm;
         }
+
+        // Real GPD fan RPM via the PawnIO EC read (LHM doesn't expose it). Read-only; only present
+        // when hardware access is enabled. Wins over LHM's fan reading (which is 0 on these boards).
+        if (fanRpmSource?.ReadRpm() is int rpm && rpm > 0) fanRpm = rpm;
 
         var snapshot = new TelemetrySnapshot(
             cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fanDutyPct,
