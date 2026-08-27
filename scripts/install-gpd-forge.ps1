@@ -37,7 +37,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     Write-Host "Elevation required - relaunching (accept UAC)..." -ForegroundColor Yellow
     $fwd = @()
     foreach ($kv in $PSBoundParameters.GetEnumerator()) { if ($kv.Value -is [switch] -and $kv.Value.IsPresent) { $fwd += "-$($kv.Key)" } }
-    Start-Process powershell -Verb RunAs -ArgumentList (@('-NoExit','-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"") + $fwd)
+    Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList (@('-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"") + $fwd)
     return
 }
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
@@ -137,7 +137,12 @@ try {
     Write-Host ("  API up: " + $h.model) -ForegroundColor Green
     $t = Invoke-RestMethod "$Url/telemetry" -TimeoutSec 8
     Write-Host ("  telemetry: cpu=" + $t.cpuTempC + "C  packageW=" + $t.packageW + "  battery=" + $t.batteryPct + "%")
-    Start-Process $Url    # open the dashboard in the default (signed) browser
+    $desktopExe = "$InstallDir\GPD Forge.exe"
+    if (Test-Path $desktopExe) {
+        Start-Process $desktopExe   # open the native Tauri window
+    } else {
+        Start-Process $Url          # fallback to browser if the desktop binary is missing
+    }
 } catch {
     Write-Host ("  API not answering yet: " + $_.Exception.Message) -ForegroundColor Yellow
     Write-Host ("  check the service: Get-Service $ServiceName ; and the log with 'sc query $ServiceName'") -ForegroundColor DarkGray

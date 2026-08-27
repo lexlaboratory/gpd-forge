@@ -1,8 +1,9 @@
 // GPD Forge UI — local API client. GPL-3.0-or-later.
 //
-// Talks to the daemon (see docs/api.md). BASE is empty when the UI is served BY the daemon
-// (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. Calls throw on failure;
-// callers decide how to degrade (the dashboard shows "Offline" and keeps the last values).
+// Talks to daemon on http://127.0.0.1:8787 (see docs/api.md). BASE is empty when the UI is served BY
+// the daemon (same origin), or set via VITE_FORGE_API for dev / a remote dashboard. When loaded from
+// the Tauri desktop shell (tauri:// / file:// / tauri.localhost), force the absolute local API URL so
+// relative requests do not stay inside the local shell. Calls throw on failure; callers degrade.
 
 import type {
   Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
@@ -13,7 +14,15 @@ import type {
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
 } from './types'
 
-const BASE = import.meta.env.VITE_FORGE_API ?? ''
+const LOCAL_API = 'http://127.0.0.1:8787'
+const isLocalShell = typeof window !== 'undefined' && (
+  window.location.protocol === 'file:' ||
+  window.location.hostname === 'tauri.localhost' ||
+  window.location.href.startsWith('tauri://')
+)
+// BASE is exported so the offline-banner UI can show a sensible "tried to reach" hint and so
+// tests can stub it. Same-origin by default; absolute 127.0.0.1:8787 from the Tauri desktop shell.
+export const BASE: string = import.meta.env.VITE_FORGE_API || (isLocalShell ? LOCAL_API : '')
 
 export interface TdpResult { requested: number; observed: number; verified: boolean }
 

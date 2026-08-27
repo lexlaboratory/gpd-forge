@@ -398,3 +398,23 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var
 .alert-card h3 { margin: .5rem 0 .25rem; }
 .alert-card p { margin: 0 0 .65rem; }
 .alert-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; }
+
+/* Daemon offline banner — honest UX for the "telemetry doesn't appear" symptom.
+   Uses the same danger palette as .conn-offline for visual continuity. */
+.daemon-offline {
+  margin: 0 0 18px; padding: 14px 18px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg));
+}
+.daemon-offline-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.daemon-offline-head strong { color: var(--danger); }
+.daemon-offline-body { margin: .55rem 0 .35rem; color: var(--text-dim); }
+.daemon-offline-reason { margin: 0 0 .35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; color: var(--text-dim); word-break: break-word; }
+.daemon-offline-actions { display: flex; gap: 14px; align-items: center; margin-top: .35rem; }
+.daemon-offline .btn {
+  padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--accent); color: #071016; font-weight: 700; cursor: pointer;
+}
+.daemon-offline .btn:disabled { opacity: .55; cursor: progress; }
+.daemon-offline .link { background: transparent; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+.daemon-offline code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 4px; font-size: .82em; }

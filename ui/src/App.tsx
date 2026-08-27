@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ModeId, Telemetry } from './types'
 import { getTelemetry, getMode, setMode as apiSetMode, getAlertSummary } from './api'
 import { Toggle } from './ui'
+import { DaemonOfflineBanner } from './DaemonOfflineBanner'
 import {
   MODES, DashboardPage, PowerPage, FanPage, ControllerPage, DisplayPage,
   ProfilesPage, MonitorPage, SystemPage, SettingsPage, AlertsPage, type Shared,
@@ -29,10 +30,25 @@ export function App() {
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
   const [connected, setConnected] = useState(false)
+  const [lastError, setLastError] = useState<string | null>(null)
+  const [retryBusy, setRetryBusy] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('forge-theme') as 'dark' | 'light') || 'dark')
   const [textScale, setTextScale] = useState<'normal' | 'large'>(() => (localStorage.getItem('forge-textscale') as 'normal' | 'large') || 'normal')
   const [showWizard, setShowWizard] = useState(() => !isSetupDone())
   const [unreadAlerts, setUnreadAlerts] = useState(0)
+
+  const retryConnection = async () => {
+    setRetryBusy(true)
+    try {
+      const t = await getTelemetry()
+      setTele(t); setConnected(true); setLastError(null)
+    } catch (e) {
+      setConnected(false)
+      setLastError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRetryBusy(false)
+    }
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -47,7 +63,15 @@ export function App() {
   useEffect(() => {
     let alive = true
     const tick = () =>
-      getTelemetry().then((t) => { if (alive) { setTele(t); setConnected(true) } }).catch(() => { if (alive) setConnected(false) })
+      getTelemetry()
+        .then((t) => { if (alive) { setTele(t); setConnected(true); setLastError(null) } })
+        .catch((e: unknown) => {
+          if (!alive) return
+          setConnected(false)
+          // `fetch` errors typically land here with a TypeError "Failed to fetch" / "NetworkError";
+          // surface the message verbatim — enough to tell a port-down from a CORS preflight failure.
+          setLastError(e instanceof Error ? e.message : String(e))
+        })
     tick()
     const id = setInterval(tick, 1000)
     return () => { alive = false; clearInterval(id) }
@@ -107,6 +131,13 @@ export function App() {
         </header>
 
         <div className="page" data-testid={`page-${page}`}>
+          {!connected && (
+            <DaemonOfflineBanner
+              reason={lastError}
+              onRetry={retryConnection}
+              busy={retryBusy}
+            />
+          )}
           {page === 'dashboard'  && <DashboardPage {...shared} />}
           {page === 'power'      && <PowerPage />}
           {page === 'fan'        && <FanPage tele={tele} />}
