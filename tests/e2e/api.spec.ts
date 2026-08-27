@@ -39,4 +39,14 @@ test.describe('Local API integration', () => {
     await dash.tdpSlider.fill('18')
     await expect(page.getByTestId('tdp-badge')).toHaveText('verified')
   })
+
+  test('fan API rejects an invalid mode without changing the current mode', async ({ request }) => {
+    const before = await (await request.get('http://127.0.0.1:8799/fan')).json()
+    const response = await request.post('http://127.0.0.1:8799/fan', { data: { mode: 'Turbo' } })
+
+    expect(response.status()).toBe(400)
+    expect(await response.json()).toMatchObject({ error: { code: 'bad_mode' } })
+    const after = await (await request.get('http://127.0.0.1:8799/fan')).json()
+    expect(after.mode).toBe(before.mode)
+  })
 })

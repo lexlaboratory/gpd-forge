@@ -12,7 +12,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
   use: {
-    baseURL: 'http://localhost:4173',
+    baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -34,8 +34,8 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: 'npm --prefix ui run build && npm --prefix ui run preview',
-      url: 'http://localhost:4173',
+      command: 'npm --prefix ui run build && npm --prefix ui run preview -- --host 127.0.0.1',
+      url: 'http://127.0.0.1:4173',
       env: { VITE_FORGE_API: 'http://127.0.0.1:8799' },
       reuseExistingServer: false,
       timeout: 180_000,

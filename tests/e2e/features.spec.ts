@@ -26,4 +26,27 @@ test.describe('Features', () => {
     await expect(page.getByTestId('chart-watt')).toBeVisible()
     await expect(page.getByTestId('chart-fps')).toBeVisible()
   })
+
+  test('manual fan duty round-trips through the daemon', async ({ page, request }) => {
+    await page.getByTestId('nav-fan').click()
+
+    const manualResponse = page.waitForResponse((response) =>
+      response.url().endsWith('/fan') && response.request().method() === 'POST',
+    )
+    await page.getByTestId('fan-manual').click()
+    await manualResponse
+
+    const duty = page.getByTestId('fan-manual-duty')
+    await expect(duty).toBeVisible()
+    await duty.fill('173')
+
+    const dutyResponse = page.waitForResponse((response) =>
+      response.url().endsWith('/fan') && response.request().method() === 'POST',
+    )
+    await duty.dispatchEvent('mouseup')
+    await dutyResponse
+
+    const persisted = await request.get('http://127.0.0.1:8799/fan')
+    expect(await persisted.json()).toMatchObject({ mode: 'Manual', manualDuty: 173, controllable: true })
+  })
 })

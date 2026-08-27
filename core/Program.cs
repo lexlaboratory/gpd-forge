@@ -107,6 +107,72 @@ if (args.Contains("--probe-ec-types"))
     return;
 }
 
+// GATED fan-WRITE probe (the PARENT runs this manually, on-device, elevated, to validate the manual
+// PWM duty write sequence against real hardware — see core/Fan/GpdFanController.cs). Requires BOTH
+// GPDFORGE_ENABLE_FAN_CONTROL=1 (this project's extra opt-in for fan WRITES specifically, on top of
+// the general hardware gate) and elevation (the PawnIO EC driver). Sets a manual duty, prints the
+// read-back + RPM, then AUTOMATICALLY restores AUTOMATIC after a 5s dwell so a probe run and
+// forgotten never leaves the fan pinned in manual. `dotnet run -- --probe-fan-set 128` (0-255).
+if (args.Contains("--probe-fan-set"))
+{
+    if (!FanControlPolicy.IsEnvironmentGateOpen())
+    {
+        Console.WriteLine("--probe-fan-set refused: set BOTH GPDFORGE_ENABLE_HARDWARE=1 and GPDFORGE_ENABLE_FAN_CONTROL=1 (and run elevated) to allow this probe to write the EC.");
+        return;
+    }
+    int flagIdx = Array.IndexOf(args, "--probe-fan-set");
+    if (flagIdx < 0 || flagIdx + 1 >= args.Length || !int.TryParse(args[flagIdx + 1], out int requestedDuty))
+    {
+        Console.WriteLine("Usage: --probe-fan-set <0-255>");
+        return;
+    }
+    var (fsVendor, fsProduct, fsVersion) = GpdForge.Fan.GpdFanReader.DetectBoard();
+    var fsDevice = GpdForge.Fan.GpdDeviceDb.MatchBoard(fsVendor, fsProduct, fsVersion);
+    if (fsDevice is null)
+    {
+        Console.WriteLine($"GPD Forge fan-set probe: no matching board for '{fsVendor}/{fsProduct}/{fsVersion}'.");
+        return;
+    }
+    Console.WriteLine($"GPD Forge fan-set probe (GATED — WRITES the EC): {fsDevice.BoardName}, requested duty {requestedDuty} (0-255 user scale).");
+    Console.WriteLine("This drives the REAL fan. It will restore AUTOMATIC after a 5s dwell — let it finish.");
+    using (var controller = new GpdForge.Fan.GpdFanController(fsDevice))
+    {
+        bool verified = controller.SetManualDuty(requestedDuty);
+        int? readBack = controller.ReadDuty();
+        var rpm = GpdForge.Fan.GpdFanReader.ProbeRpm(fsVendor, fsProduct, fsVersion);
+        Console.WriteLine($"  verified      : {verified}");
+        Console.WriteLine($"  duty read-back: {(readBack?.ToString() ?? "(none)")} (0-255 user scale)");
+        Console.WriteLine($"  fan RPM       : {(rpm.RpmPure?.ToString() ?? rpm.Error ?? "(unknown)")}");
+        Console.WriteLine("  dwelling 5s before restoring AUTOMATIC...");
+        await Task.Delay(5000);
+        controller.SetAuto();
+        Console.WriteLine("  restored AUTOMATIC (manual_control_enable = 0).");
+    }
+    return;
+}
+
+// Force AUTOMATIC fan control (GATED — writes the EC). The parent's tool to bail a stuck manual
+// state back to firmware control. `dotnet run -- --probe-fan-auto` from an elevated shell.
+if (args.Contains("--probe-fan-auto"))
+{
+    if (!FanControlPolicy.IsEnvironmentGateOpen())
+    {
+        Console.WriteLine("--probe-fan-auto refused: set BOTH GPDFORGE_ENABLE_HARDWARE=1 and GPDFORGE_ENABLE_FAN_CONTROL=1 (and run elevated) to allow this probe to write the EC.");
+        return;
+    }
+    var (faVendor, faProduct, faVersion) = GpdForge.Fan.GpdFanReader.DetectBoard();
+    var faDevice = GpdForge.Fan.GpdDeviceDb.MatchBoard(faVendor, faProduct, faVersion);
+    if (faDevice is null)
+    {
+        Console.WriteLine($"GPD Forge fan-auto probe: no matching board for '{faVendor}/{faProduct}/{faVersion}'.");
+        return;
+    }
+    using var autoController = new GpdForge.Fan.GpdFanController(faDevice);
+    autoController.SetAuto();
+    Console.WriteLine($"GPD Forge fan-auto probe: {faDevice.BoardName} — wrote manual_control_enable = 0 (AUTOMATIC).");
+    return;
+}
+
 // Read-only display probe: current brightness via WMI.
 if (args.Contains("--probe-display"))
 {
@@ -177,6 +243,31 @@ if (enableHardware)
 else
 {
     builder.Services.AddSingleton<ITdpBackend, StubTdpBackend>();
+}
+
+// Gated fan (PWM duty) WRITE control: fan writes are riskier than a read (commanding the wrong duty
+// is an immediate physical risk), so they require a SECOND, separate opt-in on top of the general
+// hardware gate — GPDFORGE_ENABLE_HARDWARE=1 alone is not enough. Even with both set, an unmatched
+// board falls back to the honest no-op (never guesses at a register map). See
+// core/Fan/GpdFanController.cs for the write sequence + safety floor.
+bool enableFanControl = FanControlPolicy.IsEnvironmentGateOpen();
+if (enableFanControl)
+{
+    var (fcVendor, fcProduct, fcVersion) = GpdForge.Fan.GpdFanReader.DetectBoard();
+    var fcDevice = GpdForge.Fan.GpdDeviceDb.MatchBoard(fcVendor, fcProduct, fcVersion);
+    if (fcDevice is not null)
+    {
+        builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController>(sp =>
+            new GpdForge.Fan.GpdFanController(fcDevice, logger: sp.GetService<ILogger<GpdForge.Fan.GpdFanController>>()));
+    }
+    else
+    {
+        builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController, GpdForge.Fan.NoOpGpdFanController>();
+    }
+}
+else
+{
+    builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController, GpdForge.Fan.NoOpGpdFanController>();
 }
 
 builder.Services.AddSingleton<ITdpController, ClosedLoopTdpController>();
@@ -439,13 +530,18 @@ app.MapPost("/power-source", (PowerSourceRequest r, PowerSourceState s) =>
 });
 
 // Display brightness (WMI, no driver).
-// Fan mode preference (Auto/Quiet/Balanced/Aggressive/Manual). Stored now; applied when the EC
-// fan driver lands. A real setting, not a dead control.
-app.MapGet("/fan", (FanState f) => Results.Json(new { mode = f.Mode }));
-app.MapPost("/fan", (FanRequest r, FanState f) =>
+// Fan mode preference (Auto/Quiet/Balanced/Aggressive/Manual) + manual duty. `controllable` reports
+// whether GPD Forge is actually gated to WRITE the EC right now (GPDFORGE_ENABLE_HARDWARE=1 AND
+// GPDFORGE_ENABLE_FAN_CONTROL=1 AND a matched board) — see ForgeWorker.cs for the tick that applies
+// this, and core/Fan/GpdFanController.cs for the write path itself.
+app.MapGet("/fan", (FanState f, IGpdFanController controller) => Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available }));
+app.MapPost("/fan", (FanRequest r, FanState f, IGpdFanController controller) =>
 {
-    if (!string.IsNullOrWhiteSpace(r.Mode)) f.Mode = r.Mode!;
-    return Results.Json(new { mode = f.Mode });
+    if (r.Mode is not null && !FanControlPolicy.IsValidMode(r.Mode))
+        return Results.BadRequest(new { error = new { code = "bad_mode", message = "mode must be one of Auto, Quiet, Balanced, Aggressive, Manual" } });
+    if (r.Mode is not null) f.Mode = r.Mode;
+    if (r.ManualDuty is int d) f.ManualDuty = Math.Clamp(d, 0, 255);
+    return Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available });
 });
 
 app.MapGet("/display", (DisplayService d) => Results.Json(new { brightness = d.GetBrightness() }));
@@ -691,7 +787,7 @@ app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guar
         });
         applied.Add("guardian");
     }
-    if (!string.IsNullOrWhiteSpace(req.FanMode)) { fan.Mode = req.FanMode; applied.Add("fanMode"); }
+    if (FanControlPolicy.IsValidMode(req.FanMode)) { fan.Mode = req.FanMode!; applied.Add("fanMode"); }
     if (req.Brightness is int level) { display.SetBrightness(level); applied.Add("brightness"); }
     if (req.PowerSource is not null)
     {
@@ -737,8 +833,10 @@ namespace GpdForge.Api
     public sealed record ChargeLimitRequest(int Percent);
     public sealed record UndervoltRequest(int? CoCount, int? OffsetMv);
 
-    public sealed class FanState { public string Mode { get; set; } = "Auto"; }
-    public sealed record FanRequest(string? Mode);
+    /// <summary>Mode is Auto/Quiet/Balanced/Aggressive/Manual; ManualDuty (0..255) is the fixed duty
+    /// used only while Mode == "Manual" — see ForgeWorker.cs's fan-control tick.</summary>
+    public sealed class FanState { public string Mode { get; set; } = "Auto"; public int ManualDuty { get; set; } = 128; }
+    public sealed record FanRequest(string? Mode, int? ManualDuty);
     public sealed record FreezerRequest(string? Name);
     public sealed record AutoFpsRequest(double TargetFps, bool Enable);
     public sealed class AutoFpsState { public bool Enabled { get; set; } public double TargetFps { get; set; } = 60; public int CurrentStapm { get; set; } = 25; }

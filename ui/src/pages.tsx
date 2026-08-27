@@ -3,10 +3,10 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type {
   Mode, ModeId, Telemetry, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, ImportResult, PowerSourceConfig,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo, TuneGoal, TunerInfo, UpdateCheck,
-  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo, HealthReport,
+  LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo, HealthReport, FanInfo,
 } from './types'
 import {
-  setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, getFan, setFan,
+  setTdp as apiSetTdp, getProfiles, setProfile, getBrightness, setBrightness, setFan, getFanInfo, setFanManualDuty,
   getBudget, getFrozen, freeze, thaw, getAutoFps, setAutoFps, getGuardian, setGuardian,
   getAi, setAntiStandby, getHistory, historyExportUrl, importMotionAssistant,
   getPowerSource, setPowerSource, settingsExportUrl, importSettings, type TdpResult,
@@ -460,13 +460,16 @@ function ScreenAdvisoryCard() {
 
 // --- Fan ----------------------------------------------------------------------
 const FAN_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive', 'Manual']
+const FAN_GATE_CLOSED_ADVISORY =
+  'Curve editor with hysteresis + EC re-init on boot/resume lands with the fan driver (EC access pending PawnIO-stable).'
 export function FanPage({ tele }: { tele: Telemetry | null }) {
-  const [fanMode, setFanMode] = useState('Auto')
-  useEffect(() => { getFan().then(setFanMode).catch(() => {}) }, [])
-  const pick = (f: string) => { setFanMode(f); setFan(f).catch(() => {}) }
+  const [fan, setFanInfo] = useState<FanInfo>({ mode: 'Auto', manualDuty: 128, controllable: false })
+  useEffect(() => { getFanInfo().then(setFanInfo).catch(() => {}) }, [])
+  const pick = (f: string) => { setFanInfo((s) => ({ ...s, mode: f })); setFan(f).catch(() => {}) }
+  const commitDuty = (v: number) => { setFanManualDuty(v).catch(() => {}) }
   return (
     <>
-      <Card title="Fan" hint="Preference saved now; curve applied when the fan driver lands.">
+      <Card title="Fan" hint={fan.controllable ? 'Live — writes the EC.' : 'Preference saved now; curve applied when the fan-control gate is open.'}>
         <div className="stats">
           <Tile label="Fan" value={tele ? `${tele.fanRpm}` : '--'} unit="rpm" />
           <Tile label="CPU" value={tele ? `${Math.round(tele.cpuTempC)}` : '--'} unit="°C" />
@@ -474,10 +477,19 @@ export function FanPage({ tele }: { tele: Telemetry | null }) {
         </div>
         <div className="chips">
           {FAN_MODES.map((f) => (
-            <button key={f} className={`chip-btn ${fanMode === f ? 'on' : ''}`} onClick={() => pick(f)} data-testid={`fan-${f.toLowerCase()}`}>{f}</button>
+            <button key={f} className={`chip-btn ${fan.mode === f ? 'on' : ''}`} onClick={() => pick(f)} data-testid={`fan-${f.toLowerCase()}`}>{f}</button>
           ))}
         </div>
-        <p className="muted">Curve editor with hysteresis + EC re-init on boot/resume lands with the fan driver (EC access pending PawnIO-stable).</p>
+        {fan.controllable ? (
+          fan.mode === 'Manual' ? (
+            <Slider label="Manual duty" testid="fan-manual-duty" value={fan.manualDuty} min={0} max={255} unit=" /255"
+              onChange={(v) => setFanInfo((s) => ({ ...s, manualDuty: v }))} onCommit={commitDuty} />
+          ) : (
+            <p className="muted">Switch to Manual to set a fixed duty; Quiet/Balanced/Aggressive drive a temp curve automatically.</p>
+          )
+        ) : (
+          <p className="muted">{FAN_GATE_CLOSED_ADVISORY}</p>
+        )}
       </Card>
     </>
   )

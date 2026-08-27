@@ -56,6 +56,10 @@ export interface NightMode { on: boolean; warmth: number }
 export interface TabletModeInfo { convertible: boolean | null; raw: number | null; applied: boolean; advisory: string }
 export interface KeyboardBacklightInfo { controllable: boolean; applied: boolean; advisory: string }
 
+// Fan mode + gated manual duty (mirror of GET/POST /fan — core/Fan/GpdFanController.cs).
+// `controllable` is true only when the daemon is actually gated to WRITE the EC right now.
+export interface FanInfo { mode: string; manualDuty: number; controllable: boolean }
+
 // Full settings snapshot (mirror of GET /settings/export).
 export interface SettingsExport {
   modePresets: Record<string, Preset>

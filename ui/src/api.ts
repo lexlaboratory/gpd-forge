@@ -10,7 +10,7 @@ import type {
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
-  HealthReport, PanicResult, IncumbentsInfo,
+  HealthReport, PanicResult, IncumbentsInfo, FanInfo,
 } from './types'
 
 const BASE = import.meta.env.VITE_FORGE_API ?? ''
@@ -62,9 +62,11 @@ export const setTabletMode = (enable: boolean) => json<TabletModeInfo>('/display
 export const getKeyboardBacklight = () => json<KeyboardBacklightInfo>('/display/keyboard-backlight')
 export const setKeyboardBacklight = () => json<KeyboardBacklightInfo>('/display/keyboard-backlight', post())
 
-// --- fan mode preference ---
+// --- fan mode preference + gated manual duty (core/Fan/GpdFanController.cs) ---
 export const getFan = async () => (await json<{ mode: string }>('/fan')).mode
 export const setFan = async (mode: string) => (await json<{ mode: string }>('/fan', post({ mode }))).mode
+export const getFanInfo = () => json<FanInfo>('/fan')
+export const setFanManualDuty = (manualDuty: number) => json<FanInfo>('/fan', post({ manualDuty }))
 
 // --- battery budget ---
 export const getBudget = () => json<BatteryBudget>('/battery/budget')

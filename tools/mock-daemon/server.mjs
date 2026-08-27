@@ -45,6 +45,7 @@ const state = {
   chargeLimit: { percent: 100 },
   undervolt: { coCount: 0, offsetMv: 0 },
   fanMode: 'Auto',
+  fanManualDuty: 128,
   frozen: [],
   history: [], // { unixMs, snap } ring, capped at HISTORY_CAPACITY — see pushHistory()
   autoFps: { enabled: false, targetFps: 60 },
@@ -240,6 +241,15 @@ function undervoltInfo() {
   return { coCount: state.undervolt.coCount, offsetMv: state.undervolt.offsetMv, applied: true, advisory: UNDERVOLT_MOCK_ADVISORY }
 }
 
+// Fan mode + manual duty (mirrors core/Fan/GpdFanController.cs + core/Program.cs's GET/POST /fan).
+// The mock reports controllable:true unconditionally (like LED/ChargeLimit/Undervolt above) so the
+// UI/E2E can exercise the manual-duty slider without real hardware; the real daemon only reports
+// controllable:true when BOTH GPDFORGE_ENABLE_HARDWARE=1 AND GPDFORGE_ENABLE_FAN_CONTROL=1 (a second,
+// separate opt-in — fan writes are gated more strictly than other hardware writes) and a matched board.
+function fanInfo() {
+  return { mode: state.fanMode, manualDuty: state.fanManualDuty, controllable: true }
+}
+
 function aiInfo() {
   const holders = aiHolders()
   return {
@@ -356,11 +366,16 @@ const server = http.createServer(async (req, res) => {
     state.presets[mode] = { stapmW: body.stapmW, fastW: body.fastW, slowW: body.slowW, tctlC: body.tctlC }
     return send(res, 200, { mode, ...state.presets[mode] })
   }
-  if (method === 'GET' && path === '/fan') return send(res, 200, { mode: state.fanMode })
+  if (method === 'GET' && path === '/fan') return send(res, 200, fanInfo())
   if (method === 'POST' && path === '/fan') {
     const body = await readBody(req)
+    const validFanModes = new Set(['Auto', 'Quiet', 'Balanced', 'Aggressive', 'Manual'])
+    if (body?.mode !== undefined && !validFanModes.has(body.mode))
+      return send(res, 400, { error: { code: 'bad_mode', message: 'mode must be one of Auto, Quiet, Balanced, Aggressive, Manual' } })
     if (body?.mode) state.fanMode = body.mode
-    return send(res, 200, { mode: state.fanMode })
+    if (body?.manualDuty !== undefined && body?.manualDuty !== null && Number.isFinite(Number(body.manualDuty)))
+      state.fanManualDuty = Math.max(0, Math.min(255, Number(body.manualDuty)))
+    return send(res, 200, fanInfo())
   }
   if (method === 'GET' && path === '/battery/budget') return send(res, 200, {
     minutesRemaining: 78, remainingWh: 40.2, dischargeW: 18.4,

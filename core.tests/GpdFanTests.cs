@@ -11,7 +11,7 @@ public class GpdFanTests
         public readonly List<(byte reg, byte val)> Outbs = [];
         public int SelectedSlot = -1;
         public ushort NextWord;
-        public byte NextByte;
+        public byte NextByte { get; set; }
         public void SelectSlot(int slot) => SelectedSlot = slot;
         public void Outb(byte register, byte value) => Outbs.Add((register, value));
         public byte Inb(byte register) => NextByte;

@@ -32,11 +32,19 @@ public sealed class ForgeWorker(
     TelemetryHistory history,
     ProfileApplier profileApplier,
     PowerSourceState powerSource,
-    TunerState tuner) : BackgroundService
+    TunerState tuner,
+    FanState fanState,
+    IGpdFanController fanControl) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
     // than re-applying every tick. Null until the first snapshot arrives.
     private bool? _lastAcConnected;
+
+    // Gated fan (PWM duty) control state — see the tick block below. _lastFanMode lets Auto restore
+    // fire only ONCE per transition (not every tick); _lastFanDuty feeds FanCurve's hysteresis and
+    // starts at 0 so a cold start simply adopts the curve's first reading with no holdback.
+    private string? _lastFanMode;
+    private int _lastFanDuty;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -106,6 +114,46 @@ public sealed class ForgeWorker(
                     }
                 }
 
+                // Gated fan (PWM duty) control — see core/Fan/GpdFanController.cs. Deliberately AFTER
+                // the guardian throttle above: guardian's panic path can set FanState.Mode to
+                // Aggressive, and that switch must take effect the very same tick. `fanControl` is a
+                // no-op (NoOpGpdFanController) whenever the fan-control gate is closed or the board is
+                // unmatched, so this block is always safe to run unconditionally.
+                switch (fanState.Mode)
+                {
+                    case "Auto":
+                        // Only write on the transition INTO Auto, not every tick.
+                        if (_lastFanMode != "Auto") { fanControl.SetAuto(); _lastFanMode = "Auto"; }
+                        break;
+                    case "Manual":
+                        _lastFanDuty = fanState.ManualDuty;
+                        _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
+                        _lastFanMode = "Manual";
+                        break;
+                    case "Quiet" or "Balanced" or "Aggressive":
+                        // Zero/non-finite means telemetry is unavailable, not that the CPU is cold.
+                        // Never take firmware control without a trustworthy temperature sensor.
+                        if (!FanControlPolicy.IsUsableTemperature(snapshot.CpuTempC))
+                        {
+                            fanControl.SetAuto();
+                            _lastFanDuty = 0;
+                            _lastFanMode = "Auto";
+                            break;
+                        }
+                        var curve = FanCurve.ForMode(fanState.Mode) ?? FanCurve.Balanced;
+                        _lastFanDuty = FanCurve.DutyForTemp(snapshot.CpuTempC, curve, FanCurve.DefaultHysteresisC, _lastFanDuty);
+                        _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
+                        _lastFanMode = fanState.Mode;
+                        break;
+                    default:
+                        // Defense in depth for imported/legacy state: invalid state can never leave
+                        // a previous manual duty pinned. The HTTP API rejects it before this point.
+                        fanControl.SetAuto();
+                        _lastFanDuty = 0;
+                        _lastFanMode = "Auto";
+                        break;
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
         }
@@ -113,6 +161,9 @@ public sealed class ForgeWorker(
         finally
         {
             try { freezer.ThawAll(); } catch { /* best effort */ }
+            // Critical safety: always restore AUTOMATIC fan control on shutdown, even if we were
+            // never in manual this run (SetAuto is idempotent / a no-op controller ignores it).
+            try { fanControl.SetAuto(); } catch { /* best effort */ }
             logger.LogInformation("GPD Forge service stopping.");
         }
     }

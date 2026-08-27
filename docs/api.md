@@ -95,10 +95,25 @@ triggered, not every tick) — e.g. auto-drop to Battery mode on unplug, back to
 plug-in. Applied the same way `POST /mode` is: through `ProfileApplier`, which yields if another
 power controller (MotionAssistant/GPD Tool) is running.
 
-### `GET /fan`  ·  `POST /fan`
-- `GET → { mode: 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive' | 'Manual' }`
-- `POST { mode } → { mode }` — sets the fan preference. The curve is applied once the fan driver lands
-  (EC access is gated behind a stable kernel helper); until then the preference is stored.
+### `GET /fan`  ·  `POST /fan`  (fan mode + manual duty — WRITES are GATED)
+- `GET → { mode: 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive' | 'Manual', manualDuty: number,
+  controllable: boolean }`
+  - `POST { mode?: string, manualDuty?: number } → (same shape as GET)` — `mode` must be exactly one
+    of `Auto` / `Quiet` / `Balanced` / `Aggressive` / `Manual` (`400 bad_mode` otherwise);
+    `manualDuty` (0–255, clamped) is the fixed duty used only while `mode === 'Manual'`.
+    `controllable` is true only when a matched board's EC port is actually open and writable.
+
+The daemon always stores the preference (so the UI round-trips even with the gate closed). Applying
+it to hardware requires **both** `GPDFORGE_ENABLE_HARDWARE=1` **and** a second, separate opt-in
+`GPDFORGE_ENABLE_FAN_CONTROL=1` (fan writes are gated more strictly than other hardware writes — see
+`core/Fan/GpdFanController.cs`) — with both set and a matched board, `ForgeWorker` drives the EC every
+tick: `Auto` restores automatic (once, on the transition), `Quiet`/`Balanced`/`Aggressive` compute a
+duty from a temp→duty curve with hysteresis (`core/Fan/FanCurve.cs`) via `FanMath`'s PWM-scale cast
+  (`core/Fan/FanMath.cs`), and `Manual` holds `manualDuty`. A safety floor (`GpdFanController.MinManualDuty`,
+  40/255) means GPD Forge never commands a near-stopped fan, and AUTOMATIC is always restored on
+  service shutdown. If CPU temperature telemetry is absent/non-finite, curve modes fail safe to
+  firmware AUTOMATIC instead of interpreting the missing `0` reading as a cold CPU. With either gate
+  closed, an unmatched board, or an unavailable EC port, `controllable:false` and nothing is written.
 
 ### `GET /display`  ·  `POST /display/brightness`
 - `GET → { brightness: number }` — 0–100, read live over WMI.
