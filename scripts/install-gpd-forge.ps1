@@ -5,8 +5,7 @@
   (no unsigned executable is launched):
     - publishes the core service and registers it as a Windows Service run via the SIGNED dotnet.exe
       host (SYSTEM, autostart), so the local API + real telemetry come up at boot,
-    - builds the web UI and lets the service serve it, so you open the dashboard in your BROWSER at
-      http://127.0.0.1:8787 (a signed app) instead of an unsigned desktop binary,
+    - builds the web UI and bundles the signed Tauri shell, opening a native 1024x720 window,
     - starts the service and verifies the API.
 
   It does NOT change power or fan on its own, and does NOT touch MotionAssistant / GPD Tool unless
@@ -77,6 +76,8 @@ New-Item -ItemType Directory -Force -Path "$InstallDir\service\wwwroot" | Out-Nu
 Copy-Item "$RepoDir\ui\dist\*" "$InstallDir\service\wwwroot\" -Recurse -Force
 Copy-Item "$RepoDir\ui\src-tauri\icons\icon.ico" "$InstallDir\icon.ico" -Force
 Copy-Item "$RepoDir\scripts\forge-notify.ps1" "$InstallDir\forge-notify.ps1" -Force
+$tauriExe = "$RepoDir\ui\src-tauri\target\release\gpd-forge.exe"
+if (Test-Path $tauriExe) { Copy-Item $tauriExe "$InstallDir\GPD Forge.exe" -Force }
 
 # --- 3) register the service via the signed dotnet host (SAC-safe) ---
 Write-Host "== 3/6  Registering the Windows Service ==" -ForegroundColor Cyan
@@ -93,7 +94,7 @@ Write-Host "== 4/6  Creating Start Menu and tray shortcuts ==" -ForegroundColor 
 if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
 $wsh = New-Object -ComObject WScript.Shell
 $startLink = $wsh.CreateShortcut("$StartMenu\GPD Forge.lnk")
-$startLink.TargetPath = "$env:WINDIR\explorer.exe"; $startLink.Arguments = $Url; $startLink.WorkingDirectory = $InstallDir
+$startLink.TargetPath = "$InstallDir\GPD Forge.exe"; $startLink.Arguments = ''; $startLink.WorkingDirectory = $InstallDir
 $startLink.IconLocation = "$InstallDir\icon.ico"; $startLink.Description = 'Open GPD Forge dashboard'; $startLink.Save()
 New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
 $trayLink = $wsh.CreateShortcut("$StartupDir\GPD Forge Tray.lnk")
@@ -143,4 +144,4 @@ try {
 }
 
 Write-Host "`nDone. GPD Forge runs as a service (autostart). Open the dashboard from the Start Menu" -ForegroundColor Green
-Write-Host "('GPD Forge') or at $Url. The native desktop app needs code-signing to run under Smart App Control." -ForegroundColor DarkGray
+Write-Host "('GPD Forge') or from the premium tray icon. The local API remains at $Url." -ForegroundColor DarkGray

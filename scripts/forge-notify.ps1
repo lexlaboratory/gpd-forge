@@ -5,7 +5,8 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $mutex = New-Object System.Threading.Mutex($false, 'Global\GPDForge.Tray')
 if (-not $mutex.WaitOne(0, $false)) { exit 0 }
-$open = { Start-Process $Api }
+$appExe = Join-Path $env:ProgramFiles 'GPD Forge\GPD Forge.exe'
+$open = { if (Test-Path $appExe) { Start-Process $appExe } else { Start-Process $Api } }
 $ni = New-Object System.Windows.Forms.NotifyIcon
 $iconPath = Join-Path $env:ProgramFiles 'GPD Forge\icon.ico'
 if (Test-Path $iconPath) { $ni.Icon = New-Object System.Drawing.Icon($iconPath) } else { $ni.Icon = [System.Drawing.SystemIcons]::Information }
@@ -17,7 +18,7 @@ $statusItem.Add_Click({ try { $h = Invoke-RestMethod "$Api/health" -TimeoutSec 3
 $menu.Items.Add('-') | Out-Null
 $exitItem = $menu.Items.Add('Exit tray icon'); $exitItem.Add_Click({ $script:stop = $true })
 $ni.ContextMenuStrip = $menu; $ni.Add_DoubleClick($open)
-$ni.Add_BalloonTipClicked({ Start-Process "$Api/#alerts" })
+$ni.Add_BalloonTipClicked({ if (Test-Path $appExe) { Start-Process $appExe } else { Start-Process "$Api/#alerts" } })
 if ($SelfTest) { $ni.ShowBalloonTip(1500, 'GPD Forge', 'Tray self-test OK', [System.Windows.Forms.ToolTipIcon]::Info); Start-Sleep -Milliseconds 300; $ni.Visible = $false; $ni.Dispose(); $mutex.ReleaseMutex(); $mutex.Dispose(); Write-Output 'SELFTEST_OK tray'; exit 0 }
 $lastAlert = $null; $script:stop = $false
 try {
