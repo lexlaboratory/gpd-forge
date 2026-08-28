@@ -896,7 +896,12 @@ export function AlertsPage({ onChanged }: { onChanged?: () => void }) {
   const [loading, setLoading] = useState(true)
   const load = () => getAlerts(false, 500).then((r) => setItems(r.alerts)).catch(() => {}).finally(() => setLoading(false))
   useEffect(() => { load() }, [])
-  const visible = filter === 'all' ? items : items.filter((x) => x.severity.toLowerCase() === filter.toLowerCase())
+  // Never assume the wire type. `severity` is a C# enum on the daemon side, and when it went out as
+  // an ordinal instead of a name, calling .toLowerCase() on it threw during render and took the
+  // whole app down with it. The daemon now sends names (JsonStringEnumConverter in Program.cs);
+  // this keeps a future contract slip from being fatal a second time.
+  const sev = (a: AlertEvent) => String(a.severity ?? '').toLowerCase()
+  const visible = filter === 'all' ? items : items.filter((x) => sev(x) === filter.toLowerCase())
   const ack = async (id: string) => { await acknowledgeAlert(id).catch(() => {}); await load(); onChanged?.() }
   const ackAll = async () => { await acknowledgeAllAlerts().catch(() => {}); await load(); onChanged?.() }
   const remove = async (id: string) => { await deleteAlert(id).catch(() => {}); await load(); onChanged?.() }
@@ -910,7 +915,7 @@ export function AlertsPage({ onChanged }: { onChanged?: () => void }) {
         {loading && <p className="muted">Loading alerts…</p>}
         {!loading && visible.length === 0 && <p className="muted" data-testid="alerts-empty">No alerts — your system is quiet.</p>}
         <div className="alert-list" aria-live="polite">
-          {visible.map((a) => <article key={a.id} className={`alert-card alert-${a.severity.toLowerCase()} ${a.acknowledged ? 'read' : 'unread'}`}>
+          {visible.map((a) => <article key={a.id} className={`alert-card alert-${sev(a)} ${a.acknowledged ? 'read' : 'unread'}`}>
             <div className="alert-card-head"><span className="badge">{a.severity}</span><span className="muted">{new Date(a.timestampUtc).toLocaleString()}</span></div>
             <h3>{a.title}</h3><p>{a.message}</p>
             {a.technicalData && <details><summary>Technical details</summary><pre>{a.technicalData}</pre></details>}

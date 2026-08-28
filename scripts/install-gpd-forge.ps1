@@ -17,6 +17,7 @@
     ...\install-gpd-forge.ps1 -Substitute     # also stop+disable MotionAssistant & GPD Tool (the takeover)
     ...\install-gpd-forge.ps1 -NoHardware     # telemetry in driverless WMI mode only
     ...\install-gpd-forge.ps1 -NoFps          # skip the PresentMon/ETW FPS probe (fps stays 0)
+    ...\install-gpd-forge.ps1 -NoFanControl   # telemetry + TDP only; leave the fan to the EC
     ...\install-gpd-forge.ps1 -Uninstall      # remove the service and shortcut
 #>
 [CmdletBinding()]
@@ -24,7 +25,8 @@ param(
     [switch]$Substitute,
     [switch]$Uninstall,
     [switch]$NoHardware,
-    [switch]$NoFps
+    [switch]$NoFps,
+    [switch]$NoFanControl
 )
 $ErrorActionPreference = 'Stop'
 $ServiceName = 'GPDForge'
@@ -129,6 +131,11 @@ New-Service -Name $ServiceName -BinaryPathName "`"$dotnet`" `"$dll`"" -DisplayNa
     -Description "GPD Forge - handheld tuning daemon (local API + telemetry + web UI)." -StartupType Automatic | Out-Null
 $envLines = @("GPDFORGE_AUTO_PROFILES=1")
 if (-not $NoHardware) { $envLines += "GPDFORGE_ENABLE_HARDWARE=1" }
+# Fan WRITES need a SECOND opt-in on top of the hardware gate (see core/Fan/FanControlPolicy.cs):
+# commanding the wrong duty is an immediate physical risk, so it is deliberately not implied by
+# -NoHardware alone. The installer used to omit it entirely, which meant a reinstall silently
+# CLOSED a gate an operator had opened by hand and left every fan control inert.
+if (-not $NoHardware -and -not $NoFanControl) { $envLines += "GPDFORGE_ENABLE_FAN_CONTROL=1" }
 # FPS lives behind its own gate: it is an ETW capability, unrelated to the MSR/EC access above, and a
 # failure there must not be able to take the (physically validated) hardware path down with it.
 if (-not $NoFps) {

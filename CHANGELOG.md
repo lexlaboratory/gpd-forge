@@ -6,6 +6,22 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **One bad field killed the whole app.** `AlertSeverity`/`AlertCategory` are C# enums, and without
+  `JsonStringEnumConverter` they went out as ordinals (`"severity":1`) while `docs/api.md`, the mock
+  daemon and `ui/src/types.ts` all specify names (`"Aviso"`). The Alerts page called
+  `severity.toLowerCase()` on a number, React threw during render, and with no error boundary the
+  entire tree unmounted: the window went blank and *nothing* was clickable — which reads as "the app
+  does nothing", not "one page is broken". The daemon now serializes enum names, an `ErrorBoundary`
+  scopes any future panel failure to that panel, and `AlertsPage` coerces the field defensively.
+  Covered by `core.tests/AlertWireFormatTests.cs`, including a test that fails if the converter is
+  ever removed as redundant.
+- **Reinstalling silently closed the fan gate.** Fan writes need `GPDFORGE_ENABLE_FAN_CONTROL=1` on
+  top of the hardware gate, and the installer never wrote it — so it wiped a gate an operator had
+  opened by hand and left every fan control inert (`controllable: false`). Now set by default, with
+  `-NoFanControl` to opt out.
+- `scripts/update-shell.ps1` — replaces just the desktop shell, and **verifies the new binary
+  actually runs before overwriting the installed one**. Smart App Control judges each unsigned build
+  individually and inconsistently; the old flow could swap a working shell for a blocked one.
 - **Telemetry was invisible in the native window.** The installed shell binary predated the fix that
   makes the client target the daemon absolutely; inside Tauri the origin is `http://tauri.localhost`,
   so every relative `fetch` 404'd and each tile rendered `--` with no error shown. The root cause was

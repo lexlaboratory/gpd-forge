@@ -220,6 +220,15 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.Services.AddWindowsService(options => options.ServiceName = "GPD Forge");
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
+// Enums go out as their NAMES, not their ordinals. Without this, System.Text.Json serialized
+// AlertSeverity.Aviso as `1`, while the mock daemon, docs/api.md and ui/src/types.ts all agree the
+// wire format is "Aviso". The UI called severity.toLowerCase() on a number, React threw during
+// render, and with no boundary the whole app unmounted - the window went blank and nothing was
+// clickable. An ordinal is also a worse contract: reordering an enum member would silently change
+// the meaning of stored alerts.
+builder.Services.ConfigureHttpJsonOptions(o =>
+    o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+
 // Hardware subsystems. Phase-0/1 wiring; real backends land in later phases.
 builder.Services.AddSingleton<IBroker, NullBroker>();
 builder.Services.AddSingleton<IDelay, SystemDelay>();

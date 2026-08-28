@@ -9,6 +9,7 @@ import {
   ProfilesPage, MonitorPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
 import { Wizard, isSetupDone } from './Wizard'
+import { ErrorBoundary } from './ErrorBoundary'
 
 const NAV = [
   { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
@@ -138,6 +139,10 @@ export function App() {
               busy={retryBusy}
             />
           )}
+          {/* Scoped to the page body on purpose: the sidebar, the live telemetry header and the
+              offline banner must survive a panel blowing up, so the app degrades to "this section
+              failed" instead of an empty window. */}
+          <ErrorBoundary resetKey={page}>
           {page === 'dashboard'  && <DashboardPage {...shared} />}
           {page === 'power'      && <PowerPage />}
           {page === 'fan'        && <FanPage tele={tele} />}
@@ -148,6 +153,7 @@ export function App() {
           {page === 'system'     && <SystemPage tele={tele} />}
           {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} textScale={textScale} setTextScale={setTextScale} />}
           {page === 'alerts'     && <AlertsPage onChanged={() => getAlertSummary().then((s) => setUnreadAlerts(s.unread)).catch(() => {})} />}
+          </ErrorBoundary>
         </div>
       </main>
 
