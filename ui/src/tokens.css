@@ -1,0 +1,208 @@
+/* GPD Forge — design tokens. GPL-3.0-or-later.
+ *
+ * The HUD look is built entirely from this file: styles.css consumes tokens and never hardcodes a
+ * colour, size or duration. Retheming (phosphor hue, density, motion) happens here alone.
+ *
+ * Three axes, all driven by data-attributes on <html>:
+ *   data-theme      dark | light      — the two palettes
+ *   data-density    pad | mouse       — set by input detection, not by the viewport
+ *   data-textscale  normal | large    — accessibility
+ */
+
+:root {
+  /* ---- Type -------------------------------------------------------------
+   * Deliberately DUAL. A HUD reads as a HUD because of its chrome — labels,
+   * readouts, buttons — not because its paragraphs are monospaced. Setting long
+   * prose in a mono face is exactly what makes these designs tiring, so body
+   * copy stays in the system sans.
+   * Cascadia ships with Windows 11, so nothing is bundled and nothing is
+   * fetched — the Tauri CSP forbids external origins anyway. */
+  --font-hud: "Cascadia Mono", Consolas, ui-monospace, SFMono-Regular, monospace;
+  --font-body: "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* Everything sizes in rem off this root, so the "large text" toggle finally
+   * scales the whole interface instead of only running text. */
+  font-size: 15px;
+
+  --text-2xs: 0.64rem;
+  --text-xs: 0.73rem;
+  --text-sm: 0.84rem;
+  --text-md: 0.94rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.4rem;
+  --text-2xl: 1.85rem;
+  --text-3xl: 2.4rem;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.55;
+
+  --tracking-hud: 0.08em;   /* label caps */
+  --tracking-wide: 0.16em;  /* section rules */
+
+  /* ---- Space ------------------------------------------------------------ */
+  --space-1: 0.27rem;
+  --space-2: 0.53rem;
+  --space-3: 0.8rem;
+  --space-4: 1.07rem;
+  --space-5: 1.6rem;
+  --space-6: 2.13rem;
+  --space-7: 3.2rem;
+
+  /* ---- Shape ------------------------------------------------------------
+   * A HUD is built from cut corners and hairlines, not pills. Radii stay small
+   * on purpose; `--radius-pill` survives only for status badges. */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-pill: 999px;
+  --hairline: 1px;
+  --rule: 2px;
+  --corner: 10px; /* length of the bracket drawn at frame corners */
+
+  /* ---- Motion ----------------------------------------------------------- */
+  --dur-fast: 90ms;
+  --dur-base: 160ms;
+  --dur-slow: 280ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ---- Layers ----------------------------------------------------------- */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-overlay: 100;
+  --z-modal: 1000;
+  --z-toast: 2000;
+
+  /* ---- Focus ------------------------------------------------------------
+   * Not decoration. On a handheld driven by a d-pad, the focus ring IS the
+   * cursor: if it is not unmistakable the device is unusable. */
+  --focus-width: 2px;
+  --focus-offset: 2px;
+}
+
+/* ---- Dark: phosphor on near-black (default) ----------------------------- */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #05080c;
+  --bg-grid: rgba(57, 224, 255, 0.045); /* faint alignment grid behind everything */
+  --bg-elev: #0a1016;
+  --bg-elev-2: #101a22;
+  --bg-sunken: #04070a;
+
+  --border: #1b2b38;
+  --border-bright: #2b4a5e;
+
+  --text: #d7e6ee;
+  --text-dim: #86a0b0;
+  --text-faint: #536878;
+
+  /* Swap these two lines for #ffb000 / #2a1c00 to get an amber phosphor HUD.
+   * Nothing else in the stylesheet needs to change. */
+  --accent: #39e0ff;
+  --accent-ink: #04141b; /* text drawn ON an accent fill */
+  --accent-2: #8b7dff;
+
+  --good: #46eda2;
+  --good-ink: #032016;
+  --warn: #ffb84d;
+  --warn-ink: #241600;
+  --danger: #ff6070;
+  --danger-ink: #2b0308;
+
+  --glow-accent: 0 0 0.5rem rgba(57, 224, 255, 0.45);
+  --glow-good: 0 0 0.5rem rgba(70, 237, 162, 0.45);
+  --glow-danger: 0 0 0.5rem rgba(255, 96, 112, 0.45);
+  --shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.55);
+
+  --scanline: rgba(255, 255, 255, 0.014);
+}
+
+/* ---- Light: the same HUD readable in daylight ---------------------------
+ * The previous stylesheet only overrode backgrounds and text, leaving the
+ * accent and semantic colours at their dark-mode values — cyan #4cc2ff on white
+ * fails contrast badly, and chips rendered dark ink on a light fill. Every
+ * colour token is redefined here. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #eef3f6;
+  --bg-grid: rgba(0, 74, 105, 0.05);
+  --bg-elev: #ffffff;
+  --bg-elev-2: #e7eef2;
+  --bg-sunken: #dde7ec;
+
+  --border: #bccdd6;
+  --border-bright: #7fa3b4;
+
+  --text: #08161d;
+  --text-dim: #4a6472;
+  --text-faint: #6e8794;
+
+  --accent: #006f96;
+  --accent-ink: #ffffff;
+  --accent-2: #4b3fc4;
+
+  --good: #0a7a4d;
+  --good-ink: #ffffff;
+  --warn: #8a5300;
+  --warn-ink: #ffffff;
+  --danger: #b3132a;
+  --danger-ink: #ffffff;
+
+  --glow-accent: none;
+  --glow-good: none;
+  --glow-danger: none;
+  --shadow: 0 0.35rem 1.2rem rgba(16, 44, 60, 0.14);
+
+  --scanline: transparent;
+}
+
+/* ---- Density -----------------------------------------------------------
+ * Chosen by INPUT, not by viewport width: a 1920px screen driven by a gamepad
+ * still needs thumb-sized targets, and a 1024px window driven by a mouse does
+ * not. App.tsx sets data-density from gamepadconnected / pointerType, falling
+ * back to (pointer: coarse).
+ *
+ * Only tokens change — never structure — so there is exactly one layout to
+ * maintain. `--tap-min` stays in px on purpose: it is a physical finger size,
+ * not a typographic measure, so it must not shrink when text is made smaller. */
+:root,
+:root[data-density="mouse"] {
+  --tap-min: 32px;
+  --control-pad-y: var(--space-2);
+  --control-pad-x: var(--space-3);
+  --gap-tight: var(--space-2);
+  --gap-base: var(--space-3);
+  --gap-loose: var(--space-4);
+}
+
+:root[data-density="pad"] {
+  /* 44px is the accessibility floor for touch; every control in the old build
+   * was under it (steppers 34px, chips 31px, switch 22px tall). */
+  --tap-min: 44px;
+  --control-pad-y: var(--space-3);
+  --control-pad-x: var(--space-4);
+  --gap-tight: var(--space-3);
+  --gap-base: var(--space-4);
+  --gap-loose: var(--space-5);
+}
+
+/* ---- Text scale --------------------------------------------------------- */
+:root[data-textscale="large"] { font-size: 17.5px; }
+
+/* ---- Reduced motion -----------------------------------------------------
+ * Previously honoured only inside Toast.tsx. Now global. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
