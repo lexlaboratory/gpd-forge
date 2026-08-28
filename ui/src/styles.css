@@ -40,6 +40,22 @@ body {
 
 .mono { font-family: var(--font-hud); font-size: var(--text-sm); }
 
+/* Keyboard users should not have to tab through ten sidebar entries to reach the content. */
+.skip-link {
+  position: absolute; left: var(--space-3); top: -5rem; z-index: var(--z-modal);
+  display: inline-flex; align-items: center; min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-4);
+  background: var(--accent); color: var(--accent-ink);
+  font-family: var(--font-hud); font-size: var(--text-sm); font-weight: 700;
+  border-radius: var(--radius-md); text-decoration: none;
+  transition: top var(--dur-base) var(--ease);
+}
+.skip-link:focus-visible { top: var(--space-3); }
+
+/* The page body takes focus on navigation; it is a scroll container, not a control, so its ring
+   would only be noise. Focus still moves for assistive tech and for d-pad walking. */
+.page:focus { outline: none; }
+
 /* HUD corner brackets. Applied to every framed surface; two pseudo-elements, no extra markup. */
 .card, .panel, .tile, .tdp, .wizard-card, .qam {
   position: relative;
@@ -327,18 +343,26 @@ body {
 }
 .slider-top output { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--text-md); }
 
+/* The element itself is the hit area — full tap height, transparent — while the visible track is
+   painted by the pseudo-element. Styling the input box directly (as the old rule did) left a 6px
+   grab strip on a touchscreen device, which the density spec now catches. */
 input[type="range"] {
   -webkit-appearance: none; appearance: none;
-  width: 100%; height: 0.4rem; border-radius: var(--radius-sm);
+  width: 100%; height: var(--tap-min);
+  background: transparent; border: 0; outline: none; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 0.4rem; border-radius: var(--radius-sm);
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 35%, var(--bg-sunken)));
   border: var(--hairline) solid var(--border);
-  outline: none; cursor: pointer;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 0.75rem; height: 1.6rem; border-radius: var(--radius-sm);
   background: var(--text); border: var(--rule) solid var(--accent);
   cursor: pointer; box-shadow: var(--glow-accent);
+  /* Centre the tall thumb on the thin track. */
+  margin-top: calc((0.4rem - 1.6rem) / 2);
 }
 
 .job-input {

@@ -4,13 +4,15 @@
 // (or a browser app-window) launched by the user's chosen Home button / hotkey. It reuses
 // the app's design system and talks to the same local daemon. Every control is a <button>
 // so D-pad focus + A-to-activate works with zero range-input fiddling.
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModeId, Telemetry, BatteryBudget } from './types'
 import {
   getTelemetry, getMode, setMode, setTdp, getProfiles, getFan, setFan,
   getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby,
 } from './api'
 import { useToast } from './Toast'
+import { useDensity } from './hooks/useDensity'
+import { useSpatialNav } from './hooks/useSpatialNav'
 
 const QMODES: { id: ModeId; icon: string; label: string }[] = [
   { id: 'gaming', icon: '🎮', label: 'Gaming' },
@@ -30,61 +32,6 @@ function closeOverlay() {
   window.close()
 }
 
-/**
- * Gamepad + keyboard navigation over the panel's focusable buttons.
- * D-pad / left-stick move focus in DOM order, A activates, B closes.
- * Keyboard arrows/Enter/Escape mirror it so it's testable and mouse-free.
- */
-function useGamepadNav(rootRef: RefObject<HTMLElement | null>, onClose: () => void) {
-  useEffect(() => {
-    const focusables = () => Array.from(
-      rootRef.current?.querySelectorAll<HTMLElement>('button:not([disabled])') ?? [],
-    ).filter((el) => el.offsetParent !== null)
-
-    const move = (dir: 1 | -1) => {
-      const els = focusables()
-      if (els.length === 0) return
-      const i = els.indexOf(document.activeElement as HTMLElement)
-      const next = i === -1 ? 0 : (i + dir + els.length) % els.length
-      els[next].focus()
-    }
-    const activate = () => (document.activeElement as HTMLElement | null)?.click()
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { e.preventDefault(); move(1) }
-      else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); move(-1) }
-      else if (e.key === 'Escape') { e.preventDefault(); onClose() }
-    }
-    window.addEventListener('keydown', onKey)
-
-    // Gamepad polling with edge detection so a held button fires once.
-    let raf = 0
-    const prev = new Map<number, boolean>()
-    const axisPrev = { y: 0 }
-    const edge = (idx: number, down: boolean) => { const was = prev.get(idx) ?? false; prev.set(idx, down); return down && !was }
-    const poll = () => {
-      const pads = navigator.getGamepads?.() ?? []
-      const gp = Array.from(pads).find(Boolean)
-      if (gp) {
-        const b = (i: number) => !!gp.buttons[i]?.pressed
-        if (edge(12, b(12))) move(-1)          // D-pad up
-        if (edge(13, b(13))) move(1)           // D-pad down
-        if (edge(14, b(14))) move(-1)          // D-pad left
-        if (edge(15, b(15))) move(1)           // D-pad right
-        if (edge(0, b(0))) activate()          // A
-        if (edge(1, b(1))) onClose()           // B
-        const ay = gp.axes[1] ?? 0
-        if (ay > 0.6 && axisPrev.y <= 0.6) move(1)
-        if (ay < -0.6 && axisPrev.y >= -0.6) move(-1)
-        axisPrev.y = ay
-      }
-      raf = requestAnimationFrame(poll)
-    }
-    raf = requestAnimationFrame(poll)
-    return () => { window.removeEventListener('keydown', onKey); cancelAnimationFrame(raf) }
-  }, [rootRef, onClose])
-}
-
 function fmtBudget(b: BatteryBudget | null): string {
   if (!b) return '—'
   if (b.minutesRemaining == null) return `On AC · ${b.remainingWh.toFixed(0)} Wh`
@@ -95,6 +42,9 @@ function fmtBudget(b: BatteryBudget | null): string {
 export function OverlayApp() {
   const toast = useToast()
   const rootRef = useRef<HTMLDivElement | null>(null)
+  // The overlay is the surface most likely to be driven by a thumb or a pad, so it wants the same
+  // density detection as the main window rather than a hardcoded size.
+  useDensity()
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [mode, setModeS] = useState<ModeId>('windows')
   const [presets, setPresets] = useState<Record<string, { stapmW: number }>>({})
@@ -120,7 +70,9 @@ export function OverlayApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useGamepadNav(rootRef, closeOverlay)
+  // Same 2-D walk as the main window. The old linear version made Left and Down do the same thing,
+  // which on a grid of five mode squares is close to unusable.
+  useSpatialNav(rootRef, { onCancel: closeOverlay })
 
   const pickMode = async (m: ModeId) => {
     setModeS(m)

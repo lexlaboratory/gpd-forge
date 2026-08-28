@@ -1,8 +1,11 @@
 // GPD Forge UI — app shell (multi-page). GPL-3.0-or-later.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ModeId, Telemetry } from './types'
 import { getTelemetry, getMode, setMode as apiSetMode, getAlertSummary } from './api'
 import { Toggle } from './ui'
+import { useDensity } from './hooks/useDensity'
+import { useHashRoute } from './hooks/useHashRoute'
+import { useSpatialNav } from './hooks/useSpatialNav'
 import { DaemonOfflineBanner } from './DaemonOfflineBanner'
 import {
   MODES, DashboardPage, PowerPage, FanPage, ControllerPage, DisplayPage,
@@ -24,9 +27,20 @@ const NAV = [
   { id: 'alerts',     label: 'Alerts',     icon: '🔔' },
 ] as const
 type PageId = typeof NAV[number]['id']
+const PAGE_IDS = NAV.map((n) => n.id)
 
 export function App() {
-  const [page, setPage] = useState<PageId>(() => window.location.hash === '#alerts' ? 'alerts' : 'dashboard')
+  // Hash routing: deep-linkable, browser back/forward works, and a notification or hotkey can open
+  // a specific section. Previously the hash was read once at boot and never written.
+  const [page, setPage] = useHashRoute<PageId>(PAGE_IDS, 'dashboard')
+  const shellRef = useRef<HTMLDivElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  // Sets data-density on <html>; the tokens do the rest. Settings gets a manual override in the
+  // page redesign.
+  useDensity()
+  // Gamepad navigation now covers the whole app, not just the overlay. No cancel action: there is
+  // nothing to close in the main window, and B should not quit it by accident.
+  useSpatialNav(shellRef)
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
@@ -60,6 +74,13 @@ export function App() {
     document.documentElement.dataset.textscale = textScale
     localStorage.setItem('forge-textscale', textScale)
   }, [textScale])
+
+  // Move focus into the new section on navigation. Without this the focus stays on the sidebar
+  // button, so a screen reader announces nothing and a d-pad user has to walk back down the nav
+  // every single time.
+  useEffect(() => {
+    pageRef.current?.focus({ preventScroll: true })
+  }, [page])
 
   useEffect(() => {
     let alive = true
@@ -99,15 +120,18 @@ export function App() {
   const activeMode = MODES.find((m) => m.id === active)
 
   return (
-    <div className="shell">
+    <div className="shell" ref={shellRef}>
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="nav">
         <div className="nav-brand">
           <img className="brand-logo" src="/logo.png" alt="" aria-hidden width={34} height={34} />
           <span className="nav-name">GPD Forge</span>
         </div>
-        <nav className="nav-list">
+        <nav className="nav-list" aria-label="Sections">
           {NAV.map((n) => (
-            <button key={n.id} className={`nav-item ${page === n.id ? 'active' : ''}`} data-testid={`nav-${n.id}`} onClick={() => setPage(n.id)}>
+            <button key={n.id} type="button" className={`nav-item ${page === n.id ? 'active' : ''}`}
+                    aria-current={page === n.id ? 'page' : undefined}
+                    data-testid={`nav-${n.id}`} onClick={() => setPage(n.id)}>
               <span className="nav-icon" aria-hidden>{n.icon}</span><span className="nav-label">{n.label}</span>
               {n.id === 'alerts' && unreadAlerts > 0 && <span className="nav-badge" aria-label={`${unreadAlerts} unread alerts`}>{unreadAlerts > 99 ? '99+' : unreadAlerts}</span>}
             </button>
@@ -131,7 +155,8 @@ export function App() {
           </div>
         </header>
 
-        <div className="page" data-testid={`page-${page}`}>
+        <div className="page" id="main-content" data-testid={`page-${page}`}
+             ref={pageRef} tabIndex={-1} aria-label={NAV.find((n) => n.id === page)?.label}>
           {!connected && (
             <DaemonOfflineBanner
               reason={lastError}

@@ -6,9 +6,10 @@
 //
 // Self-contained: reads/writes its own localStorage flag and talks to the API directly, so mounting
 // it from App.tsx is a single additive line (see App.tsx's `showWizard` state).
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { IncumbentsInfo, ModeId } from './types'
 import { getIncumbents, setMode as apiSetMode } from './api'
+import { useFocusTrap } from './hooks/useFocusTrap'
 import { MODES } from './pages'
 
 export const SETUP_DONE_KEY = 'forge-setup-done'
@@ -30,6 +31,8 @@ const STEP_LABEL: Record<Step, string> = {
 }
 
 export function Wizard({ onClose }: { onClose: () => void }) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(cardRef)
   const [step, setStep] = useState<Step>('welcome')
   const [incumbents, setIncumbents] = useState<IncumbentsInfo | null>(null)
   const [checking, setChecking] = useState(false)
@@ -63,7 +66,7 @@ export function Wizard({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="wizard-overlay" data-testid="wizard">
-      <div className="wizard-card" role="dialog" aria-modal="true" aria-label="GPD Forge first-run setup">
+      <div className="wizard-card" ref={cardRef} role="dialog" aria-modal="true" aria-label="GPD Forge first-run setup">
         <div className="wizard-steps" aria-hidden="true">
           {STEPS.map((s) => <span key={s} className={`wizard-dot ${s === step ? 'on' : ''}`} title={STEP_LABEL[s]} />)}
         </div>
