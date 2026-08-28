@@ -118,6 +118,10 @@ export interface Standby {
   lastRestore: string[] | null
 }
 
+// GET /health — the daemon's identity. Exposed since the first release and never consumed by the
+// UI, so the app could not tell you which build it was talking to or which board it had detected.
+export interface DaemonHealth { ok: boolean; version: string; model: string }
+
 // System health check / anomaly detection (mirror of core/Health/HealthCheck.cs).
 export type HealthLevel = 'warn' | 'critical'
 export interface HealthIssue { level: HealthLevel; code: string; message: string }

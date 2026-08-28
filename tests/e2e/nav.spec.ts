@@ -1,4 +1,4 @@
-// GPD Forge — multi-page navigation E2E. GPL-3.0-or-later.
+﻿// GPD Forge â€” multi-page navigation E2E. GPL-3.0-or-later.
 import { test, expect } from '@playwright/test'
 import { DashboardPage } from './pages/DashboardPage'
 
@@ -7,7 +7,7 @@ test.describe('Multi-page UI', () => {
 
   test('navigates across the sections', async ({ page }) => {
     await expect(page.getByTestId('page-dashboard')).toBeVisible()
-    for (const id of ['power', 'fan', 'controller', 'display', 'profiles', 'monitor', 'system', 'settings']) {
+    for (const id of ['power', 'fan', 'hardware', 'display', 'profiles', 'monitor', 'system', 'settings']) {
       await page.getByTestId(`nav-${id}`).click()
       await expect(page.getByTestId(`page-${id}`)).toBeVisible()
     }
@@ -29,3 +29,4 @@ test.describe('Multi-page UI', () => {
     await expect(b).toHaveValue('55')
   })
 })
+

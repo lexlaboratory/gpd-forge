@@ -5,6 +5,10 @@
 // on width — the usual shortcut — gets the handheld exactly backwards.
 //
 // Only tokens change (see tokens.css), never structure, so there remains one layout to maintain.
+//
+// State lives at MODULE level, not in the hook. The shell and the Settings page both need it, and
+// two independent useState copies meant Settings could pin a density that the shell's own instance
+// would quietly overwrite the next time the input changed. One store, many subscribers.
 import { useEffect, useState } from 'react'
 
 export type Density = 'pad' | 'mouse'
@@ -14,61 +18,68 @@ const STORAGE_KEY = 'forge-density'
 /** Coarse pointer means a touchscreen, which wants the same targets a thumbstick does. */
 const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 const padConnected = () => Array.from(navigator.getGamepads?.() ?? []).some(Boolean)
+const detect = (): Density => (padConnected() || coarse() ? 'pad' : 'mouse')
 
-function initial(): { density: Density; auto: boolean } {
+interface State { density: Density; auto: boolean }
+
+function initial(): State {
   const saved = localStorage.getItem(STORAGE_KEY)
   if (saved === 'pad' || saved === 'mouse') return { density: saved, auto: false }
-  return { density: padConnected() || coarse() ? 'pad' : 'mouse', auto: true }
+  return { density: detect(), auto: true }
+}
+
+let state = initial()
+const listeners = new Set<(s: State) => void>()
+
+function apply(next: State) {
+  if (next.density === state.density && next.auto === state.auto) return
+  state = next
+  document.documentElement.dataset.density = state.density
+  listeners.forEach((l) => l(state))
+}
+
+/** Only auto mode reacts to input; a pinned density stays pinned. */
+const detected = (density: Density) => { if (state.auto) apply({ ...state, density }) }
+
+document.documentElement.dataset.density = state.density
+
+// One set of listeners for the whole app, attached once, rather than per mounted component.
+if (typeof window !== 'undefined') {
+  // A gamepad only appears in getGamepads() after its first input, so the connect event is the
+  // earliest reliable signal.
+  window.addEventListener('gamepadconnected', () => detected('pad'))
+  window.addEventListener('pointerdown', (e: PointerEvent) => {
+    if (e.pointerType === 'mouse') detected('mouse')
+    else if (e.pointerType === 'touch' || e.pointerType === 'pen') detected('pad')
+  })
+  // A gamepad button press wins pad density back after the mouse was used.
+  const poll = () => {
+    if (state.auto) {
+      const gp = Array.from(navigator.getGamepads?.() ?? []).find(Boolean)
+      if (gp?.buttons.some((b) => b.pressed)) detected('pad')
+    }
+    requestAnimationFrame(poll)
+  }
+  requestAnimationFrame(poll)
+}
+
+/** Settings can pin a density; passing null hands control back to detection. */
+export function setDensity(next: Density | null) {
+  if (next === null) {
+    localStorage.removeItem(STORAGE_KEY)
+    apply({ density: detect(), auto: true })
+  } else {
+    localStorage.setItem(STORAGE_KEY, next)
+    apply({ density: next, auto: false })
+  }
 }
 
 export function useDensity() {
-  const [{ density, auto }, setState] = useState(initial)
-
+  const [local, setLocal] = useState(state)
   useEffect(() => {
-    document.documentElement.dataset.density = density
-  }, [density])
-
-  useEffect(() => {
-    if (!auto) return
-
-    const toPad = () => setState((s) => (s.auto && s.density !== 'pad' ? { ...s, density: 'pad' } : s))
-    const toMouse = () => setState((s) => (s.auto && s.density !== 'mouse' ? { ...s, density: 'mouse' } : s))
-
-    // A gamepad only appears in getGamepads() after its first input, so the connect event is the
-    // earliest reliable signal.
-    const onConnect = () => toPad()
-    const onPointer = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse') toMouse()
-      else if (e.pointerType === 'touch' || e.pointerType === 'pen') toPad()
-    }
-    // A gamepad button press should win back pad density even after the mouse was used.
-    let raf = 0
-    const poll = () => {
-      const gp = Array.from(navigator.getGamepads?.() ?? []).find(Boolean)
-      if (gp?.buttons.some((b) => b.pressed)) toPad()
-      raf = requestAnimationFrame(poll)
-    }
-    raf = requestAnimationFrame(poll)
-
-    window.addEventListener('gamepadconnected', onConnect)
-    window.addEventListener('pointerdown', onPointer)
-    return () => {
-      window.removeEventListener('gamepadconnected', onConnect)
-      window.removeEventListener('pointerdown', onPointer)
-      cancelAnimationFrame(raf)
-    }
-  }, [auto])
-
-  /** Settings can pin a density; passing null hands control back to detection. */
-  const override = (next: Density | null) => {
-    if (next === null) {
-      localStorage.removeItem(STORAGE_KEY)
-      setState({ density: padConnected() || coarse() ? 'pad' : 'mouse', auto: true })
-    } else {
-      localStorage.setItem(STORAGE_KEY, next)
-      setState({ density: next, auto: false })
-    }
-  }
-
-  return { density, auto, override }
+    listeners.add(setLocal)
+    setLocal(state) // resync in case the store moved between render and subscribe
+    return () => { listeners.delete(setLocal) }
+  }, [])
+  return { density: local.density, auto: local.auto, override: setDensity }
 }

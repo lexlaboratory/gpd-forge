@@ -5,6 +5,22 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **The UI no longer presents controls that cannot reach the hardware as if they could.** LED/RGB,
+  the battery charge limit, undervolt/Curve Optimizer and the keyboard backlight all store a setting
+  and return `applied: false`, because this HX370's firmware accepts no write on the EC/HID paths
+  they need. They used to sit inline on the Power and Display pages among controls that really do
+  change the machine, with nothing to tell them apart — which is what made the app feel like a
+  mock-up. They now live on a new **Hardware** page beside a capability report that states, per
+  feature, what blocks it and what would unblock it, read live from the daemon.
+- The **Controller** section is gone. It was a top-level page consisting entirely of disabled
+  sliders advertising a feature with no daemon endpoint at all; it is now one honest line on the
+  Hardware page. The on-screen-display and GPU placeholders moved there too.
+- `GET /health` finally has a consumer. It has been served since the first release and no client
+  ever called it, so the app could not tell you which daemon build it was talking to or which board
+  had been detected. Both now appear on the Hardware page.
+- `ui/src/pages.tsx` (856 lines) is now `ui/src/pages/`, one file per page.
+
 ### Fixed
 - **One bad field killed the whole app.** `AlertSeverity`/`AlertCategory` are C# enums, and without
   `JsonStringEnumConverter` they went out as ordinals (`"severity":1`) while `docs/api.md`, the mock

@@ -8,7 +8,7 @@ import { useHashRoute } from './hooks/useHashRoute'
 import { useSpatialNav } from './hooks/useSpatialNav'
 import { DaemonOfflineBanner } from './DaemonOfflineBanner'
 import {
-  MODES, DashboardPage, PowerPage, FanPage, ControllerPage, DisplayPage,
+  MODES, DashboardPage, PowerPage, FanPage, HardwarePage, DisplayPage,
   ProfilesPage, MonitorPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
 import { Wizard, isSetupDone } from './Wizard'
@@ -18,7 +18,9 @@ const NAV = [
   { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
   { id: 'power',      label: 'Power',      icon: '⚡' },
   { id: 'fan',        label: 'Fan',        icon: '🌀' },
-  { id: 'controller', label: 'Controller', icon: '🎮' },
+  // Replaces the old "Controller" entry, which was a whole top-level section of disabled sliders
+  // advertising a feature that does not exist. Hardware reports what this board can and cannot do.
+  { id: 'hardware',   label: 'Hardware',   icon: '🔩' },
   { id: 'display',    label: 'Display',    icon: '🔆' },
   { id: 'profiles',   label: 'Profiles',   icon: '🗂️' },
   { id: 'monitor',    label: 'Monitor',    icon: '📈' },
@@ -171,7 +173,7 @@ export function App() {
           {page === 'dashboard'  && <DashboardPage {...shared} />}
           {page === 'power'      && <PowerPage />}
           {page === 'fan'        && <FanPage tele={tele} />}
-          {page === 'controller' && <ControllerPage />}
+          {page === 'hardware'   && <HardwarePage />}
           {page === 'display'    && <DisplayPage />}
           {page === 'profiles'   && <ProfilesPage />}
           {page === 'monitor'    && <MonitorPage tele={tele} />}

@@ -1,0 +1,12 @@
+// GPD Forge UI — pages barrel (re-exports the public page surface). GPL-3.0-or-later.
+export { MODES, type Shared } from './shared'
+export { DashboardPage } from './DashboardPage'
+export { PowerPage } from './PowerPage'
+export { DisplayPage } from './DisplayPage'
+export { FanPage } from './FanPage'
+export { HardwarePage } from './HardwarePage'
+export { ProfilesPage } from './ProfilesPage'
+export { MonitorPage } from './MonitorPage'
+export { SystemPage } from './SystemPage'
+export { SettingsPage } from './SettingsPage'
+export { AlertsPage } from './AlertsPage'

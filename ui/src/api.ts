@@ -12,6 +12,7 @@ import type {
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
+  DaemonHealth,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -40,6 +41,7 @@ function post(body?: unknown): RequestInit {
   }
 }
 
+export const getHealth = () => json<DaemonHealth>('/health')
 export const getTelemetry = () => json<Telemetry>('/telemetry')
 export const getMode = async () => (await json<{ active: ModeId }>('/mode')).active
 export const setMode = async (mode: ModeId) =>

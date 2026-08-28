@@ -1,4 +1,4 @@
-// GPD Forge — QA screenshot sweep. Captures every page in both themes at the GPD's
+﻿// GPD Forge â€” QA screenshot sweep. Captures every page in both themes at the GPD's
 // native 1280x800, full-page, and records console/page errors. Not shipped. GPL-3.0-or-later.
 import { chromium } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
@@ -7,7 +7,7 @@ const BASE = process.env.QA_BASE || 'http://127.0.0.1:4173'
 const OUT = process.env.QA_OUT || 'C:/Users/Alex/.claude/jobs/e678971e/tmp/qa'
 mkdirSync(OUT, { recursive: true })
 
-const PAGES = ['dashboard', 'power', 'fan', 'controller', 'display', 'profiles', 'monitor', 'system', 'settings']
+const PAGES = ['dashboard', 'power', 'fan', 'hardware', 'display', 'profiles', 'monitor', 'system', 'settings']
 const THEMES = ['dark', 'light']
 
 const browser = await chromium.launch()
@@ -24,7 +24,7 @@ for (const theme of THEMES) {
     const nav = page.getByTestId(`nav-${id}`)
     if (await nav.count() === 0) { missing.push(`nav-${id}`); continue }
     await nav.click()
-    // Monitor's sparklines accumulate one sample per 1s telemetry tick — linger so the trend fills.
+    // Monitor's sparklines accumulate one sample per 1s telemetry tick â€” linger so the trend fills.
     await page.waitForTimeout(id === 'monitor' ? 12000 : 600)
     // heading should reflect the page
     const h = await page.locator('.page-title').first().textContent().catch(() => null)
@@ -37,3 +37,4 @@ await browser.close()
 console.log('QA_ERRORS:' + JSON.stringify(errors))
 console.log('QA_MISSING:' + JSON.stringify(missing))
 console.log('QA_DONE')
+

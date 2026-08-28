@@ -1,7 +1,7 @@
-// GPD Forge — capture the real UI at every size and theme that matters. GPL-3.0-or-later.
+﻿// GPD Forge â€” capture the real UI at every size and theme that matters. GPL-3.0-or-later.
 //
 // Replaces the ad-hoc qa-* scripts' single 1280x800 pass. Three viewports on purpose:
-//   1024x720  the size the Tauri window actually opens at — never captured before
+//   1024x720  the size the Tauri window actually opens at â€” never captured before
 //   1280x800  the GPD Win 4 panel
 //    720x600  below the sidebar-collapse breakpoint, which had never been looked at
 //
@@ -22,7 +22,7 @@ const URL_BASE = arg('url', 'http://127.0.0.1:8787')
 
 // `alerts` is included deliberately: it was missing from the old capture list, and it is the exact
 // page whose render crash blanked the whole app.
-const PAGES = arg('pages', 'dashboard,power,fan,controller,display,profiles,monitor,system,settings,alerts').split(',')
+const PAGES = arg('pages', 'dashboard,power,fan,hardware,display,profiles,monitor,system,settings,alerts').split(',')
 const VIEWPORTS = [
   { name: '1024x720', width: 1024, height: 720, scale: 1 },
   { name: '1280x800', width: 1280, height: 800, scale: 1.75 },
@@ -70,3 +70,4 @@ await browser.close()
 console.log(`shots -> ${OUT}`)
 console.log(problems.length ? `PROBLEMS:\n  ${problems.join('\n  ')}` : 'no console errors, no blank pages')
 process.exit(problems.length ? 1 : 0)
+
