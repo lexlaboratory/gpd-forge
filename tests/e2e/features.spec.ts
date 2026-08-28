@@ -43,7 +43,9 @@ test.describe('Features', () => {
     const dutyResponse = page.waitForResponse((response) =>
       response.url().endsWith('/fan') && response.request().method() === 'POST',
     )
-    await duty.dispatchEvent('mouseup')
+    // pointerup, not mouseup: the slider commits on pointerup so that a touch drag on the handheld
+    // also applies. A real mouse fires both; only a synthesised event has to pick one.
+    await duty.dispatchEvent('pointerup')
     await dutyResponse
 
     const persisted = await request.get('http://127.0.0.1:8799/fan')

@@ -218,6 +218,23 @@ body {
 }
 .tile-unit { font-family: var(--font-hud); font-size: var(--text-xs); color: var(--text-faint); margin-left: 0.25rem; }
 
+/* Fill bar under a readout — magnitude at a glance, without reading the digits. */
+.meter {
+  height: 0.3rem; border-radius: var(--radius-sm);
+  background: var(--bg-sunken); border: var(--hairline) solid var(--border);
+  overflow: hidden;
+}
+.meter-fill {
+  display: block; height: 100%;
+  background: currentColor; box-shadow: 0 0 0.4rem currentColor;
+  transition: width var(--dur-base) var(--ease);
+}
+.meter-info { color: var(--accent); }
+.meter-ok { color: var(--good); }
+.meter-warn { color: var(--warn); }
+.meter-danger { color: var(--danger); }
+.meter-muted { color: var(--text-faint); }
+
 /* ========================================================================
    CONTROLS
    ======================================================================== */
