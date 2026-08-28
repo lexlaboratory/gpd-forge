@@ -16,7 +16,18 @@ test.describe('Dashboard', () => {
 
     // exactly the five telemetry tiles
     await expect(dash.stats).toHaveCount(5)
+
+    // Every tile must carry a real reading. Asserting on the unit alone is not enough: when the
+    // client cannot reach the daemon each tile renders the placeholder '--' next to its unit, so
+    // `toContainText('°C')` passed happily while the dashboard showed nothing at all.
+    for (const id of ['stat-cpu', 'stat-pkg', 'stat-fan', 'stat-fps', 'stat-batt']) {
+      await expect(page.getByTestId(id), `${id} shows a number`).toContainText(/\d/)
+      await expect(page.getByTestId(id), `${id} is not the placeholder`).not.toContainText('--')
+    }
     await expect(page.getByTestId('stat-cpu')).toContainText('°C')
+
+    // and the connection chip must say so, rather than silently sitting on stale nulls
+    await expect(page.getByTestId('conn')).toContainText('Live')
 
     for (const id of ['gaming', 'ai', 'windows', 'battery', 'standby']) {
       await expect(dash.mode(id)).toBeVisible()

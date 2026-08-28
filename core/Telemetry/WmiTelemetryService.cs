@@ -1,9 +1,9 @@
 // GPD Forge — read-only telemetry via WMI. GPL-3.0-or-later.
 //
 // NO kernel driver: this reads only what WMI exposes (battery, AC, discharge, CPU clock,
-// ACPI thermal zone). Package power (RAPL), per-core temps, fan RPM and FPS need the PawnIO
-// broker / PresentMon and are filled in later, behind hardware-access approval — they stay 0
-// here and are reported as "n/a".
+// ACPI thermal zone). Package power (RAPL), per-core temps and fan RPM come from the optional
+// PawnIO/LHM sensors, and FPS from the optional PresentMon probe. Each is injected only when its
+// gate is on; whatever is absent stays 0 and is reported as "n/a" — never guessed.
 using System.Management;
 using GpdForge.Fan;
 using Microsoft.Extensions.Logging;
@@ -13,6 +13,7 @@ namespace GpdForge.Telemetry;
 public sealed class WmiTelemetryService(
     IHardwareSensors? sensors = null,
     IFanRpm? fanRpmSource = null,
+    IFrameRateProbe? frameRateProbe = null,
     ILogger<WmiTelemetryService>? logger = null) : ITelemetryService
 {
     public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct)
@@ -26,7 +27,7 @@ public sealed class WmiTelemetryService(
         // LHM sensors when hardware access is enabled; otherwise 0 (WMI can't provide them).
         double gpuTempC = 0, packageW = 0;
         int fanRpm = 0;
-        const double fps = 0, fps1PctLow = 0;
+        double fps = 0, fps1PctLow = 0;
         const int fanDutyPct = 0;
 
         if (sensors is not null && sensors.TryRead(out var hw))
@@ -40,6 +41,14 @@ public sealed class WmiTelemetryService(
         // Real GPD fan RPM via the PawnIO EC read (LHM doesn't expose it). Read-only; only present
         // when hardware access is enabled. Wins over LHM's fan reading (which is 0 on these boards).
         if (fanRpmSource?.ReadRpm() is int rpm && rpm > 0) fanRpm = rpm;
+
+        // Frame rate via the optional PresentMon probe. Nothing rendering means no sample at all,
+        // which stays 0 — the honest reading for "nothing is presenting frames right now".
+        if (frameRateProbe is not null && frameRateProbe.TryRead(out var frames))
+        {
+            fps = frames.Fps;
+            fps1PctLow = frames.Fps1PctLow;
+        }
 
         var snapshot = new TelemetrySnapshot(
             cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fanDutyPct,

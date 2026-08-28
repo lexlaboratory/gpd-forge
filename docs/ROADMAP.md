@@ -26,7 +26,7 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
   LibreHardwareMonitor 0.9.4, which loads a **Ring0 (WinRing0-family)** driver when hardware access is
   enabled. The **default** telemetry path is driverless WMI. Moving both to PawnIO is the target.
 - [x] `Telemetry/` read-only via WMI (battery/AC/discharge/clock/thermal-zone) — verified on device
-- [ ] `Telemetry/` package power + fan RPM (broker) + FPS (PresentMon) — needs hardware-access approval
+- [x] `Telemetry/` package power + fan RPM (broker) + FPS (Intel PresentMon, `GPDFORGE_ENABLE_FPS=1`)
 - [ ] `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify
 - [ ] `Rtss/` single-owner arbitration
 - [ ] `Api/` HTTP+WebSocket + named pipe

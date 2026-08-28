@@ -17,6 +17,8 @@ export interface Telemetry {
   fanRpm: number
   fanDutyPct: number
   fps: number
+  /** 1% low: the mean of the slowest 1% of frames, as FPS. The number that tracks stutter. */
+  fps1PctLow: number
   batteryPct: number
   dischargeW: number
   acConnected: boolean

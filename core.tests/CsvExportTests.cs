@@ -15,7 +15,7 @@ public class CsvExportTests
     public void Header_names_every_column_in_order()
     {
         Assert.Equal(
-            "unixMs,isoTime,cpuTempC,gpuTempC,packageW,cpuClockMhz,fanRpm,fps,batteryPct,dischargeW,acConnected,tdpVerified",
+            "unixMs,isoTime,cpuTempC,gpuTempC,packageW,cpuClockMhz,fanRpm,fps,fps1PctLow,batteryPct,dischargeW,acConnected,tdpVerified",
             CsvExport.Header);
     }
 
@@ -35,7 +35,7 @@ public class CsvExportTests
         string csv = CsvExport.ToCsv(new[] { sample });
 
         string expected = CsvExport.Header + "\n" +
-            $"{stamp.ToUnixTimeMilliseconds()},2026-08-25T13:45:30.250Z,61.5,58.2,20,3300,3600,60,78,18.4,false,true\n";
+            $"{stamp.ToUnixTimeMilliseconds()},2026-08-25T13:45:30.250Z,61.5,58.2,20,3300,3600,60,55,78,18.4,false,true\n";
         Assert.Equal(expected, csv);
     }
 

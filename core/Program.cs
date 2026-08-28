@@ -246,6 +246,22 @@ else
     builder.Services.AddSingleton<ITdpBackend, StubTdpBackend>();
 }
 
+// FPS telemetry, behind its OWN gate. Frame timing is an ETW capability with nothing in common with
+// the MSR/EC access above, and the hardware path is physically validated — a PresentMon failure must
+// not be able to take it down. Not registering the probe is a supported state: WmiTelemetryService
+// takes it as a nullable constructor parameter and simply reports fps 0.
+if (Environment.GetEnvironmentVariable("GPDFORGE_ENABLE_FPS") == "1")
+{
+    var presentMon = PresentMonFrameRateProbe.Locate();
+    if (presentMon is not null)
+    {
+        builder.Services.AddSingleton<IFrameRateProbe>(sp =>
+            new PresentMonFrameRateProbe(presentMon, sp.GetService<ILogger<PresentMonFrameRateProbe>>()));
+    }
+    // else: PresentMon is not installed. Left unregistered on purpose — fps stays 0 ("n/a") rather
+    // than the service failing to start over an optional sensor.
+}
+
 // Gated fan (PWM duty) WRITE control: fan writes are riskier than a read (commanding the wrong duty
 // is an immediate physical risk), so they require a SECOND, separate opt-in on top of the general
 // hardware gate — GPDFORGE_ENABLE_HARDWARE=1 alone is not enough. Even with both set, an unmatched

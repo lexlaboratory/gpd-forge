@@ -127,6 +127,7 @@ function telemetry() {
     fanRpm: Math.round(jitter(3600, 300)),
     fanDutyPct: 45,
     fps: Math.round(jitter(60, 3)),
+    fps1PctLow: Math.round(jitter(48, 4)), // always below the mean, as a real 1% low is
     batteryPct: state.batteryPct,
     dischargeW: jitter(18, 2),
     acConnected: state.acConnected,

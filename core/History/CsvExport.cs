@@ -16,7 +16,7 @@ namespace GpdForge.History;
 public static class CsvExport
 {
     public const string Header =
-        "unixMs,isoTime,cpuTempC,gpuTempC,packageW,cpuClockMhz,fanRpm,fps,batteryPct,dischargeW,acConnected,tdpVerified";
+        "unixMs,isoTime,cpuTempC,gpuTempC,packageW,cpuClockMhz,fanRpm,fps,fps1PctLow,batteryPct,dischargeW,acConnected,tdpVerified";
 
     /// <summary>Header row + one row per sample, in the order given (this does not sort). Always ends
     /// with the header — even for an empty sequence — so downstream tools see valid, column-typed
@@ -44,6 +44,7 @@ public static class CsvExport
           .Append(t.CpuClockMhz.ToString(CultureInfo.InvariantCulture)).Append(',')
           .Append(t.FanRpm.ToString(CultureInfo.InvariantCulture)).Append(',')
           .Append(t.Fps.ToString(CultureInfo.InvariantCulture)).Append(',')
+          .Append(t.Fps1PctLow.ToString(CultureInfo.InvariantCulture)).Append(',')
           .Append(t.BatteryPct.ToString(CultureInfo.InvariantCulture)).Append(',')
           .Append(t.DischargeW.ToString(CultureInfo.InvariantCulture)).Append(',')
           .Append(t.AcConnected ? "true" : "false").Append(',')

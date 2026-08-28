@@ -7,8 +7,9 @@ tests can run before the C# service exists — it is the reference the C# `Api/`
 ## Transport & security
 - Bind **localhost only** by default: `http://127.0.0.1:8787`. Remote access (over the tailnet) is opt-in.
 - Auth: bearer token for HTTP; ACL for the named pipe. The mock skips auth (localhost, dev).
-- Live telemetry: production uses a WebSocket at `/telemetry/stream`; the mock uses SSE at the same path
-  (browser-native `EventSource`, zero-dependency). Clients that don't stream may poll `GET /telemetry`.
+- Live telemetry: **the daemon polls only** — clients `GET /telemetry` on a timer (the UI does 1 Hz).
+  There is no streaming endpoint in production. The mock implements SSE at `/telemetry/stream` for
+  convenience, but no client consumes it.
 - CORS: the mock allows the dev origin so the browser UI can call it.
 
 ## Types (mirror of `ui/src/types.ts` and `core/Telemetry/TelemetrySnapshot`)
@@ -17,7 +18,7 @@ type ModeId = 'gaming' | 'ai' | 'windows' | 'battery' | 'standby'
 
 interface Telemetry {
   cpuTempC: number; gpuTempC: number; packageW: number; cpuClockMhz: number
-  fanRpm: number; fanDutyPct: number; fps: number
+  fanRpm: number; fanDutyPct: number; fps: number; fps1PctLow: number
   batteryPct: number; dischargeW: number; acConnected: boolean; tdpVerified: boolean
 }
 
@@ -32,8 +33,9 @@ interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: 
 ### `GET /telemetry`
 `200 → Telemetry` — the latest snapshot.
 
-### `GET /telemetry/stream` (SSE in mock, WS in prod)
-Server pushes `Telemetry` JSON events ~4 Hz.
+### `GET /telemetry/stream` (mock only)
+SSE stream of `Telemetry` JSON events. **Not implemented by the daemon** and not used by any client —
+kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
 
 ### `GET /history`  ·  `GET /history/export.csv`  (telemetry history + CSV export)
 - `GET /history?minutes=N → { samples: Array<{ unixMs: number, snap: Telemetry }> }` — samples from the
@@ -42,7 +44,7 @@ Server pushes `Telemetry` JSON events ~4 Hz.
   less history than that until the buffer fills.
 - `GET /history/export.csv` → `text/csv`, `Content-Disposition: attachment;
   filename="gpd-forge-telemetry.csv"` — every currently-held sample as CSV, one row each: `unixMs,
-  isoTime, cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fps, batteryPct, dischargeW, acConnected,
+  isoTime, cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fps, fps1PctLow, batteryPct, dischargeW, acConnected,
   tdpVerified`.
 
 ### `GET /mode`  ·  `POST /mode`
@@ -228,8 +230,11 @@ points at or under `tempCapC`: **MaxFps** — highest fps; **BestEfficiency** �
 (no points yet, everything over the temp cap, or the target unreachable) — that's an honest "nothing
 usable" rather than a guess.
 
-**Honesty note:** this HX370 has no FPS telemetry yet (`Fps` is 0 — PresentMon isn't wired). A sweep
-run today therefore records nothing useful (a non-positive `fps` reading is never recorded — see
+**Honesty note:** FPS telemetry is wired (Intel PresentMon behind `GPDFORGE_ENABLE_FPS=1`, see
+`core/Telemetry/PresentMonFrameRateProbe.cs`), but it only reports while something is actually
+presenting frames. With nothing rendering — or in a Remote Desktop session, where there is no normal
+GPU present chain to observe — `Fps` stays 0, and that 0 means "not available", never "zero frames".
+A sweep run in that state records nothing (a non-positive `fps` reading is never recorded — see
 `TunerState.Tick`), so it finishes with `points: []`, `best: null`, and `note` explaining why. GPD
 Forge never fakes an FPS reading to produce a result. The mock daemon simulates a small FPS curve so
 the UI/E2E can exercise a populated sweep in dev without real hardware.

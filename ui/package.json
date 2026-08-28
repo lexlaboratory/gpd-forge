@@ -8,9 +8,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "build:desktop": "set VITE_FORGE_API=http://127.0.0.1:8787 && npm run build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
     "test:e2e": "playwright test"
   },
   "dependencies": {

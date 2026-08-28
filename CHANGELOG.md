@@ -3,6 +3,36 @@
 All notable changes to GPD Forge are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Telemetry was invisible in the native window.** The installed shell binary predated the fix that
+  makes the client target the daemon absolutely; inside Tauri the origin is `http://tauri.localhost`,
+  so every relative `fetch` 404'd and each tile rendered `--` with no error shown. The root cause was
+  packaging, not code: `install-gpd-forge.ps1` copied whatever binary happened to sit in
+  `target/release` instead of building one. It now builds the shell, stops a running instance before
+  replacing it (a locked image was failing the copy silently), wipes `wwwroot` instead of layering
+  stale bundles on top of each other, logs its elevated half, and refuses to finish if
+  `scripts/verify-install.ps1` does not pass.
+- Removed the `build:desktop` script, whose `set VAR=value &&` form appends a trailing space to the
+  value in `cmd.exe` and would have produced an unusable API base. Origin detection at runtime
+  (`ui/src/api.ts`) covers both the shell and the browser from one bundle.
+
+### Added
+- **Real FPS telemetry** via Intel PresentMon, behind its own `GPDFORGE_ENABLE_FPS=1` gate
+  (`core/Telemetry/PresentMonFrameRateProbe.cs`). CSV columns are resolved by name so a PresentMon
+  version bump cannot silently misread them; `fps1PctLow` is now populated and exported. With nothing
+  presenting, FPS stays 0 meaning "not available" — never a guess. This also revives Auto-TDP-to-FPS
+  and the auto-tuner, both of which were dead code behind an `fps > 0` guard that never held.
+- `scripts/verify-install.ps1` — checks the service, live telemetry, that the installed shell carries
+  the current markers, and that `wwwroot` has no dangling asset references.
+- `scripts/fetch-presentmon.ps1` — downloads PresentMon and refuses it unless Windows reports a valid
+  Authenticode signature from Intel Corporation.
+
+### Changed
+- `docs/api.md` no longer claims a production WebSocket at `/telemetry/stream`; the daemon polls only,
+  and that endpoint exists in the mock alone.
+
 ## [0.1.0] — 2026-08-26
 
 First tagged release. GPD Forge already **substitutes** MotionAssistant + GPD Tool on a GPD Win 4
