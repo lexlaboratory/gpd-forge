@@ -11,6 +11,7 @@ using GpdForge.Tdp;
 using GpdForge.Telemetry;
 using GpdForge.Tuner;
 using GpdForge.Alerts;
+using GpdForge.Sessions;
 
 namespace GpdForge;
 
@@ -36,7 +37,8 @@ public sealed class ForgeWorker(
     TunerState tuner,
     FanState fanState,
     IGpdFanController fanControl,
-    AlertService alerts) : BackgroundService
+    AlertService alerts,
+    SessionRecorder sessions) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
     // than re-applying every tick. Null until the first snapshot arrives.
@@ -59,6 +61,7 @@ public sealed class ForgeWorker(
             {
                 var snapshot = await telemetry.ReadAsync(stoppingToken);
                 history.Add(new HistorySample(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), snapshot));
+                sessions.Observe(snapshot, DateTimeOffset.UtcNow);
 
                 // Per-power-source auto mode-switch — only on the AC/battery edge, mirroring how
                 // POST /mode applies: flip ModeState.Active, then apply it through the same
@@ -167,6 +170,8 @@ public sealed class ForgeWorker(
         finally
         {
             try { freezer.ThawAll(); } catch { /* best effort */ }
+            // File the in-flight session so quitting the service does not lose the evening.
+            try { sessions.Flush(DateTimeOffset.UtcNow); } catch { /* best effort */ }
             // Critical safety: always restore AUTOMATIC fan control on shutdown, even if we were
             // never in manual this run (SetAuto is idempotent / a no-op controller ignores it).
             try { fanControl.SetAuto(); } catch { /* best effort */ }

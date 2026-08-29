@@ -25,6 +25,7 @@ using GpdForge.Undervolt;
 using GpdForge.Health;
 using GpdForge.Onboarding;
 using GpdForge.Alerts;
+using GpdForge.Sessions;
 using Microsoft.Extensions.Logging;
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
@@ -382,12 +383,32 @@ builder.Services.AddSingleton<UpdateService>();
 builder.Services.AddSingleton<IIniFileSource, FileIniSource>();
 builder.Services.AddSingleton<PowerSourceState>();
 
+// Play sessions: one row per stretch during which an app actually presented frames. The recorder
+// takes IFrameRateProbe as a NULLABLE dependency on purpose — when the FPS gate above is closed the
+// probe is unregistered, GetService returns null, and the recorder honestly records nothing rather
+// than inventing sessions out of "a game was probably running" (see core/Sessions/SessionModels.cs).
+builder.Services.AddSingleton(_ => new SessionStore(
+    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge")));
+builder.Services.AddSingleton(sp => new SessionRecorder(
+    sp.GetRequiredService<SessionStore>(),
+    sp.GetService<IFrameRateProbe>(),
+    logger: sp.GetService<ILogger<SessionRecorder>>()));
+
 builder.Services.AddHostedService<ForgeWorker>();
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
 // "automatic"); disable with GPDFORGE_AUTO_PROFILES=0. Updates the mode label only; applying a
 // mode's TDP still requires the hardware gate. No hardware writes here.
-if (Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES") != "0")
+// Read once into a local so the /app-rules endpoints and the worker can never disagree about it.
+bool autoProfiles = Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES") != "0";
+
+// The rule store is registered OUTSIDE that gate: the rules are user-owned data that must stay
+// readable and editable even when nothing is applying them. Turning auto-switching off pauses the
+// feature; it does not delete the user's rules or hide them from the UI.
+builder.Services.AddSingleton<IAppRuleStore>(_ => new AppRuleStore(
+    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge")));
+
+if (autoProfiles)
 {
     builder.Services.AddSingleton<IForegroundApp, Win32ForegroundApp>();
     builder.Services.AddHostedService<FocusProfileWorker>();
@@ -540,6 +561,63 @@ app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
     var s = ModeProfiles.Set(mode, new GpdForge.Tdp.TdpProfile(e.StapmW, e.FastW, e.SlowW, e.TctlC));
     return Results.Json(new { mode, stapmW = s.StapmW, fastW = s.FastW, slowW = s.SlowW, tctlC = s.TctlC });
 });
+
+// Per-app profile rules: "while this process is in the foreground, run in this mode", in precedence
+// order. The prefix is /app-rules and NOT /profiles/rules — POST /profiles/{mode} above already
+// claims that space, and a literal segment living under a parameterized route would make this
+// endpoint depend on ASP.NET's literal-vs-parameter precedence rather than on its own path.
+//
+// Every mutation answers with the WHOLE ruleset (not just the row that changed) so a client cannot
+// end up rendering a list the daemon no longer holds. A rejected rule comes back as
+// 400 { error: "<message>" }, with AppRulePolicy's message passed through verbatim: it is written
+// for the person reading it, and the UI shows it as-is.
+app.MapGet("/app-rules", (IAppRuleStore rules) => Results.Json(RulesPayload(rules, autoProfiles)));
+
+app.MapPost("/app-rules", (AppRuleEdit e, IAppRuleStore rules) =>
+{
+    try { rules.Add(e.Match, e.Mode, e.Enabled ?? true); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    return Results.Json(RulesPayload(rules, autoProfiles));
+});
+
+app.MapPut("/app-rules/{id:guid}", (Guid id, AppRuleEdit e, IAppRuleStore rules) =>
+{
+    try { rules.Update(id, e.Match, e.Mode, e.Enabled ?? true); }
+    catch (KeyNotFoundException) { return Results.NotFound(new { error = "That rule no longer exists." }); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    return Results.Json(RulesPayload(rules, autoProfiles));
+});
+
+app.MapDelete("/app-rules/{id:guid}", (Guid id, IAppRuleStore rules) =>
+    rules.Delete(id)
+        ? Results.Json(RulesPayload(rules, autoProfiles))
+        : Results.NotFound(new { error = "That rule no longer exists." }));
+
+app.MapPost("/app-rules/{id:guid}/move", (Guid id, AppRuleMove m, IAppRuleStore rules) =>
+{
+    // Move() also returns false for a rule already at the end it was asked to move towards. That is
+    // not an error — the ruleset is exactly what the caller wanted — so only an unknown id is a 404.
+    if (!rules.List().Any(r => r.Id == id)) return Results.NotFound(new { error = "That rule no longer exists." });
+    rules.Move(id, m.Delta);
+    return Results.Json(RulesPayload(rules, autoProfiles));
+});
+
+// Play-session history. `fpsAvailable` is the honest reason an empty list can be empty: with no
+// frame-rate probe the daemon has no evidence a game ran, so it records nothing at all and the UI
+// says so rather than implying the user has not played.
+app.MapGet("/sessions", (string? appFilter, int? limit, SessionStore sessions, SessionRecorder recorder) =>
+    Results.Json(new
+    {
+        fpsAvailable = recorder.FpsAvailable,
+        current = recorder.CurrentApp,
+        sessions = sessions.List(appFilter, Math.Clamp(limit ?? 100, 1, 500)),
+    }));
+app.MapGet("/sessions/games", (SessionStore sessions, SessionRecorder recorder) =>
+    Results.Json(new { fpsAvailable = recorder.FpsAvailable, games = sessions.PerGame() }));
+app.MapGet("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>
+    sessions.Get(id) is GameSession s ? Results.Json(s) : Results.NotFound(new { error = "session not found" }));
+app.MapDelete("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>
+    sessions.Delete(id) ? Results.NoContent() : Results.NotFound(new { error = "session not found" }));
 
 // MotionAssistant .ini importer: read-only, never throws. Only RETURNS parsed profiles — applying
 // one reuses the existing POST /profiles/:mode above.
@@ -869,6 +947,17 @@ app.MapFallbackToFile("index.html");
 
 app.Run();
 
+// The single shape every /app-rules response uses. `modes` and `autoProfiles` ride along because the
+// editor cannot be honest without them: it has to offer exactly the modes a rule may select, and it
+// has to be able to say "these are stored but nothing is applying them" when the gate is closed.
+static object RulesPayload(IAppRuleStore rules, bool autoProfilesEnabled) => new
+{
+    rules = rules.List(),
+    modes = AppRulePolicy.SelectableModes,
+    autoProfiles = autoProfilesEnabled,
+    lastMatch = rules.LastMatch,
+};
+
 namespace GpdForge.Api
 {
     /// <summary>Mutable active-mode holder for the local API.</summary>
@@ -877,6 +966,14 @@ namespace GpdForge.Api
     public sealed record ModeRequest(string? Name);
     public sealed record TdpRequest(int StapmW);
     public sealed record ProfileEdit(int StapmW, int FastW, int SlowW, int TctlC);
+
+    /// <summary>Body of POST/PUT /app-rules. Nullable so a malformed body reaches
+    /// <c>AppRulePolicy.Validate</c> and comes back as a sentence the user can act on, rather than as
+    /// a model-binding failure.</summary>
+    public sealed record AppRuleEdit(string? Match, string? Mode, bool? Enabled);
+
+    /// <summary>Body of POST /app-rules/{id}/move. Negative moves the rule towards higher precedence.</summary>
+    public sealed record AppRuleMove(int Delta);
     public sealed record BrightnessRequest(int Level);
     public sealed record RefreshRateRequest(int Hz);
     public sealed record NightModeRequest(bool On, int? Warmth);

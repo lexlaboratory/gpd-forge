@@ -6,13 +6,13 @@ namespace GpdForge.Profiles;
 
 public sealed class FocusProfileEngine
 {
-    private readonly ModeRules _rules;
+    private readonly IModeResolver _rules;
     private readonly int _stabilityTicks;
     private string _active;
     private string? _candidate;
     private int _candidateTicks;
 
-    public FocusProfileEngine(string initial = "windows", ModeRules? rules = null, int stabilityTicks = 3)
+    public FocusProfileEngine(string initial = "windows", IModeResolver? rules = null, int stabilityTicks = 3)
     {
         _active = initial;
         _rules = rules ?? ModeRules.Default();

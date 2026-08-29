@@ -1,4 +1,4 @@
-﻿/* GPD Forge â€” Quick Access Menu (overlay entry) styles. GPL-3.0-or-later.
+/* GPD Forge — Quick Access Menu (overlay entry) styles. GPL-3.0-or-later.
  *
  * Split out of styles.css so the overlay stops paying for the whole dashboard sheet: it is a
  * separate Vite entry that used to import all of it to reach ~60 lines, and it is the surface most
@@ -10,7 +10,7 @@
 
 @import "./tokens.css";
 
-/* Minimal base â€” the overlay no longer inherits styles.css, so it carries only what it needs. */
+/* Minimal base — the overlay no longer inherits styles.css, so it carries only what it needs. */
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
@@ -31,7 +31,7 @@ body {
    ======================================================================== */
 
 /* Whatever is behind the panel is a game, not a page: dim it slightly so the HUD reads, but never
-   hide it â€” the player still needs to see what they are tuning. */
+   hide it — the player still needs to see what they are tuning. */
 .overlay-body { background: color-mix(in srgb, var(--bg-sunken) 45%, transparent); }
 
 .qam {
@@ -61,7 +61,7 @@ body {
 .qam::after { bottom: 0; left: 0; border-width: 0 0 var(--rule) var(--rule); }
 
 /* ========================================================================
-   LIVE HEADER â€” the first thing a player looks at
+   LIVE HEADER — the first thing a player looks at
    ======================================================================== */
 
 .qam-head { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -145,7 +145,7 @@ body {
   letter-spacing: var(--tracking-hud); text-transform: uppercase; color: var(--text-dim);
   white-space: nowrap;
 }
-/* Hairline leader from the label to the control â€” the cheapest way to make a form read as an
+/* Hairline leader from the label to the control — the cheapest way to make a form read as an
    instrument panel rather than a settings list. */
 .qam-label::after {
   content: ""; flex: 1; height: var(--hairline); min-width: var(--space-3);

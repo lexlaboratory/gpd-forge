@@ -1,7 +1,7 @@
-﻿// GPD Forge â€” capture the real UI at every size and theme that matters. GPL-3.0-or-later.
+// GPD Forge — capture the real UI at every size and theme that matters. GPL-3.0-or-later.
 //
 // Replaces the ad-hoc qa-* scripts' single 1280x800 pass. Three viewports on purpose:
-//   1024x720  the size the Tauri window actually opens at â€” never captured before
+//   1024x720  the size the Tauri window actually opens at — never captured before
 //   1280x800  the GPD Win 4 panel
 //    720x600  below the sidebar-collapse breakpoint, which had never been looked at
 //

@@ -1,4 +1,4 @@
-﻿// GPD Forge â€” multi-page navigation E2E. GPL-3.0-or-later.
+// GPD Forge — multi-page navigation E2E. GPL-3.0-or-later.
 import { test, expect } from '@playwright/test'
 import { DashboardPage } from './pages/DashboardPage'
 

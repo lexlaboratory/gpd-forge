@@ -1,7 +1,7 @@
-﻿/* GPD Forge UI â€” HUD stylesheet. GPL-3.0-or-later.
+/* GPD Forge UI — HUD stylesheet. GPL-3.0-or-later.
  *
  * Every value comes from tokens.css. If you are about to write a hex colour, a px size or a
- * duration here, add a token instead â€” that is what makes the phosphor hue, the density and the
+ * duration here, add a token instead — that is what makes the phosphor hue, the density and the
  * light theme swappable from one place.
  *
  * Class names are unchanged from the previous stylesheet on purpose: the 43 Playwright specs and
@@ -19,7 +19,7 @@ html, body, #root { height: 100%; margin: 0; }
 
 body {
   background:
-    /* faint alignment grid â€” the single strongest "instrument panel" cue, and
+    /* faint alignment grid — the single strongest "instrument panel" cue, and
        cheap: two repeating gradients, no image, no blur, no repaint cost. */
     repeating-linear-gradient(0deg, var(--bg-grid) 0 1px, transparent 1px 2.4rem),
     repeating-linear-gradient(90deg, var(--bg-grid) 0 1px, transparent 1px 2.4rem),
@@ -31,7 +31,7 @@ body {
 }
 
 /* Global focus ring. Previously this was pasted into eight individual selectors and simply missing
-   from the sidebar, the chips and the steppers â€” the controls most likely to be reached by d-pad. */
+   from the sidebar, the chips and the steppers — the controls most likely to be reached by d-pad. */
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: var(--focus-width) solid var(--accent);
   outline-offset: var(--focus-offset);
@@ -184,7 +184,7 @@ body {
   margin: 0; font-family: var(--font-hud); font-size: var(--text-sm); font-weight: 700;
   letter-spacing: var(--tracking-hud); text-transform: uppercase; color: var(--text);
 }
-/* The rule trailing a section heading â€” pure instrument-panel grammar. */
+/* The rule trailing a section heading — pure instrument-panel grammar. */
 .card-head::after {
   content: ""; flex: 1; height: var(--hairline); margin-bottom: 0.28rem;
   background: linear-gradient(90deg, var(--border-bright), transparent);
@@ -236,7 +236,7 @@ body {
 }
 .tile-unit { font-family: var(--font-hud); font-size: var(--text-xs); color: var(--text-faint); margin-left: 0.25rem; }
 
-/* Fill bar under a readout â€” magnitude at a glance, without reading the digits. */
+/* Fill bar under a readout — magnitude at a glance, without reading the digits. */
 .meter {
   height: 0.3rem; border-radius: var(--radius-sm);
   background: var(--bg-sunken); border: var(--hairline) solid var(--border);
@@ -299,7 +299,7 @@ body {
   box-shadow: var(--glow-accent);
 }
 
-/* Switch â€” reads as an armed/safe toggle rather than an iOS pill. */
+/* Switch — reads as an armed/safe toggle rather than an iOS pill. */
 .switch {
   display: inline-flex; align-items: center; gap: var(--space-3);
   min-height: var(--tap-min); padding: 0 var(--space-1);
@@ -335,7 +335,7 @@ body {
 .auto-toggle.on { color: var(--good); border-color: var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); }
 .auto-toggle.on .auto-dot { background: var(--good); box-shadow: var(--glow-good); }
 
-/* Sliders â€” a filled track with a rectangular index mark, like a physical fader. */
+/* Sliders — a filled track with a rectangular index mark, like a physical fader. */
 /* Stepper — the atom the overlay was built on, now reachable from the whole app. A d-pad can press
    a button but cannot meaningfully drag a range input, so anywhere that must work on the couch this
    beats a slider. The overlay keeps its own copy in overlay.css: separate bundle by design. */
@@ -366,7 +366,7 @@ body {
 }
 .slider-top output { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--text-md); }
 
-/* The element itself is the hit area â€” full tap height, transparent â€” while the visible track is
+/* The element itself is the hit area — full tap height, transparent — while the visible track is
    painted by the pseudo-element. Styling the input box directly (as the old rule did) left a 6px
    grab strip on a touchscreen device, which the density spec now catches. */
 input[type="range"] {
@@ -530,6 +530,27 @@ input[type="range"]::-webkit-slider-thumb {
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr)); gap: var(--gap-loose); }
 .charts .gf-spark { width: 100%; }
 .charts .gf-spark svg { width: 100%; height: auto; }
+
+/* ========================================================================
+   PLAY SESSIONS
+   ======================================================================== */
+
+/* Sibling of .alert-list/.alert-card rather than a reuse of it: an alert is a severity-coloured
+   event with a left rule, a session is a neutral record whose accent is the accent colour. */
+.session-list { display: grid; gap: var(--gap-tight); margin-top: var(--space-3); }
+.session-row {
+  border: var(--hairline) solid var(--border);
+  border-left: var(--rule) solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev-2);
+}
+.session-row-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.session-row-head .muted { font-family: var(--font-hud); font-size: var(--text-xs); }
+.session-row h3 {
+  margin: 0; font-size: var(--text-md); font-family: var(--font-hud);
+  letter-spacing: var(--tracking-hud);
+}
 
 /* ========================================================================
    ALERTS

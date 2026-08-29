@@ -9,7 +9,7 @@ import { useSpatialNav } from './hooks/useSpatialNav'
 import { DaemonOfflineBanner } from './DaemonOfflineBanner'
 import {
   MODES, DashboardPage, PowerPage, FanPage, HardwarePage, DisplayPage,
-  ProfilesPage, MonitorPage, SystemPage, SettingsPage, AlertsPage, type Shared,
+  ProfilesPage, MonitorPage, SessionsPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
 import { Wizard, isSetupDone } from './Wizard'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -25,6 +25,7 @@ const NAV = [
   { id: 'display',    label: 'Display',    icon: '🔆' },
   { id: 'profiles',   label: 'Profiles',   icon: '🗂️' },
   { id: 'monitor',    label: 'Monitor',    icon: '📈' },
+  { id: 'sessions',   label: 'Sessions',   icon: '🎮' },
   { id: 'system',     label: 'System',     icon: '🩺' },
   { id: 'settings',   label: 'Settings',   icon: '⚙️' },
   { id: 'alerts',     label: 'Alerts',     icon: '🔔' },
@@ -178,6 +179,7 @@ export function App() {
           {page === 'display'    && <DisplayPage />}
           {page === 'profiles'   && <ProfilesPage />}
           {page === 'monitor'    && <MonitorPage tele={tele} />}
+          {page === 'sessions'   && <SessionsPage />}
           {page === 'system'     && <SystemPage tele={tele} />}
           {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} textScale={textScale} setTextScale={setTextScale} />}
           {page === 'alerts'     && <AlertsPage onChanged={() => getAlertSummary().then((s) => setUnreadAlerts(s.unread)).catch(() => {})} />}

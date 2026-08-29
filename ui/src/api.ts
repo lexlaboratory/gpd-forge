@@ -13,6 +13,7 @@ import type {
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, StandbyRestoreOutcome,
+  AppRulesInfo, AppRule, GameSession, SessionsResponse, GamesResponse,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -147,3 +148,32 @@ export const getAlertSummary = () => json<AlertSummary>('/alerts/summary')
 export const acknowledgeAlert = (id: string) => json<{ acknowledged: boolean }>(`/alerts/${id}/ack`, post())
 export const acknowledgeAllAlerts = () => json<{ acknowledged: number }>('/alerts/ack-all', post())
 export const deleteAlert = (id: string) => json<void>(`/alerts/${id}`, { method: 'DELETE' })
+
+// --- per-app profile rules (/app-rules) ---
+// Its own request helper rather than `json` above: a rejected rule comes back as
+// 400 { error: "A rule for 'steam' already exists." }, and that sentence is what the user is shown.
+// `json` only carries the status code, which would turn an actionable message into an unactionable
+// "POST /app-rules → 400". Every mutation answers with the whole ruleset, so the list cannot drift.
+async function rules(path = '', init?: RequestInit): Promise<AppRulesInfo> {
+  const res = await fetch(`${BASE}/app-rules${path}`, init)
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `${init?.method ?? 'GET'} /app-rules${path} → ${res.status}`)
+  }
+  return res.json() as Promise<AppRulesInfo>
+}
+const sendJson = (method: string, body: unknown): RequestInit =>
+  ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+export const getAppRules = () => rules()
+export const addAppRule = (match: string, mode: ModeId) =>
+  rules('', sendJson('POST', { match, mode, enabled: true }))
+export const updateAppRule = (id: string, r: Omit<AppRule, 'id'>) => rules(`/${id}`, sendJson('PUT', r))
+export const deleteAppRule = (id: string) => rules(`/${id}`, { method: 'DELETE' })
+export const moveAppRule = (id: string, delta: number) => rules(`/${id}/move`, sendJson('POST', { delta }))
+
+// --- play sessions (/sessions) ---
+export const getSessions = (limit = 100) => json<SessionsResponse>(`/sessions?limit=${limit}`)
+export const getSessionGames = () => json<GamesResponse>('/sessions/games')
+export const getSession = (id: string) => json<GameSession>(`/sessions/${id}`)
+export const deleteSession = (id: string) => json<void>(`/sessions/${id}`, { method: 'DELETE' })

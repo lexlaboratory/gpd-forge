@@ -1,7 +1,7 @@
-﻿// GPD Forge â€” value stepper. GPL-3.0-or-later.
+// GPD Forge — value stepper. GPL-3.0-or-later.
 //
-// Two âˆ’/+ buttons around a readout. This existed only inline in the overlay, twice, and it is the
-// single most usable pattern the project has on a handheld: a d-pad can reach a button but cannot
+// Two buttons around a readout. This existed only inline in the overlay, twice, and it is the single
+// most usable pattern the project has on a handheld: a d-pad can reach a button but cannot
 // meaningfully drag a range input. Now it is available to the whole app.
 interface Props {
   label: string
@@ -27,7 +27,7 @@ export function Stepper({
         type="button" className="stepper-btn" disabled={disabled || value <= min}
         aria-label={`${label} down`} data-testid={decTestid}
         onClick={() => onChange(clamp(value - step))}
-      >âˆ’</button>
+      >&minus;</button>
       <span className="stepper-val" aria-live="polite">
         {value}{unit && <i>{unit}</i>}
       </span>
@@ -39,4 +39,3 @@ export function Stepper({
     </div>
   )
 }
-

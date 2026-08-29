@@ -30,6 +30,15 @@ playwright-report/
 playwright/.cache/
 tests/e2e/artifacts/
 
+# --- Visual regression ---
+# The baselines under tests/e2e/*-snapshots/ ARE the reference and are committed deliberately: an
+# uncommitted baseline is a test that only ever compares a run against itself. Only the throwaway
+# comparison output is ignored — it normally lands in test-results/ (above), but --output can move
+# it anywhere.
+**/*-actual.png
+**/*-diff.png
+**/*-previous.png
+
 # --- OS / editor ---
 Thumbs.db
 Desktop.ini

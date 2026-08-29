@@ -11,6 +11,21 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
+  expect: {
+    toHaveScreenshot: {
+      // Freeze CSS animations/transitions at their end state and hide the text caret: both are
+      // things a comparison would otherwise catch mid-flight, which is how visual suites earn the
+      // reputation for flaking that gets them switched off.
+      animations: 'disabled',
+      caret: 'hide',
+      // Compare in CSS pixels, so a baseline does not silently depend on the device scale factor of
+      // the machine that produced it.
+      scale: 'css',
+      // No maxDiffPixels on purpose: with the daemon stubbed and the clock/locale pinned (see
+      // tests/e2e/visual.spec.ts) the render is byte-stable, and a pixel budget large enough to
+      // absorb noise is also large enough to absorb a tile that has gone back to reading "--".
+    },
+  },
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',

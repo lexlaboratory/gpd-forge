@@ -13,11 +13,12 @@ public sealed class FocusProfileWorker(
     ITelemetryService telemetry,
     ModeState mode,
     ProfileApplier applier,
+    IAppRuleStore rules,
     ILogger<FocusProfileWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        var engine = new FocusProfileEngine(mode.Active);
+        var engine = new FocusProfileEngine(mode.Active, rules);
         logger.LogInformation("Auto-profiles ON (foreground-driven mode switching).");
 
         while (!ct.IsCancellationRequested)
@@ -26,6 +27,9 @@ public sealed class FocusProfileWorker(
             {
                 var t = await telemetry.ReadAsync(ct);
                 var proc = foreground.Current();
+                // Recorded every tick, not only on a switch: the UI's "this rule is deciding right
+                // now" readout must stay true while the mode is steady, which is most of the time.
+                rules.RecordMatch(proc, engine.Resolve(proc, t.AcConnected), t.AcConnected);
                 var switched = engine.Tick(proc, t.AcConnected);
                 if (switched is not null)
                 {

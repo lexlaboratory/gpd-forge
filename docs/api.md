@@ -71,6 +71,91 @@ body; dead simple by design so it's safe to wire to a single always-visible butt
 - `POST /profiles/:mode { stapmW, fastW, slowW, tctlC } → { mode: ModeId, stapmW, fastW, slowW, tctlC }` —
   persists that mode's preset (what the Power page's "Save preset" writes).
 
+### `GET /app-rules` · `POST /app-rules` · `PUT|DELETE /app-rules/:id` · `POST /app-rules/:id/move`  (per-app profile rules)
+A rule says "while this process is in the foreground, run in this mode". Precedence is list order:
+the first **enabled** rule whose `match` is a substring of the foreground process name wins, so
+reordering is how ambiguity is resolved and two rules can never claim the same process at once.
+`match` is normalized on write (trimmed, lowercased, a trailing `.exe` stripped).
+
+The prefix is `/app-rules` and deliberately **not** `/profiles/rules`: `POST /profiles/:mode` above
+already claims that space, and a literal segment under a parameterized route would make these
+endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on their own path.
+
+- `GET → { rules: AppRule[], modes: ModeId[], autoProfiles: boolean, lastMatch: AppRuleMatch | null }`
+  - `AppRule = { id: guid, match: string, mode: ModeId, enabled: boolean }`, in precedence order.
+  - `modes` is what a rule may select: `battery` / `windows` / `gaming` / `ai`. `standby` is excluded
+    on purpose — it is a preset for a system state, and a foreground app able to select it would be
+    a trap.
+  - `autoProfiles` is `GPDFORGE_AUTO_PROFILES != 0`. The rules are stored, readable and editable
+    either way; `false` only means nothing is currently applying them.
+  - `AppRuleMatch = { ruleId: guid | null, match: string | null, mode: ModeId, process: string | null,
+    acConnected: boolean, atUtc: string }` — what decided the mode on the daemon's most recent
+    foreground tick. `ruleId: null` means no rule matched and the mode came from the AC/battery
+    fallback, so the UI can say so instead of implying a rule is in charge. `null` until the focus
+    worker has run at all (it does not run when `autoProfiles` is false).
+- `POST { match, mode, enabled? } → (the GET shape)` — appends a rule at **lowest** precedence.
+- `PUT /app-rules/:id { match, mode, enabled } → (the GET shape)` — replaces the rule in place,
+  keeping its position. `404` if the id is unknown.
+- `DELETE /app-rules/:id → (the GET shape)`, `404` if the id is unknown.
+- `POST /app-rules/:id/move { delta: number } → (the GET shape)` — shifts the rule by `delta`
+  positions; negative moves it towards **higher** precedence. Clamped to the ends: a rule already at
+  the top asked to move up is a no-op, not an error. `404` only if the id is unknown.
+
+Every mutation answers with the **whole** ruleset, not just the row that changed, so a client can
+never end up rendering a list the daemon no longer holds. A rejected rule comes back as
+`400 { error: string }` — the bare-`error` shape, not the `{ error: { code, message } }` used
+elsewhere — carrying `GpdForge.Profiles.AppRulePolicy`'s message verbatim (e.g.
+`"A rule for 'steam' already exists."`). That message is written for the person reading it and the
+UI shows it as-is, so it must not be rewritten or reduced to a status code.
+
+Rules persist to `%ProgramData%\GPD Forge\app-rules.json`. A fresh install is seeded from the exact
+ruleset the daemon used to hardcode (`ModeRules.DefaultRuleSet`), so turning rules into data cannot
+silently change day-one behaviour. A corrupt file is quarantined rather than taking the daemon down,
+and rows the matcher could not honour (blank match, unknown mode, a duplicate) are dropped on load.
+
+### `GET /sessions` · `GET /sessions/games` · `GET|DELETE /sessions/:id`  (play-session history)
+A session is one continuous stretch during which a single application presented frames. The only
+trustworthy evidence a game is running is that it is *presenting*, and that evidence comes from the
+PresentMon probe — which is behind `GPDFORGE_ENABLE_FPS=1`. **With no probe there are no sessions**:
+the daemon never manufactures one out of "a game was probably running".
+
+- `GET /sessions?appFilter=<name>&limit=1..500 → { fpsAvailable: boolean, current: string | null,
+  sessions: GameSession[] }`, newest first, `limit` defaults to 100. `appFilter` matches the app name
+  case-insensitively. (It is `appFilter` and not `app` because `app` is the `WebApplication` in
+  `core/Program.cs`.)
+  - `fpsAvailable: false` means no frame-rate probe is registered at all — the gate is closed,
+    PresentMon is not installed, or Smart App Control blocked it. It is the difference between "you
+    have not played anything" and "nothing can ever be recorded", and the UI must say which.
+  - `current` is the app presenting right now, or `null` when nothing is being recorded.
+- `GET /sessions/games → { fpsAvailable: boolean, games: GameSummary[] }` — the per-app rollup, most
+  played first. Averages are weighted by duration, so a two-minute run cannot drag the average of a
+  three-hour one around.
+- `GET /sessions/:id → GameSession`, `404 { error: "session not found" }` if unknown.
+- `DELETE /sessions/:id → 204`, same `404` if unknown.
+
+```
+GameSession = { id: guid, app: string, startedUtc, endedUtc, durationSeconds: number,
+                samples: number, samplesWithoutFps: number,
+                fpsAvg, fps1PctLow, fpsMax, cpuTempAvgC, cpuTempMaxC, packageAvgW: number | null,
+                onBattery: boolean, batteryStartPct, batteryEndPct, batteryUsedPct: number | null,
+                fpsTrend: number[] }
+GameSummary = { app: string, sessions: number, totalSeconds: number, lastPlayedUtc,
+                fpsAvg, fpsBest, fps1PctLow, cpuTempMaxC: number | null }
+```
+
+Every metric is nullable because every sensor behind it is optional on this hardware: `null` means
+*not measured* and is never written as a `0`. `samplesWithoutFps` counts the ticks where the app was
+presenting but the probe produced no aggregate, so an average built on partial coverage can be
+qualified instead of implying full coverage. `onBattery` is true only when the session ran
+*entirely* on battery — a session that saw the charger has no meaningful drain figure, so its
+battery fields are `null`. `fpsTrend` is downsampled to at most 120 points at close time (a 3-hour
+session at 1 Hz would otherwise put megabytes of JSON on the system drive for a 120 px graph).
+
+Sessions persist to `%ProgramData%\GPD Forge\sessions.json`, capped at 200 rows / 90 days, with the
+same atomic-write + quarantine-on-corrupt handling as the alert store. A session shorter than 60 s is
+dropped rather than stored (that is a launcher splash or a menu, not play), and a gap of 60 s without
+presents ends the session (loading screens and alt-tabs routinely produce 10-30 s gaps).
+
 ### `POST /import/motionassistant`  (MotionAssistant `.ini` profile importer)
 `200 → { found: number, profiles: ImportedProfile[], path: string }` — reads every `*.ini` file
 under MotionAssistant's saved-profiles directory (default `C:\Program Files\Motion

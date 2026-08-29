@@ -159,3 +159,70 @@ export interface AlertSummary {
   /** Sum of every unread alert's count — collapsing rows must not hide how insistent a fault was. */
   unreadOccurrences?: number
 }
+
+// --- per-app profile rules (mirror of core/Profiles/AppRule.cs, GET/POST /app-rules) -------------
+/** A rule claims a process for a mode. Precedence is list order: first ENABLED match wins. */
+export interface AppRule { id: string; match: string; mode: ModeId; enabled: boolean }
+/** What decided the mode on the daemon's most recent foreground tick. `ruleId` is null when nothing
+ *  matched and the mode came from the AC/battery fallback — the UI must be able to say which. */
+export interface AppRuleMatch {
+  ruleId: string | null
+  match: string | null
+  mode: ModeId
+  process: string | null
+  acConnected: boolean
+  atUtc: string
+}
+/** Every /app-rules response, including mutations: the whole ruleset, so the list cannot drift. */
+export interface AppRulesInfo {
+  rules: AppRule[]
+  modes: ModeId[]
+  autoProfiles: boolean
+  lastMatch: AppRuleMatch | null
+}
+
+// --- play sessions (mirror of core/Sessions/SessionModels.cs, GET /sessions) ---------------------
+// Nearly every metric is nullable because every sensor behind it is optional on this hardware. Null
+// means "not measured" and is rendered as such — never as a zero.
+export interface GameSession {
+  id: string
+  app: string
+  startedUtc: string
+  endedUtc: string
+  durationSeconds: number
+  samples: number
+  /** Ticks where the app was presenting but the probe produced no aggregate — qualifies the averages. */
+  samplesWithoutFps: number
+  fpsAvg: number | null
+  fps1PctLow: number | null
+  fpsMax: number | null
+  cpuTempAvgC: number | null
+  cpuTempMaxC: number | null
+  packageAvgW: number | null
+  /** True only when the session ran entirely on battery; otherwise the drain figure is meaningless. */
+  onBattery: boolean
+  batteryStartPct: number | null
+  batteryEndPct: number | null
+  batteryUsedPct: number | null
+  fpsTrend: number[]
+}
+
+export interface GameSummary {
+  app: string
+  sessions: number
+  totalSeconds: number
+  lastPlayedUtc: string
+  fpsAvg: number | null
+  fpsBest: number | null
+  fps1PctLow: number | null
+  cpuTempMaxC: number | null
+}
+
+export interface SessionsResponse {
+  /** False when no frame-rate probe is registered: nothing can ever be recorded, and we say so. */
+  fpsAvailable: boolean
+  current: string | null
+  sessions: GameSession[]
+}
+
+export interface GamesResponse { fpsAvailable: boolean; games: GameSummary[] }

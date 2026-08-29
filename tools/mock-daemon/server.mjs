@@ -26,6 +26,87 @@ const TDP_MIN = 5
 const TDP_MAX = 35
 const TDP_FIRMWARE_CAP = 30 // above this the "firmware" reverts → verified:false
 
+// --- per-app profile rules (mirrors core/Profiles/) ----------------------------------------------
+// The modes a rule may select. "standby" is deliberately absent: it is a preset for a system state,
+// and a foreground app that could put the machine into standby mode would be a trap.
+const RULE_MODES = ['battery', 'windows', 'gaming', 'ai']
+const MAX_MATCH_LENGTH = 120
+const DEFAULT_APP_RULES = [
+  ['ai', ['ollama', 'lmstudio', 'lm studio', 'koboldcpp', 'jan', 'gpt4all', 'text-generation', 'comfyui']],
+  ['gaming', ['steam', 'gamescope', 'retroarch', 'rpcs3', 'cemu', 'yuzu', 'ryujinx', 'dolphin', 'pcsx2', 'duckstation']],
+]
+let ruleSeq = 0
+
+/** Mirrors GpdForge.Profiles.AppRulePolicy.Normalize: trimmed, lowercase, no ".exe" tail. */
+function normalizeMatch(value) {
+  if (typeof value !== 'string') return ''
+  let p = value.trim().toLowerCase()
+  if (p.endsWith('.exe')) p = p.slice(0, -4)
+  return p.trim()
+}
+
+/** Mirrors AppRulePolicy.Validate — same order, same wording. Null when the rule is acceptable; the
+ *  string is shown to the user verbatim, so it must read as a sentence, not as a code. */
+function validateRule(match, mode, existing, excludingId) {
+  const needle = normalizeMatch(match)
+  if (needle.length === 0) return 'A rule needs a process name to match.'
+  if (needle.length > MAX_MATCH_LENGTH) return `Process name is too long (max ${MAX_MATCH_LENGTH} characters).`
+  if (!RULE_MODES.includes(mode)) return `Unknown mode '${mode}'. Valid modes: ${RULE_MODES.join(', ')}.`
+  if (existing.some((r) => r.id !== excludingId && r.match === needle)) return `A rule for '${needle}' already exists.`
+  return null
+}
+
+// --- play sessions (mirrors core/Sessions/) -------------------------------------------------------
+/** A plausible frame-rate trend: a slow drift around the session's average with a couple of dips,
+ *  deterministic so repeated reads (and screenshots) are stable. */
+function trend(avg, points) {
+  return Array.from({ length: points }, (_, i) =>
+    Math.round((avg + Math.sin(i / 3.1) * 4 - (i % 17 === 0 ? 9 : 0)) * 10) / 10)
+}
+
+const HOUR = 3_600_000
+const NOW = Date.now()
+const SAMPLE_SESSIONS = [
+  {
+    // Frame probe never produced a reading for this one (PresentMon dropped out): every FPS field is
+    // null and the trend is empty, so the UI has to take the "no reading" path rather than show 0.
+    id: '8f1c0a4e-2b77-4e59-9a10-0d4f6c3e51aa',
+    app: 'hades2',
+    startedUtc: new Date(NOW - 5 * HOUR).toISOString(),
+    endedUtc: new Date(NOW - 4.5 * HOUR).toISOString(),
+    durationSeconds: 1800, samples: 1800, samplesWithoutFps: 1800,
+    fpsAvg: null, fps1PctLow: null, fpsMax: null,
+    cpuTempAvgC: 64.2, cpuTempMaxC: 72.8, packageAvgW: 15.1,
+    onBattery: true, batteryStartPct: 88, batteryEndPct: 61, batteryUsedPct: 27,
+    fpsTrend: [],
+  },
+  {
+    // Plugged in for at least part of its life, so there is no meaningful drain figure: onBattery is
+    // false and every battery field is null rather than 0.
+    id: 'c2d9b3f1-6a04-42d7-8c55-1b9e7a20d3c4',
+    app: 'cyberpunk2077',
+    startedUtc: new Date(NOW - 26 * HOUR).toISOString(),
+    endedUtc: new Date(NOW - 25 * HOUR).toISOString(),
+    durationSeconds: 3600, samples: 3600, samplesWithoutFps: 0,
+    fpsAvg: 61.8, fps1PctLow: 44.2, fpsMax: 78.9,
+    cpuTempAvgC: 81, cpuTempMaxC: 94.2, packageAvgW: 31.4,
+    onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
+    fpsTrend: trend(61.8, 96),
+  },
+  {
+    // Ran entirely on battery: the one shape where a drain figure means anything.
+    id: '5a7e91d0-38c2-4f6b-b1e3-9c0d2f847b16',
+    app: 'cyberpunk2077',
+    startedUtc: new Date(NOW - 52 * HOUR).toISOString(),
+    endedUtc: new Date(NOW - 50.5 * HOUR).toISOString(),
+    durationSeconds: 5400, samples: 5400, samplesWithoutFps: 120,
+    fpsAvg: 52.4, fps1PctLow: 38.1, fpsMax: 71.2,
+    cpuTempAvgC: 78.3, cpuTempMaxC: 91.5, packageAvgW: 24.6,
+    onBattery: true, batteryStartPct: 96, batteryEndPct: 31, batteryUsedPct: 65,
+    fpsTrend: trend(52.4, 120),
+  },
+]
+
 const state = {
   activeMode: 'windows',
   stapmW: 20,
@@ -51,7 +132,15 @@ const state = {
   autoFps: { enabled: false, targetFps: 60 },
   guardian: { enabled: true, autoThrottle: true, tempThrottleC: 90, tempCriticalC: 96, throttleFloorW: 12, batteryLowPct: 15, batteryCriticalPct: 8 },
   alerts: [],
-  powerSource: { enabled: false, onBatteryMode: 'battery', onAcMode: 'windows' },
+  // Per-app profile rules — seeded from the SAME default ruleset the real daemon flattens on a fresh
+  // install (core/Profiles/ModeRules.DefaultRuleSet), in the same precedence order.
+  appRules: DEFAULT_APP_RULES.flatMap(([mode, needles]) =>
+    needles.map((match) => ({ id: `rule-${++ruleSeq}`, match, mode, enabled: true }))),
+  // Play sessions, newest first. Deliberately covers all three shapes the UI must render honestly:
+  // a full battery run, a plugged-in run whose battery fields are null, and a run the frame probe
+  // never produced a reading for (fpsAvg/fps1PctLow/fpsMax null, fpsTrend []).
+  sessions: SAMPLE_SESSIONS,
+  powerSource:{ enabled: false, onBatteryMode: 'battery', onAcMode: 'windows' },
   // Canned MotionAssistant import result — enough for the UI/E2E to exercise the flow without a
   // real MotionAssistant install.
   motionAssistantProfiles: [
@@ -259,6 +348,69 @@ function fanInfo() {
   return { mode: state.fanMode, manualDuty: state.fanManualDuty, controllable: true }
 }
 
+// Per-app rules: every response (including mutations) carries the WHOLE ruleset plus the context the
+// editor needs — the selectable modes and whether anything is actually applying them.
+const MOCK_FOREGROUND = 'steam'
+function lastRuleMatch() {
+  const rule = state.appRules.find((r) => r.enabled && r.match.length > 0 && MOCK_FOREGROUND.includes(r.match))
+  return {
+    ruleId: rule?.id ?? null,
+    match: rule?.match ?? null,
+    // No rule matched → the mode is just the power-source default, and the UI must say so instead of
+    // implying a rule is in charge. Disabling/deleting the `steam` rule exercises exactly that.
+    mode: rule?.mode ?? (state.acConnected ? 'windows' : 'battery'),
+    process: MOCK_FOREGROUND,
+    acConnected: state.acConnected,
+    atUtc: new Date().toISOString(),
+  }
+}
+function appRulesInfo() {
+  return { rules: state.appRules, modes: RULE_MODES, autoProfiles: true, lastMatch: lastRuleMatch() }
+}
+
+const round1 = (v) => Math.round(v * 10) / 10
+/** Mirrors GpdForge.Sessions.SessionMath.PerGame: duration-weighted averages (a two-minute run must
+ *  not drag a three-hour one around), nulls preserved, most-played first. */
+function perGame(sessions) {
+  const groups = new Map()
+  for (const s of sessions) {
+    const key = s.app.toLowerCase()
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(s)
+  }
+  const weighted = (rows, pick) => {
+    let weight = 0, total = 0
+    for (const s of rows) {
+      const v = pick(s)
+      if (v === null || v === undefined) continue
+      const w = s.durationSeconds > 0 ? s.durationSeconds : 1
+      weight += w
+      total += v * w
+    }
+    return weight > 0 ? round1(total / weight) : null
+  }
+  const maxOrNull = (rows, pick) => {
+    let best = null
+    for (const s of rows) {
+      const v = pick(s)
+      if (v !== null && v !== undefined && (best === null || v > best)) best = v
+    }
+    return best === null ? null : round1(best)
+  }
+  return [...groups.values()]
+    .map((rows) => ({
+      app: rows[0].app,
+      sessions: rows.length,
+      totalSeconds: round1(rows.reduce((n, s) => n + s.durationSeconds, 0)),
+      lastPlayedUtc: rows.map((s) => s.startedUtc).sort().at(-1),
+      fpsAvg: weighted(rows, (s) => s.fpsAvg),
+      fpsBest: maxOrNull(rows, (s) => s.fpsMax ?? s.fpsAvg),
+      fps1PctLow: weighted(rows, (s) => s.fps1PctLow),
+      cpuTempMaxC: maxOrNull(rows, (s) => s.cpuTempMaxC),
+    }))
+    .sort((a, b) => b.totalSeconds - a.totalSeconds || (a.lastPlayedUtc < b.lastPlayedUtc ? 1 : -1))
+}
+
 function aiInfo() {
   const holders = aiHolders()
   return {
@@ -271,7 +423,7 @@ function aiInfo() {
 // --- tiny HTTP helpers ---
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET,POST,OPTIONS',
+  'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
   'access-control-allow-headers': 'content-type,authorization',
 }
 function send(res, status, body) {
@@ -417,6 +569,80 @@ const server = http.createServer(async (req, res) => {
     state.presets[mode] = { stapmW: body.stapmW, fastW: body.fastW, slowW: body.slowW, tctlC: body.tctlC }
     return send(res, 200, { mode, ...state.presets[mode] })
   }
+  // --- per-app profile rules -----------------------------------------------------------------
+  // Prefix is /app-rules, NOT /profiles/rules: POST /profiles/:mode above already owns that space.
+  // A rejected rule answers 400 { error: "<sentence>" } — the bare `error` string of core/Program.cs,
+  // not this file's { error: { code, message } } shape — because that sentence is what the user sees.
+  if (method === 'GET' && path === '/app-rules') return send(res, 200, appRulesInfo())
+  if (method === 'POST' && path === '/app-rules') {
+    const body = await readBody(req)
+    const error = validateRule(body?.match, body?.mode, state.appRules, null)
+    if (error) return send(res, 400, { error })
+    state.appRules.push({
+      id: `rule-${++ruleSeq}`, match: normalizeMatch(body.match), mode: body.mode, enabled: body.enabled !== false,
+    })
+    return send(res, 200, appRulesInfo())
+  }
+  if (method === 'POST' && /^\/app-rules\/[^/]+\/move$/.test(path)) {
+    const id = path.split('/')[2]
+    const from = state.appRules.findIndex((r) => r.id === id)
+    if (from < 0) return send(res, 404, { error: 'That rule no longer exists.' })
+    const body = await readBody(req)
+    const to = Math.max(0, Math.min(state.appRules.length - 1, from + (Number(body?.delta) || 0)))
+    // Already at the end it was asked to move towards: the ruleset is what the caller wanted, so
+    // this is a no-op and not an error.
+    const [rule] = state.appRules.splice(from, 1)
+    state.appRules.splice(to, 0, rule)
+    return send(res, 200, appRulesInfo())
+  }
+  if (method === 'PUT' && path.startsWith('/app-rules/')) {
+    const id = path.slice('/app-rules/'.length)
+    const rule = state.appRules.find((r) => r.id === id)
+    if (!rule) return send(res, 404, { error: 'That rule no longer exists.' })
+    const body = await readBody(req)
+    const error = validateRule(body?.match, body?.mode, state.appRules, id)
+    if (error) return send(res, 400, { error })
+    rule.match = normalizeMatch(body.match)
+    rule.mode = body.mode
+    rule.enabled = body.enabled !== false
+    return send(res, 200, appRulesInfo())
+  }
+  if (method === 'DELETE' && path.startsWith('/app-rules/')) {
+    const id = path.slice('/app-rules/'.length)
+    const before = state.appRules.length
+    state.appRules = state.appRules.filter((r) => r.id !== id)
+    if (state.appRules.length === before) return send(res, 404, { error: 'That rule no longer exists.' })
+    return send(res, 200, appRulesInfo())
+  }
+
+  // --- play sessions -------------------------------------------------------------------------
+  // `fpsAvailable` is why an empty list can be empty: with no frame probe nothing is ever recorded.
+  // The mock has an FPS source, so it reports true. `current` is null — no session is in flight here.
+  if (method === 'GET' && path === '/sessions') {
+    const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 100))
+    const appFilter = url.searchParams.get('appFilter')
+    const rows = [...state.sessions]
+      .sort((a, b) => (a.startedUtc < b.startedUtc ? 1 : -1))
+      .filter((s) => !appFilter || s.app.toLowerCase() === appFilter.trim().toLowerCase())
+      .slice(0, limit)
+    return send(res, 200, { fpsAvailable: true, current: null, sessions: rows })
+  }
+  if (method === 'GET' && path === '/sessions/games') {
+    return send(res, 200, { fpsAvailable: true, games: perGame(state.sessions) })
+  }
+  if (method === 'GET' && path.startsWith('/sessions/')) {
+    const s = state.sessions.find((x) => x.id === path.slice('/sessions/'.length))
+    return s ? send(res, 200, s) : send(res, 404, { error: 'session not found' })
+  }
+  if (method === 'DELETE' && path.startsWith('/sessions/')) {
+    const id = path.slice('/sessions/'.length)
+    const before = state.sessions.length
+    state.sessions = state.sessions.filter((s) => s.id !== id)
+    if (state.sessions.length === before) return send(res, 404, { error: 'session not found' })
+    res.writeHead(204, CORS)
+    return res.end()
+  }
+
   if (method === 'GET' && path === '/fan') return send(res, 200, fanInfo())
   if (method === 'POST' && path === '/fan') {
     const body = await readBody(req)

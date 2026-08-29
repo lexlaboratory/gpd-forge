@@ -2,18 +2,25 @@
 // Maps the focused app to a usage mode. Data-driven and overridable.
 namespace GpdForge.Profiles;
 
-public sealed class ModeRules
+public sealed class ModeRules : IModeResolver
 {
     private readonly (string mode, string[] needles)[] _rules;
 
     public ModeRules((string mode, string[] needles)[] rules) => _rules = rules;
 
-    /// <summary>Reasonable defaults. Process names are matched case-insensitively as substrings.</summary>
-    public static ModeRules Default() => new(
+    /// <summary>
+    /// The shipped ruleset, in precedence order. Exposed so <see cref="AppRuleStore"/> can seed a
+    /// fresh install from the exact same data the hardcoded matcher used — one source of truth, so
+    /// enabling editable rules cannot silently change what a fresh install does.
+    /// </summary>
+    public static readonly (string mode, string[] needles)[] DefaultRuleSet =
     [
         ("ai", ["ollama", "lmstudio", "lm studio", "koboldcpp", "jan", "gpt4all", "text-generation", "comfyui"]),
         ("gaming", ["steam", "gamescope", "retroarch", "rpcs3", "cemu", "yuzu", "ryujinx", "dolphin", "pcsx2", "duckstation"]),
-    ]);
+    ];
+
+    /// <summary>Reasonable defaults. Process names are matched case-insensitively as substrings.</summary>
+    public static ModeRules Default() => new(DefaultRuleSet);
 
     /// <summary>The mode this process implies, or null if it has no opinion.</summary>
     public string? ModeFor(string? processName)
