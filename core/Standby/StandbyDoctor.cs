@@ -20,7 +20,20 @@ public sealed record StandbyDiagnosis(
 
 public static class PowerCfgParser
 {
-    /// <summary>Extract sleep blockers from `powercfg /requests` (non-"None." entries under each category).</summary>
+    /// <summary>
+    /// Extract sleep blockers from `powercfg /requests` — the entries under each category that are
+    /// not the "nothing here" sentinel.
+    ///
+    /// That sentinel is localised and must not be matched by word. powercfg translates it ("None." →
+    /// "Ninguna.") while translating the category headers only inconsistently — a Spanish Windows
+    /// prints DISPLAY:, SYSTEM: and AWAYMODE: in English but EJECUCIÓN: in Spanish — so comparing
+    /// against any specific wording reports six imaginary blockers on every non-English install.
+    ///
+    /// The sentinel is instead recognised structurally: it is a lone word, whereas every real
+    /// request is a tag plus a driver name, service name or path and therefore contains whitespace.
+    /// Choosing the test this way round also fails safe — an unfamiliar line is reported rather than
+    /// silently swallowed, so the worst case is showing one blocker too many, never hiding one.
+    /// </summary>
     public static IReadOnlyList<string> ParseRequests(string requestsOutput)
     {
         var blockers = new List<string>();
@@ -30,9 +43,8 @@ public static class PowerCfgParser
         {
             var line = raw.Trim();
             if (line.Length == 0) continue;
-            // Category headers end with ':' (DISPLAY:, SYSTEM:, ...). Skip them and the literal "None."
-            if (line.EndsWith(':')) continue;
-            if (line.Equals("None.", StringComparison.OrdinalIgnoreCase)) continue;
+            if (line.EndsWith(':')) continue;                       // category header
+            if (!line.Any(char.IsWhiteSpace)) continue;             // localised "none" sentinel
             blockers.Add(line);
         }
         return blockers;

@@ -212,6 +212,47 @@ if (args.Contains("--probe-standby"))
     return;
 }
 
+// Modern Standby forensics. `--probe-sleepstudy <file.html>` re-reads an existing report instead of
+// generating one, which is how the parser gets exercised against a real multi-megabyte report
+// without needing elevation.
+if (args.Contains("--probe-sleepstudy"))
+{
+    var idx = Array.IndexOf(args, "--probe-sleepstudy");
+    var file = idx + 1 < args.Length && !args[idx + 1].StartsWith("--") ? args[idx + 1] : null;
+
+    SleepStudyOutcome outcome;
+    if (file is not null)
+        outcome = File.Exists(file)
+            ? new SleepStudyOutcome(true, null, SleepStudyParser.Parse(await File.ReadAllTextAsync(file)))
+            : new SleepStudyOutcome(false, $"no such report: {file}", null);
+    else
+        outcome = await new SleepStudyProbe(new SystemProcessRunner()).RunAsync(7, CancellationToken.None);
+
+    Console.WriteLine("GPD Forge sleep study probe (read-only):");
+    if (!outcome.Available)
+    {
+        Console.WriteLine($"  unavailable: {outcome.Error}");
+        return;
+    }
+
+    var study = outcome.Report!;
+    Console.WriteLine($"  sessions parsed  : {study.Sessions.Count}");
+
+    var worst = study.WorstDrain;
+    Console.WriteLine(worst is null
+        ? "  worst drain      : (no session with a measurable discharge)"
+        : $"  worst drain      : {worst.DrainMilliwatts:F0} mW ({worst.DrainPctPerHour:F2} %/h) over {worst.Duration.TotalHours:F2} h from {worst.EntryAt.ToLocalTime():yyyy-MM-dd HH:mm} [{worst.Type}]");
+
+    foreach (var b in study.Bugchecks)
+        Console.WriteLine($"  BUGCHECK         : {b.EntryAt.ToLocalTime():yyyy-MM-dd HH:mm}  stop code {b.BugcheckCode ?? "(unknown)"}");
+
+    foreach (var f in study.FailedResumes)
+        Console.WriteLine($"  failed resume    : {f.Type} at {f.EntryAt.ToLocalTime():yyyy-MM-dd HH:mm} for {f.Duration.TotalHours:F2} h — next session was an abnormal shutdown");
+
+    Console.WriteLine($"  abnormal shutdowns: {study.AbnormalShutdowns.Count}");
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,

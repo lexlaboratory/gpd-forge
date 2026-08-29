@@ -64,10 +64,13 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       and silent against an uninitialised EC. Unit-tested against a simulated suspend.
       **HID re-enumeration still has no backend** and is reported as `restored: false` with the
       reason, not quietly omitted.
-- [ ] Fingerprint toggle / S0↔S3 helper
-- [~] `powercfg` integration — `/requests` (sleep blockers) and `/lastwake` are parsed and surfaced,
-      and the overnight drain is **measured** from two real battery readings separated by an observed
-      suspend, never extrapolated. `sleepstudy` (the HTML report) is still not parsed.
+- [ ] Fingerprint toggle / **hibernate helper** — rewritten 2026-08-29: there is no S0↔S3 toggle to
+      build on this board. `powercfg /a` reports S1/S2/S3 as *unsupported by the system firmware*, so
+      the only states available are S0 low-power idle (Modern Standby) and Hibernate. The useful
+      control is therefore "hibernate instead of Modern Standby", not a sleep-state switch.
+- [x] `powercfg` integration — `/requests` (sleep blockers), `/lastwake` and now **`sleepstudy`**
+      (`core/Standby/SleepStudy.cs`). The overnight drain stays **measured** from two real battery
+      readings separated by an observed suspend, never extrapolated.
 
 ## Phase 3 — Agents / AI (local) mode
 - [ ] VRAM/UMA reassignment preset

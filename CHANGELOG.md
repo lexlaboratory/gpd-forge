@@ -6,6 +6,50 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **`powercfg /sleepstudy` is parsed, so the Standby Doctor can finally explain a machine that went
+  to sleep and never came back** (`core/Standby/SleepStudy.cs`). On the reference Win 4 the System
+  event log had recorded *no* standby transition at all for the night in question, while the sleep
+  study held the whole session, a `0x133` DPC_WATCHDOG_VIOLATION bugcheck two days earlier, and every
+  abnormal shutdown of the week.
+
+  The report defeats the obvious implementation three times over. Its `<table>` elements are
+  client-side templates full of `${$Scope.Foo}` placeholders, so scraping the HTML returns the
+  scaffolding and none of the data — everything lives in one `var LocalSprData = {…}` blob (whose
+  keys stay English on a localised Windows, because the markup is the part that gets translated).
+  That blob is a *JavaScript object literal*, not JSON: a handful of values are single-quoted
+  (`{"Value":'0x0'}`), which `System.Text.Json` rejects — and the first one sits ~180 KB in, so a
+  JSON-only parser passes a short fixture and dies on a real report. The payload is therefore
+  extracted by a string-aware scanner that normalises single-quoted literals as it goes, which also
+  keeps a brace inside a process name or path from ending the scan early.
+
+  Third and least obvious: **battery drain is not meaningful for every session type.** The report's
+  own script restricts discharge to Active/Screen-Off/Modern-Sleep sessions with both full-charge
+  readings present, and those rules are mirrored here rather than reinvented. Subtracting the
+  capacities of a Hibernate session yields a confident four-figure milliwatt number that means
+  nothing: the machine is off, an exit capacity of 0 alongside a full-charge capacity of 0 is the
+  *absence* of a reading rather than an empty battery, and the session is timestamped to when the
+  user pressed power, not to when the machine stopped drawing.
+
+  What it reports instead is what a user actually asks: bugcheck stop codes, abnormal shutdowns, and
+  **failed resumes** — a suspend immediately followed by an abnormal shutdown. That last one is an
+  inference from adjacency rather than a field the report provides, and is documented as such; it is
+  also what distinguishes "it slept and never woke up" from "it crashed while I was using it".
+  Exposed as `--probe-sleepstudy [report.html]`, which re-reads an existing report so the parser can
+  be exercised against a real multi-megabyte one without elevation.
+
+### Fixed
+- **Six imaginary sleep blockers on every non-English Windows.** `powercfg /requests` prints a
+  "nothing here" sentinel under each category, and the parser skipped only the English literal
+  `"None."` — so a Spanish install reported `Ninguna.` six times as six reasons the machine could not
+  sleep. Matching the translated word instead would have been a lottery per language: powercfg
+  localises that sentinel while localising the category headers only *inconsistently* (the same
+  machine prints `DISPLAY:`, `SYSTEM:` and `AWAYMODE:` in English but `EJECUCIÓN:` in Spanish). The
+  sentinel is now recognised structurally — it is a lone word, whereas every real request is a tag
+  plus a driver name, service name or path and so contains whitespace. That test direction also fails
+  safe: an unfamiliar line is reported rather than swallowed, so the worst case is one blocker too
+  many, never a hidden one.
+
+### Added
 - **Waking the machine now restores the fan and the power limits by itself.** `RestoreAsync` has
   existed since the Standby Doctor landed and the only thing that ever called it was a human pressing
   a button on the Standby panel — the wrong shape for the failure it prevents, since the EC comes back

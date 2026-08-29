@@ -41,6 +41,56 @@ public class PowerCfgParserTests
         Assert.DoesNotContain(blockers, b => b.EndsWith(':'));
     }
 
+    // Captured verbatim from the Win 4 on a Spanish Windows: the sentinel is translated and the
+    // headers are translated only sometimes (EJECUCIÓN, but DISPLAY and AWAYMODE stay English).
+    private const string RequestsEs = """
+        DISPLAY:
+        Ninguna.
+
+        SYSTEM:
+        Ninguna.
+
+        AWAYMODE:
+        Ninguna.
+
+        EJECUCIÓN:
+        Ninguna.
+
+        PERFBOOST:
+        Ninguna.
+
+        ACTIVELOCKSCREEN:
+        Ninguna.
+        """;
+
+    [Fact]
+    public void A_non_english_windows_does_not_invent_six_blockers()
+    {
+        // The old parser skipped the English literal "None." only, so every localised install
+        // reported one phantom blocker per category — six reasons the machine "cannot sleep", all
+        // of them the word for "none".
+        Assert.Empty(PowerCfgParser.ParseRequests(RequestsEs));
+    }
+
+    [Fact]
+    public void A_localised_sentinel_is_skipped_without_hiding_a_real_blocker_beside_it()
+    {
+        var mixed = "SYSTEM:\nNinguna.\nEJECUCIÓN:\n[DRIVER] Realtek(R) Audio\n";
+
+        var blockers = PowerCfgParser.ParseRequests(mixed);
+
+        Assert.Equal(["[DRIVER] Realtek(R) Audio"], blockers);
+    }
+
+    [Fact]
+    public void An_unrecognised_line_is_reported_rather_than_swallowed()
+    {
+        // The structural rule is deliberately biased: showing a blocker too many is a cosmetic bug,
+        // hiding the driver that is keeping the machine awake is the failure this endpoint exists
+        // to prevent.
+        Assert.Single(PowerCfgParser.ParseRequests("SYSTEM:\nalgo raro que no reconocemos\n"));
+    }
+
     [Fact]
     public void ParseLastWake_extracts_friendly_name()
     {
