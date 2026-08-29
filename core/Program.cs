@@ -12,6 +12,7 @@ using GpdForge.Telemetry;
 using GpdForge.Broker;
 using GpdForge.Profiles;
 using GpdForge.Standby;
+using GpdForge.Hid;
 using GpdForge.Display;
 using GpdForge.SystemControl;
 using GpdForge.Guardian;
@@ -357,6 +358,17 @@ builder.Services.AddHostedService<ResumeRestoreWorker>();
 // The sleep study is what explains a machine that slept and never came back — but it costs tens of
 // seconds and ~9 MB per run, so it is sampled on a slow cadence into a cache that GET /standby reads.
 builder.Services.AddSingleton<SleepStudyCache>();
+// The last resume-restore step that had no backend. Registered unconditionally: it only ever acts on
+// a controller node Windows itself reports as faulted, so on a healthy wake it reads and does nothing.
+builder.Services.AddSingleton<IHidDeviceEnumerator, WmiHidDeviceEnumerator>();
+// Built by hand rather than by convention: IProcessRunner is only registered when the hardware gate
+// is open (see below), and a required constructor dependency that is sometimes absent would stop the
+// whole daemon from starting rather than degrade this one step. pnputil is an in-box command and the
+// enumeration is read-only, so neither half belongs behind that gate.
+builder.Services.AddSingleton(sp => new HidReenumerator(
+    sp.GetRequiredService<IHidDeviceEnumerator>(),
+    sp.GetService<IProcessRunner>() ?? new SystemProcessRunner(),
+    sp.GetService<ILogger<HidReenumerator>>()));
 builder.Services.AddHostedService<SleepStudyWorker>();
 builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<TelemetryHistory>();

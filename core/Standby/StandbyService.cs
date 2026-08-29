@@ -7,6 +7,7 @@
 // restored nothing (not success). The panel is allowed to say "not measured"; it is not allowed to
 // make a number up.
 using GpdForge.Fan;
+using GpdForge.Hid;
 using GpdForge.Tdp;
 using GpdForge.Telemetry;
 using Microsoft.Extensions.Logging;
@@ -59,6 +60,7 @@ public sealed class StandbyService : IStandbyService
     private readonly IUnbiasedClock _clock;
     private readonly Func<DateTimeOffset> _now;
     private readonly SleepStudyCache? _sleepStudy;
+    private readonly HidReenumerator? _hid;
 
     // Whether a write would reach real silicon. The controller interfaces cannot answer this — the
     // no-hardware stubs satisfy them and even report TDP as "verified", because they echo back
@@ -79,9 +81,11 @@ public sealed class StandbyService : IStandbyService
         IUnbiasedClock? clock = null,
         Func<DateTimeOffset>? now = null,
         StandbyDrainTracker? tracker = null,
-        SleepStudyCache? sleepStudy = null)
+        SleepStudyCache? sleepStudy = null,
+        HidReenumerator? hid = null)
     {
         _sleepStudy = sleepStudy;
+        _hid = hid;
         _tdp = tdp;
         _fan = fan;
         _telemetry = telemetry;
@@ -147,9 +151,7 @@ public sealed class StandbyService : IStandbyService
         {
             await RestoreFanAsync(ct),
             await RestoreTdpAsync(activeProfile, ct),
-            // Not implemented, so it is listed as not restored rather than quietly omitted: the panel
-            // should show what a resume restore does NOT yet cover.
-            new("hid", false, "HID/controller re-enumeration has no backend yet — nothing was restored."),
+            await RestoreHidAsync(ct),
         };
 
         var outcome = new StandbyRestoreOutcome(_now(), steps);
@@ -170,6 +172,28 @@ public sealed class StandbyService : IStandbyService
         {
             _logger?.LogWarning("Standby restore: fan re-init failed: {Error}", ex.Message);
             return new("fan", false, $"Fan re-init failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Re-enumerates the controller — but only if Windows reports it faulted. A pad that survived
+    /// the suspend is left alone: restarting a working controller mid-game would be a worse bug than
+    /// the one this step exists to fix, so "nothing was wrong" is reported as a success with the
+    /// reason, not as a repair.
+    /// </summary>
+    private async Task<StandbyRestoreStep> RestoreHidAsync(CancellationToken ct)
+    {
+        if (_hid is null)
+            return new("hid", false, "No HID backend is wired, so the controller was not checked.");
+        try
+        {
+            var result = await _hid.RestoreAsync(ct);
+            return new("hid", result.Healthy, result.Detail);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning("Standby restore: HID re-enumeration failed: {Error}", ex.Message);
+            return new("hid", false, $"Controller re-enumeration failed: {ex.Message}");
         }
     }
 

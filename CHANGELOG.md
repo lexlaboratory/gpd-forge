@@ -6,6 +6,26 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **The resume restore's last empty step now does something.** `hid` has reported
+  `restored: false — no backend yet` since the Standby Doctor shipped; it now re-enumerates the
+  controller (`core/Hid/HidReenumerator.cs`).
+
+  The interesting constraint is what it must *not* do. Restarting the pad on every wake would yank a
+  working controller out from under a running game — worse than the fault being repaired — so it acts
+  only on a node Windows itself reports faulted (`ConfigManagerErrorCode != 0`) and otherwise reports
+  success *because* it did nothing. When it does act it restarts the USB composite parent: confirmed
+  on hardware, the pad presents as **seven** PnP nodes (VID_2F24 & PID_0135 — which also settles the
+  `// verify on HX370 Win 4` TODO left in `GpdButtonMap`), and one parent restart re-enumerates all of
+  them. Afterwards it re-reads the device, because `pnputil` exits cleanly for a restart that left the
+  node exactly as faulted as it was.
+
+  Device identity comes from `PNPDeviceID` and `ConfigManagerErrorCode` — an ID and a number. Nothing
+  keys on device names or status text: on this machine the pad is called "Dispositivo definido por el
+  proveedor compatible con HID", and a name-matching implementation would report a missing controller
+  on any non-English Windows, which is the same trap that produced six phantom sleep blockers.
+
+  `pnputil` was chosen over SetupAPI/CfgMgr32 P/Invoke: an in-box command keeps the layer testable
+  behind `IProcessRunner`, and a resume path is the last place to hand-roll native device calls.
 - **The sleep study findings now reach the panel.** Parsing them was only half the job: until now the
   only way to see that the machine had hibernated and never come back was `--probe-sleepstudy` from a
   console, which is not where anyone looks after power-cycling a handheld by hand. `GET /standby`

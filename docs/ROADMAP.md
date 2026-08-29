@@ -27,7 +27,10 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
   enabled. The **default** telemetry path is driverless WMI. Moving both to PawnIO is the target.
 - [x] `Telemetry/` read-only via WMI (battery/AC/discharge/clock/thermal-zone) — verified on device
 - [x] `Telemetry/` package power + fan RPM (broker) + FPS (Intel PresentMon, `GPDFORGE_ENABLE_FPS=1`)
-- [ ] `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify
+- [~] `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify — the safe-write layer
+      (backup → patch → verify → restore) is unit-tested but the byte offsets are still placeholders.
+      Device identity is now **confirmed on hardware**: VID_2F24 & PID_0135, presenting as 7 PnP
+      nodes (USB composite parent + MI_00/01/02, each also appearing as a HID node).
 - [ ] `Rtss/` single-owner arbitration
 - [ ] `Api/` HTTP+WebSocket + named pipe
 - [x] `Profiles/` focus-process profiles with anti-flapping hysteresis (engine unit-tested;
@@ -62,8 +65,11 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       receive a power broadcast without hosting a hidden window for it. Polls every 5 s: the drain
       sampler's 1-minute tick is right for a drain figure and far too slow to stop a wake running hot
       and silent against an uninitialised EC. Unit-tested against a simulated suspend.
-      **HID re-enumeration still has no backend** and is reported as `restored: false` with the
-      reason, not quietly omitted.
+      **HID re-enumeration now has a backend** (`core/Hid/HidReenumerator.cs`): it acts only on a
+      controller node Windows itself reports faulted, restarts the USB composite parent via
+      `pnputil` (one action covers all seven nodes the pad presents — confirmed on device
+      2026-08-29, VID_2F24&PID_0135), and re-reads the device afterwards rather than trusting the
+      exit code. A pad that survived the suspend is deliberately left untouched.
 - [ ] Fingerprint toggle / **hibernate helper** — rewritten 2026-08-29: there is no S0↔S3 toggle to
       build on this board. `powercfg /a` reports S1/S2/S3 as *unsupported by the system firmware*, so
       the only states available are S0 low-power idle (Modern Standby) and Hibernate. The useful

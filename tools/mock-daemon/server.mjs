@@ -869,14 +869,21 @@ const server = http.createServer(async (req, res) => {
 
   if (method === 'GET' && path === '/standby') return send(res, 200, state.standby)
   if (method === 'POST' && path === '/standby/restore') {
-    // Per-step outcomes, like the real service: `hid` reports restored:false because no backend
-    // exists for it, rather than being quietly listed as done.
+    // Per-step outcomes, like the real service. `hid` models the common real case: the pad survived
+    // the suspend, so nothing was restarted and the step is a success *because* it did nothing —
+    // restarting a working controller mid-game would be worse than the fault it repairs.
     const outcome = {
       at: new Date().toISOString(),
       steps: [
         { name: 'fan', restored: true, detail: 'Fan mode re-applied after resume.' },
         { name: 'tdp', restored: true, detail: 'Sustained TDP re-applied and verified.' },
-        { name: 'hid', restored: false, detail: 'No controller backend yet — nothing to restore.' },
+        {
+          name: 'hid',
+          restored: true,
+          detail:
+            'The controller came back on its own — 7 device node(s), none reporting a fault. ' +
+            'Nothing was restarted.',
+        },
       ],
       anyRestored: true,
     }

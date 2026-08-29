@@ -403,9 +403,15 @@ issue list colored by severity otherwise.
 - `POST /standby/restore → StandbyRestoreOutcome` — `{ at, steps: [{ name, restored, detail }], anyRestored }`.
   Re-applies fan then TDP (that order: the EC comes back from a suspend uninitialised, and writing
   power limits against an uninitialised EC is how the Win 4 ends up hot and silent). Each step
-  reports whether it *actually* happened and why not. HID re-enumeration has no backend and always
-  reports `restored: false` with the reason rather than being omitted. The daemon already does this
-  automatically on resume (`ResumeRestoreWorker`); this endpoint triggers it on demand.
+  reports whether it *actually* happened and why not. The daemon already does this automatically on
+  resume (`ResumeRestoreWorker`); this endpoint triggers it on demand.
+  - The `hid` step re-enumerates the controller, but **only when Windows reports a node as faulted**
+    (`ConfigManagerErrorCode != 0`). A pad that survived the suspend is left alone and the step still
+    reports `restored: true`, because doing nothing was the correct outcome — restarting a working
+    controller mid-game would be worse than the fault being repaired. When it does act it restarts
+    the USB composite parent (one action re-enumerates all seven nodes the pad presents), then
+    re-reads the device: `pnputil` exits cleanly for a restart that changed nothing, so success is
+    verified rather than inferred.
 
 #### `sleepStudy` — `powercfg /sleepstudy` findings
 `{ measuredAt, sessions: number, findings: [{ kind, at, detail }] }`, sampled by a background worker
