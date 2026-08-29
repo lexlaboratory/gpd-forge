@@ -53,9 +53,21 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [x] **Editable per-mode TDP presets** + **fan preference** + **live brightness** (WMI) wired end-to-end.
 
 ## Phase 2 — Standby Doctor
-- [ ] Restore TDP + fan + HID on resume event
+- [~] **Restore TDP + fan on resume event — now automatic** (`ResumeRestoreWorker`). The restore
+      logic had shipped with the Standby Doctor, but the only thing that ever called it was a human
+      pressing a button, which is the wrong shape: the EC comes back from a suspend uninitialised
+      whether or not the panel is open. The resume is detected from clock divergence rather than
+      `WM_POWERBROADCAST` — `QueryUnbiasedInterruptTime` does not advance while suspended, so wall
+      delta minus unbiased delta is time spent asleep, and a Windows Service has no message pump to
+      receive a power broadcast without hosting a hidden window for it. Polls every 5 s: the drain
+      sampler's 1-minute tick is right for a drain figure and far too slow to stop a wake running hot
+      and silent against an uninitialised EC. Unit-tested against a simulated suspend.
+      **HID re-enumeration still has no backend** and is reported as `restored: false` with the
+      reason, not quietly omitted.
 - [ ] Fingerprint toggle / S0↔S3 helper
-- [ ] `powercfg sleepstudy` + `/requests` integration and drain diagnostics
+- [~] `powercfg` integration — `/requests` (sleep blockers) and `/lastwake` are parsed and surfaced,
+      and the overnight drain is **measured** from two real battery readings separated by an observed
+      suspend, never extrapolated. `sleepstudy` (the HTML report) is still not parsed.
 
 ## Phase 3 — Agents / AI (local) mode
 - [ ] VRAM/UMA reassignment preset

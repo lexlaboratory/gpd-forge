@@ -303,8 +303,16 @@ builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 // Standby Doctor: powercfg diagnostics plus a MEASURED overnight drain. The sampler runs
 // continuously because a drain figure needs a battery reading from *before* the suspend — there is
 // no way to reconstruct one afterwards.
+// Registered rather than left to the constructor default: both the drain sampler and the resume
+// worker need the same sleep-excluding clock, and an unregistered interface here would leave them
+// silently depending on the DI container honouring optional parameters.
+builder.Services.AddSingleton<IUnbiasedClock, Win32UnbiasedClock>();
 builder.Services.AddSingleton<IStandbyService, StandbyService>();
 builder.Services.AddHostedService<StandbyDrainWorker>();
+// ...and the restore that used to wait for someone to press a button. The EC comes back from a
+// suspend uninitialized whether or not the panel is open, so the resume is detected and repaired
+// without a human: see core/Standby/ResumeRestoreWorker.cs.
+builder.Services.AddHostedService<ResumeRestoreWorker>();
 builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<TelemetryHistory>();
 

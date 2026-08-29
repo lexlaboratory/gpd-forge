@@ -5,6 +5,34 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Waking the machine now restores the fan and the power limits by itself.** `RestoreAsync` has
+  existed since the Standby Doctor landed and the only thing that ever called it was a human pressing
+  a button on the Standby panel — the wrong shape for the failure it prevents, since the EC comes back
+  from a suspend uninitialised whether or not anyone is looking, and re-applying power limits against
+  an uninitialised EC is how the Win 4 ends up hot and silent. A resume is now detected and repaired
+  without a human (`core/Standby/ResumeRestoreWorker.cs`).
+
+  The resume is detected from clock divergence, not from `WM_POWERBROADCAST`: a Windows Service has
+  no message pump, and receiving a power broadcast would mean hosting a hidden window purely to be
+  told something two clock reads already prove. `QueryUnbiasedInterruptTime` does not advance while
+  the system is suspended — including S0ix, where `TickCount64` keeps counting — so wall-clock delta
+  minus unbiased delta is time genuinely spent asleep.
+
+  `ResumeDetector` deliberately does **not** reuse `StandbyDrainTracker`, which already computes the
+  same difference. Its gates are correct for a drain figure and wrong for a restore: it ignores
+  anything under 15 minutes, anything on the charger, and anything where the battery did not drop,
+  and the hardware needs restoring in all three of those cases. Sharing the type would have produced
+  a restore that silently skipped short sleeps and every resume on mains — so a test asserts the
+  detector takes no AC or battery input at all.
+
+  The floor is 60 s of observed sleep (Modern Standby dips in and out for seconds at a time and
+  re-initialising the EC on each would be a write storm), and the poll is 5 s rather than the drain
+  sampler's minute — the resolution that matters here is how long the machine runs uninitialised
+  after waking. HID re-enumeration still has no backend and continues to report `restored: false`
+  with the reason. If `QueryUnbiasedInterruptTime` is unavailable the worker says so once and stops
+  instead of polling forever to learn nothing; `POST /standby/restore` still works.
+
 ### Changed
 - **The UI no longer presents controls that cannot reach the hardware as if they could.** LED/RGB,
   the battery charge limit, undervolt/Curve Optimizer and the keyboard backlight all store a setting
