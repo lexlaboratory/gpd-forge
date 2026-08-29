@@ -111,11 +111,22 @@ export interface Job {
   constraints?: { requireAC?: boolean; maxTempC?: number; window?: string }
 }
 
+// Standby Doctor. Every field is nullable on purpose: this endpoint used to answer with invented
+// literals, and the replacement reports "not measured" rather than a plausible number. `blockers`
+// being empty only means anything when `diagnosticsAvailable` is true — powercfg refusing to run is
+// not the same as there being no blockers.
+export interface StandbyRestoreStep { name: string; restored: boolean; detail: string }
+export interface StandbyRestoreOutcome { at: string; steps: StandbyRestoreStep[]; anyRestored: boolean }
 export interface Standby {
-  lastDrainPctPerHour: number
-  topWakeReason: string
+  /** %/h. Null until a real suspend on battery has been observed end to end. */
+  lastDrainPctPerHour: number | null
+  lastDrainSleptHours: number | null
+  lastDrainAt: string | null
+  topWakeReason: string | null
   blockers: string[]
-  lastRestore: string[] | null
+  diagnosticsAvailable: boolean
+  diagnosticsError: string | null
+  lastRestore: StandbyRestoreOutcome | null
 }
 
 // GET /health — the daemon's identity. Exposed since the first release and never consumed by the
@@ -138,5 +149,13 @@ export type AlertCategory = 'Thermal' | 'Hardware' | 'Service' | 'Configuration'
 export interface AlertEvent {
   id: string; timestampUtc: string; severity: AlertSeverity; category: AlertCategory
   title: string; message: string; technicalData?: string | null; acknowledged: boolean; dedupeKey?: string | null
+  /** How many times this condition fired. A continuous phenomenon is one alert, not sixty rows. */
+  count?: number
+  /** `timestampUtc` is the first occurrence; this is the most recent one. */
+  lastSeenUtc?: string
 }
-export interface AlertSummary { unread: number; unreadInfo: number; unreadAviso: number; unreadCritica: number; latest: AlertEvent | null }
+export interface AlertSummary {
+  unread: number; unreadInfo: number; unreadAviso: number; unreadCritica: number; latest: AlertEvent | null
+  /** Sum of every unread alert's count — collapsing rows must not hide how insistent a fault was. */
+  unreadOccurrences?: number
+}

@@ -66,10 +66,17 @@ const state = {
     ai:      { stapmW: 25, fastW: 25, slowW: 25, tctlC: 90 },
     standby: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
   },
+  // Shape must match core/Standby/StandbyService.cs exactly. The mock diverging from the real
+  // daemon is not a theoretical risk here: an enum serialised as a number instead of a name once
+  // blanked the whole app while every E2E stayed green.
   standby: {
     lastDrainPctPerHour: 6.2,
+    lastDrainSleptHours: 7.5,
+    lastDrainAt: new Date(Date.now() - 3_600_000).toISOString(),
     topWakeReason: 'Fingerprint device (Win 4)',
     blockers: ['GPDKeyboard.exe'],
+    diagnosticsAvailable: true,
+    diagnosticsError: null,
     lastRestore: null,
   },
   // Auto-tuner: mirrors core/Tuner/TunerState.cs's shape. Unlike the real daemon (whose telemetry
@@ -299,7 +306,37 @@ const server = http.createServer(async (req, res) => {
   }
   if (method === 'GET' && path === '/alerts/summary') {
     const unread = state.alerts.filter((a) => !a.acknowledged)
-    return send(res, 200, { unread: unread.length, unreadInfo: unread.filter((a) => a.severity === 'Info').length, unreadAviso: unread.filter((a) => a.severity === 'Aviso').length, unreadCritica: unread.filter((a) => a.severity === 'Critica').length, latest: state.alerts[0] ?? null })
+    return send(res, 200, {
+      unread: unread.length,
+      unreadInfo: unread.filter((a) => a.severity === 'Info').length,
+      unreadAviso: unread.filter((a) => a.severity === 'Aviso').length,
+      unreadCritica: unread.filter((a) => a.severity === 'Critica').length,
+      // Collapsing repeats into one row must not hide how insistent a condition was.
+      unreadOccurrences: unread.reduce((n, a) => n + (a.count ?? 1), 0),
+      latest: state.alerts[0] ?? null,
+    })
+  }
+  // TEST-ONLY. Not a route the real daemon has: the mock starts with no alerts so the empty state
+  // can be asserted, and a spec that needs populated alerts seeds them here. Shape mirrors
+  // core/Alerts/AlertModels.cs, `count`/`lastSeenUtc` included — the coalescing fields exist to be
+  // shown, and a mock that omitted them would leave that display untested.
+  if (method === 'POST' && path === '/alerts/_test-seed') {
+    const body = await readBody(req)
+    const now = Date.now()
+    state.alerts = (body?.alerts ?? []).map((a, i) => ({
+      id: `seed-${i}`,
+      timestampUtc: new Date(now - (a.count ?? 1) * 60_000).toISOString(),
+      lastSeenUtc: new Date(now).toISOString(),
+      severity: a.severity ?? 'Aviso',
+      category: a.category ?? 'Thermal',
+      title: a.title ?? 'Thermal guardian',
+      message: a.message ?? 'CPU 91°C — easing to 24 W',
+      technicalData: a.technicalData ?? null,
+      acknowledged: false,
+      dedupeKey: a.dedupeKey ?? null,
+      count: a.count ?? 1,
+    }))
+    return send(res, 200, { seeded: state.alerts.length })
   }
   if (method === 'POST' && path === '/alerts/ack-all') { const n = state.alerts.filter((a) => !a.acknowledged).length; state.alerts.forEach((a) => { a.acknowledged = true }); return send(res, 200, { acknowledged: n }) }
   if (method === 'POST' && path.match(/^\/alerts\/[^/]+\/ack$/)) { const a = state.alerts.find((x) => x.id === path.split('/')[2]); if (!a || a.acknowledged) return err(res, 404, 'not_found', 'alert not found or already acknowledged'); a.acknowledged = true; return send(res, 200, { acknowledged: true, id: a.id }) }
@@ -585,10 +622,20 @@ const server = http.createServer(async (req, res) => {
 
   if (method === 'GET' && path === '/standby') return send(res, 200, state.standby)
   if (method === 'POST' && path === '/standby/restore') {
-    const restored = ['tdp', 'fan', 'hid']
+    // Per-step outcomes, like the real service: `hid` reports restored:false because no backend
+    // exists for it, rather than being quietly listed as done.
+    const outcome = {
+      at: new Date().toISOString(),
+      steps: [
+        { name: 'fan', restored: true, detail: 'Fan mode re-applied after resume.' },
+        { name: 'tdp', restored: true, detail: 'Sustained TDP re-applied and verified.' },
+        { name: 'hid', restored: false, detail: 'No controller backend yet — nothing to restore.' },
+      ],
+      anyRestored: true,
+    }
     state.tdpVerified = true
-    state.standby = { ...state.standby, lastRestore: restored }
-    return send(res, 200, { restored })
+    state.standby = { ...state.standby, lastRestore: outcome }
+    return send(res, 200, outcome)
   }
 
   // Update checker — canned "no update" (mirrors GET /update/check's honest-degrade shape; the mock

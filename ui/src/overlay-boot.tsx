@@ -3,7 +3,9 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { OverlayApp } from './Overlay'
 import { ToastProvider } from './Toast'
-import './styles.css'
+// Its own sheet, not the dashboard's: the overlay is a separate Vite entry and used to pull in the
+// whole 24 KB main stylesheet to reach about sixty lines of `.qam-*` rules.
+import './overlay.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

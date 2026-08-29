@@ -299,6 +299,11 @@ else
 builder.Services.AddSingleton<ITdpController, ClosedLoopTdpController>();
 builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
+// Standby Doctor: powercfg diagnostics plus a MEASURED overnight drain. The sampler runs
+// continuously because a drain figure needs a battery reading from *before* the suspend — there is
+// no way to reconstruct one afterwards.
+builder.Services.AddSingleton<IStandbyService, StandbyService>();
+builder.Services.AddHostedService<StandbyDrainWorker>();
 builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<TelemetryHistory>();
 
@@ -516,15 +521,16 @@ app.MapPost("/ai/vram", (VramRequest _, IVramReader vram) =>
     });
 });
 
-// Standby Doctor.
-app.MapGet("/standby", () => Results.Json(new
-{
-    lastDrainPctPerHour = 6.2,
-    topWakeReason = "Fingerprint device (Win 4)",
-    blockers = new[] { "GPDKeyboard.exe" },
-    lastRestore = (string[]?)null,
-}));
-app.MapPost("/standby/restore", () => Results.Json(new { restored = new[] { "tdp", "fan", "hid" } }));
+// Standby Doctor. Everything here is measured or null: an unreadable powercfg reports itself
+// unavailable rather than "no blockers", and a restore step that ran against a stub backend says it
+// restored nothing. This endpoint used to answer with hardcoded literals — 6.2 %/h, a fingerprint
+// wake reason, one blocker — while core/Standby/StandbyDoctor.cs sat unwired. See
+// core/Standby/StandbyService.cs.
+app.MapGet("/standby", async (IStandbyService standby, CancellationToken ct) =>
+    Results.Json(await standby.GetStatusAsync(ct)));
+
+app.MapPost("/standby/restore", async (IStandbyService standby, ModeState mode, CancellationToken ct) =>
+    Results.Json(await standby.RestoreAsync(ModeProfiles.For(mode.Active), ct)));
 
 // Editable per-mode TDP presets (like MotionAssistant profiles).
 app.MapGet("/profiles", () => Results.Json(

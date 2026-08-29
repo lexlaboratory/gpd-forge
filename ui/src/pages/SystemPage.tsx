@@ -20,13 +20,10 @@ export function SystemPage({ tele }: { tele: Telemetry | null }) {
         <p className="muted">GPD Forge yields while another controller runs: it takes over TDP only when it is the sole owner. Use the installer's <code>-Substitute</code> to stop + disable MotionAssistant / GPD Tool.</p>
       </Frame>
       <FreezerCard />
+      {/* No "not measured" caveat here any more: the daemon actually measures now, and the panel
+          reports per-field whether it has a reading. A blanket warning next to real data would be
+          its own kind of dishonesty. */}
       <StandbyPanel />
-      {/* GET /standby currently answers with hardcoded literals, so the numbers above the button are
-          not a measurement. Said here rather than in StandbyPanel, which this redesign does not own. */}
-      <p className="muted" data-testid="standby-unverified">
-        <Badge tone="warn">not measured</Badge> The drain, wake reason and blocker figures above are
-        placeholders the daemon does not yet collect. "Run resume restore" is real; the readings are not.
-      </p>
     </>
   )
 }

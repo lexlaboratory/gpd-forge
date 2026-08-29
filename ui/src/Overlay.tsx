@@ -3,13 +3,16 @@
 // A compact, gamepad-first panel meant to live in a borderless always-on-top window
 // (or a browser app-window) launched by the user's chosen Home button / hotkey. It reuses
 // the app's design system and talks to the same local daemon. Every control is a <button>
-// so D-pad focus + A-to-activate works with zero range-input fiddling.
+// so D-pad focus + A-to-activate works with zero range-input fiddling: a d-pad can reach a
+// button but cannot meaningfully drag an input[type=range], which is why TDP and brightness
+// are steppers and never sliders.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModeId, Telemetry, BatteryBudget } from './types'
 import {
   getTelemetry, getMode, setMode, setTdp, getProfiles, getFan, setFan,
   getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby,
 } from './api'
+import { Segmented, Stepper } from './components'
 import { useToast } from './Toast'
 import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
@@ -23,7 +26,9 @@ const QMODES: { id: ModeId; icon: string; label: string }[] = [
 ]
 const FAN_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive']
 const FPS_TARGETS = [{ label: 'Off', v: 0 }, { label: '30', v: 30 }, { label: '60', v: 60 }, { label: '90', v: 90 }, { label: '120', v: 120 }]
-const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi)
+
+const FAN_OPTIONS = FAN_MODES.map((f) => ({ id: f, label: f, testid: `qam-fan-${f}` }))
+const FPS_OPTIONS = FPS_TARGETS.map((t) => ({ id: String(t.v), label: t.label, testid: `qam-fps-${t.v}` }))
 
 /** Close the overlay: hide the native window if we're in Tauri, else close the browser app-window. */
 function closeOverlay() {
@@ -80,15 +85,14 @@ export function OverlayApp() {
     if (presets[m]) setTdp_(presets[m].stapmW)
     toast.push({ kind: 'info', message: `Mode: ${QMODES.find((x) => x.id === m)?.label ?? m}` })
   }
-  const nudgeTdp = async (d: number) => {
-    const next = clamp(tdp + d, 5, 40)
+  const applyTdp = async (next: number) => {
     setTdp_(next)
     try { const r = await setTdp(next); setTdp_(r.observed); setVerified(r.verified) } catch { /* ignore */ }
   }
   const pickFan = async (f: string) => { setFanS(f); try { await setFan(f) } catch { /* ignore */ } }
   const pickFps = async (v: number) => { setFpsTarget(v); try { await setAutoFps(v || 60, v > 0) } catch { /* ignore */ } }
-  const nudgeBright = async (d: number) => {
-    const next = clamp(bright + d, 0, 100); setBright(next)
+  const applyBright = async (next: number) => {
+    setBright(next)
     try { const b = await setBrightness(next); setBright(b) } catch { /* ignore */ }
   }
   const doRestore = async () => { try { await restoreStandby(); toast.push({ kind: 'success', message: 'Standby state restored' }) } catch { /* ignore */ } }
@@ -97,12 +101,26 @@ export function OverlayApp() {
   return (
     <div className="qam" ref={rootRef} data-testid="qam">
       <header className="qam-head">
-        <div className="qam-brand"><span className="qam-logo" aria-hidden>⚡</span> GPD Forge</div>
-        <div className="qam-live">
-          <span className="qam-stat">{tele ? Math.round(tele.cpuTempC) : '--'}<i>°C</i></span>
-          <span className="qam-stat">{tele ? Math.round(tele.packageW) : '--'}<i>W</i></span>
-          <span className="qam-stat">{tele ? Math.round(tele.fps) : '--'}<i>fps</i></span>
+        <div className="qam-brand">
+          <span className="qam-logo" aria-hidden>⚡</span>
+          <span>GPD Forge</span>
           <span className={`qam-dot ${tele ? 'on' : ''}`} title="live" />
+        </div>
+        {/* The live triple is the first thing a player looks at, so it gets the largest type in the
+            panel and its own bracketed frame. */}
+        <div className="qam-live">
+          <div className="qam-stat">
+            <span className="qam-stat-v">{tele ? Math.round(tele.cpuTempC) : '--'}<i>°C</i></span>
+            <span className="qam-stat-k">CPU</span>
+          </div>
+          <div className="qam-stat">
+            <span className="qam-stat-v">{tele ? Math.round(tele.packageW) : '--'}<i>W</i></span>
+            <span className="qam-stat-k">Pkg</span>
+          </div>
+          <div className="qam-stat">
+            <span className="qam-stat-v">{tele ? Math.round(tele.fps) : '--'}<i>fps</i></span>
+            <span className="qam-stat-k">Frame</span>
+          </div>
         </div>
       </header>
 
@@ -110,48 +128,43 @@ export function OverlayApp() {
         {QMODES.map((m) => (
           <button key={m.id} className={`qam-mode ${mode === m.id ? 'on' : ''}`} data-testid={`qam-mode-${m.id}`}
             onClick={() => pickMode(m.id)} title={m.label} aria-pressed={mode === m.id}>
-            <span aria-hidden>{m.icon}</span>
+            <span className="qam-mode-i" aria-hidden>{m.icon}</span>
+            <span className="qam-mode-k">{m.label}</span>
           </button>
         ))}
       </div>
 
       <div className="qam-line">
         <span className="qam-label">TDP {verified && <em className="qam-ok" data-testid="qam-verified">verified</em>}</span>
-        <div className="qam-stepper">
-          <button className="qam-step" data-testid="qam-tdp-dec" onClick={() => nudgeTdp(-1)} aria-label="TDP down">−</button>
-          <span className="qam-val" data-testid="qam-tdp">{tdp}<i>W</i></span>
-          <button className="qam-step" data-testid="qam-tdp-inc" onClick={() => nudgeTdp(1)} aria-label="TDP up">+</button>
-        </div>
+        <Stepper
+          label="TDP" value={tdp} unit="W" min={5} max={40} onChange={applyTdp}
+          testid="qam-tdp" decTestid="qam-tdp-dec" incTestid="qam-tdp-inc"
+        />
       </div>
 
       <div className="qam-line stack">
         <span className="qam-label">Fan</span>
-        <div className="qam-chips">
-          {FAN_MODES.map((f) => (
-            <button key={f} className={`qam-chip ${fan === f ? 'on' : ''}`} data-testid={`qam-fan-${f}`} onClick={() => pickFan(f)}>{f}</button>
-          ))}
-        </div>
+        <Segmented flavour="qam" label="Fan" options={FAN_OPTIONS} value={fan} onChange={pickFan} />
       </div>
 
       <div className="qam-line stack">
         <span className="qam-label">FPS cap</span>
-        <div className="qam-chips">
-          {FPS_TARGETS.map((t) => (
-            <button key={t.v} className={`qam-chip ${fpsTarget === t.v ? 'on' : ''}`} data-testid={`qam-fps-${t.v}`} onClick={() => pickFps(t.v)}>{t.label}</button>
-          ))}
-        </div>
+        <Segmented flavour="qam" label="FPS cap" options={FPS_OPTIONS} value={String(fpsTarget)}
+          onChange={(id) => pickFps(Number(id))} />
       </div>
 
       <div className="qam-line">
         <span className="qam-label">Brightness</span>
-        <div className="qam-stepper">
-          <button className="qam-step" data-testid="qam-bright-dec" onClick={() => nudgeBright(-10)} aria-label="Brightness down">−</button>
-          <span className="qam-val" data-testid="qam-bright">{bright}<i>%</i></span>
-          <button className="qam-step" data-testid="qam-bright-inc" onClick={() => nudgeBright(10)} aria-label="Brightness up">+</button>
-        </div>
+        <Stepper
+          label="Brightness" value={bright} unit="%" min={0} max={100} step={10} onChange={applyBright}
+          testid="qam-bright" decTestid="qam-bright-dec" incTestid="qam-bright-inc"
+        />
       </div>
 
-      <div className="qam-batt" data-testid="qam-budget">🔋 {fmtBudget(budget)}</div>
+      <div className="qam-batt" data-testid="qam-budget">
+        <span className="qam-label">Battery</span>
+        <span className="qam-batt-v">{fmtBudget(budget)}</span>
+      </div>
 
       <footer className="qam-foot">
         <button className="qam-action" data-testid="qam-restore" onClick={doRestore}>🩺 Restore standby</button>

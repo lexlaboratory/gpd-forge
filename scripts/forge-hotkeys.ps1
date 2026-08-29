@@ -7,6 +7,9 @@
 #
 # Defaults:  Ctrl+Alt+Up = TDP +2W   Ctrl+Alt+Down = TDP -2W   Ctrl+Alt+M = cycle mode
 #
+# Steps are relative to the daemon's real TDP (read from GET /mode + GET /profiles), re-read on the
+# first press and whenever the cached value is older than -TdpResyncSeconds.
+#
 # Test the mechanism without going resident:
 #   powershell -ExecutionPolicy Bypass -File scripts\forge-hotkeys.ps1 -SelfTest
 # Run resident (leave it running):
@@ -14,6 +17,7 @@
 param(
   [string]$Api = 'http://127.0.0.1:8787',
   [int]$TdpStep = 2,
+  [int]$TdpResyncSeconds = 10,
   [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -49,19 +53,70 @@ $ok = $form.Add(2, ($MOD_CTRL -bor $MOD_ALT), $VK_DOWN) -and $ok   # TDP down
 $ok = $form.Add(3, ($MOD_CTRL -bor $MOD_ALT), $VK_M)    -and $ok   # cycle mode
 if (-not $ok) { Write-Error "RegisterHotKey failed (a chord is already taken)."; exit 2 }
 
-if ($SelfTest) { $form.Clear(); $form.Dispose(); Write-Output "SELFTEST_OK hotkeys=3"; exit 0 }
-
-$script:tdp = 20
+$TDP_MIN = 5; $TDP_MAX = 40; $TDP_FALLBACK = 20
+$script:tdp = $null              # unknown until the daemon tells us; never assume a starting wattage
+$script:tdpAt = [datetime]::MinValue
 $modes = @('windows', 'gaming', 'ai', 'battery')
-function Post($path, $body) { try { Invoke-RestMethod "$Api$path" -Method Post -ContentType 'application/json' -Body ($body | ConvertTo-Json -Compress) -TimeoutSec 4 | Out-Null } catch {} }
+
+function Post($path, $body) { try { return Invoke-RestMethod "$Api$path" -Method Post -ContentType 'application/json' -Body ($body | ConvertTo-Json -Compress) -TimeoutSec 4 } catch { return $null } }
 function Get-Mode { try { return (Invoke-RestMethod "$Api/mode" -TimeoutSec 4).active } catch { return 'windows' } }
+
+# The daemon has no GET /tdp, but the active mode's stored preset is the wattage it last applied, so
+# mode + profiles is the authoritative answer for "what is the TDP right now".
+function Get-DaemonTdp {
+  try {
+    $active = (Invoke-RestMethod "$Api/mode" -TimeoutSec 4).active
+    if (-not $active) { return $null }
+    $w = (Invoke-RestMethod "$Api/profiles" -TimeoutSec 4).$active.stapmW
+    if ($null -eq $w) { return $null }
+    return [int]$w
+  } catch { return $null }
+}
+
+# Resolves the wattage a step should start from. The old code seeded 20 W once and never looked
+# again, so the very first Ctrl+Alt+Up jumped to 22 W regardless of the real TDP. We re-read on the
+# first press and whenever our cached value is stale, which also picks up TDP changes made in the UI
+# between presses.
+function Get-CurrentTdp {
+  $stale = ((Get-Date) - $script:tdpAt).TotalSeconds -ge $TdpResyncSeconds
+  if ($null -eq $script:tdp -or $stale) {
+    $fresh = Get-DaemonTdp
+    if ($null -ne $fresh) { $script:tdp = $fresh; $script:tdpAt = Get-Date }
+  }
+  if ($null -eq $script:tdp) { return $TDP_FALLBACK }   # daemon unreachable: last resort, not a seed
+  return [int]$script:tdp
+}
+
+function Set-Tdp($watts) {
+  $clamped = [Math]::Min($TDP_MAX, [Math]::Max($TDP_MIN, [int]$watts))
+  $r = Post '/tdp' @{ stapmW = $clamped }
+  # Trust what the hardware actually held over what we asked for, so the next step is not built on a
+  # wattage the controller refused.
+  if ($null -ne $r -and $null -ne $r.observed) { $script:tdp = [int]$r.observed } else { $script:tdp = $clamped }
+  $script:tdpAt = Get-Date
+  return $script:tdp
+}
+
+if ($SelfTest) {
+  $form.Clear(); $form.Dispose()
+  $probe = Get-CurrentTdp                       # must never throw, daemon up or down
+  $daemon = Get-DaemonTdp
+  $source = if ($null -eq $daemon) { 'fallback' } else { 'daemon' }
+  if ($probe -lt $TDP_MIN -or $probe -gt $TDP_MAX) { Write-Error "Resolved TDP $probe out of range."; exit 3 }
+  Write-Output "SELFTEST_OK hotkeys=3 tdp=$probe source=$source step=$TdpStep"
+  exit 0
+}
 
 $handler = {
   param($id)
   switch ($id) {
-    1 { $script:tdp = [Math]::Min(40, $script:tdp + $TdpStep); Post '/tdp' @{ stapmW = $script:tdp } }
-    2 { $script:tdp = [Math]::Max(5,  $script:tdp - $TdpStep); Post '/tdp' @{ stapmW = $script:tdp } }
-    3 { $cur = Get-Mode; $i = [Math]::Max(0, [Array]::IndexOf($modes, $cur)); $next = $modes[($i + 1) % $modes.Count]; Post '/mode' @{ name = $next } }
+    1 { $null = Set-Tdp ((Get-CurrentTdp) + $TdpStep) }
+    2 { $null = Set-Tdp ((Get-CurrentTdp) - $TdpStep) }
+    3 {
+      $cur = Get-Mode; $i = [Math]::Max(0, [Array]::IndexOf($modes, $cur)); $next = $modes[($i + 1) % $modes.Count]
+      $null = Post '/mode' @{ name = $next }
+      $script:tdpAt = [datetime]::MinValue   # a mode switch reapplies its own preset: our cache is void
+    }
   }
 }
 $form.add_Hit($handler)

@@ -13,6 +13,7 @@ import {
 } from './pages'
 import { Wizard, isSetupDone } from './Wizard'
 import { ErrorBoundary } from './ErrorBoundary'
+import { CommandPalette } from './CommandPalette'
 
 const NAV = [
   { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
@@ -183,6 +184,10 @@ export function App() {
           </ErrorBoundary>
         </div>
       </main>
+
+      {/* Outside the ErrorBoundary on purpose: the palette is the escape hatch when a panel has
+          failed, so it must not be able to go down with one. */}
+      <CommandPalette navigate={(p) => setPage(p as PageId)} pages={PAGE_IDS} />
 
       {showWizard && <Wizard onClose={() => setShowWizard(false)} />}
     </div>

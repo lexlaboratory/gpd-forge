@@ -12,7 +12,7 @@ import type {
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
-  DaemonHealth,
+  DaemonHealth, StandbyRestoreOutcome,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -51,7 +51,7 @@ export const getJobs = () => json<Job[]>('/jobs')
 export const createJob = (cmd: string, constraints?: Job['constraints']) =>
   json<{ id: string; status: Job['status'] }>('/jobs', post({ cmd, constraints }))
 export const getStandby = () => json<Standby>('/standby')
-export const restoreStandby = () => json<{ restored: string[] }>('/standby/restore', post())
+export const restoreStandby = () => json<StandbyRestoreOutcome>('/standby/restore', post())
 
 // --- editable TDP presets (per mode) ---
 export const getProfiles = () => json<Record<string, Preset>>('/profiles')

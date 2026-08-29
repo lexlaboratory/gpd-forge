@@ -45,7 +45,17 @@ export function AlertsPage({ onChanged }: { onChanged?: () => void }) {
               {/* Tone comes from the same normalised string as the border colour, so a severity the
                   daemon has never sent degrades to a neutral pill instead of a wrong one. */}
               <Badge tone={TONES[sev(a)] ?? 'muted'}>{sev(a) || 'unknown'}</Badge>
-              <span className="muted">{new Date(a.timestampUtc).toLocaleString()}</span>
+              {/* The daemon coalesces a continuous condition into one alert with a count. Showing
+                  it is the point: one row saying "x62" is readable, sixty identical rows were not.
+                  Optional because an older daemon omits the field entirely. */}
+              {(a.count ?? 1) > 1 && (
+                <Badge tone="muted" testid={`alert-count-${a.id}`}>&times;{a.count}</Badge>
+              )}
+              <span className="muted">
+                {/* First seen, then last — the span is what tells you if it is still happening. */}
+                {new Date(a.timestampUtc).toLocaleString()}
+                {a.lastSeenUtc && (a.count ?? 1) > 1 && ` → ${new Date(a.lastSeenUtc).toLocaleTimeString()}`}
+              </span>
             </div>
             <h3>{a.title}</h3><p>{a.message}</p>
             {a.technicalData && <details><summary>Technical details</summary><pre>{a.technicalData}</pre></details>}

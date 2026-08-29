@@ -1,6 +1,9 @@
 namespace GpdForge.Alerts;
 
-public sealed record AlertSummary(int Unread, int UnreadInfo, int UnreadAviso, int UnreadCritica, AlertEvent? Latest);
+/// <summary><see cref="Unread"/> counts distinct alerts (what the badge should show, post-coalescing);
+/// <see cref="UnreadOccurrences"/> counts how many times they actually fired, so collapsing the noise
+/// never hides how insistent a condition was.</summary>
+public sealed record AlertSummary(int Unread, int UnreadInfo, int UnreadAviso, int UnreadCritica, AlertEvent? Latest, int UnreadOccurrences = 0);
 
 public sealed class AlertService
 {
@@ -20,6 +23,7 @@ public sealed class AlertService
             unread.Count(x => x.Severity == AlertSeverity.Info),
             unread.Count(x => x.Severity == AlertSeverity.Aviso),
             unread.Count(x => x.Severity == AlertSeverity.Critica),
-            all.FirstOrDefault());
+            all.FirstOrDefault(),
+            unread.Sum(x => x.Count));
     }
 }

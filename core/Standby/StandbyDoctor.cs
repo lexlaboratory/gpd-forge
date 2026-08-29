@@ -1,8 +1,9 @@
 // GPD Forge - Standby Doctor. GPL-3.0-or-later.
 //
-// Diagnoses Modern Standby drain/wake issues (parsing powercfg output) and restores device state
-// on resume - the thing MotionAssistant / GPD Tool do not do. Parsing is pure + unit-tested; the
-// restore orchestration re-runs the (gated) hardware backends in the right order.
+// Diagnoses Modern Standby drain/wake issues by parsing powercfg output. Parsing is pure +
+// unit-tested. The resume restore that used to live here now sits in StandbyService, which is the
+// only place that knows whether the fan/TDP backends are real or stubs and can therefore report
+// honestly what a restore actually did.
 using GpdForge.Fan;
 using GpdForge.Tdp;
 
@@ -10,7 +11,12 @@ namespace GpdForge.Standby;
 
 public sealed record StandbyReport(string? LastWakeReason, IReadOnlyList<string> SleepBlockers);
 
-public sealed record RestoreResult(IReadOnlyList<string> Steps);
+/// <summary>
+/// A diagnosis plus whether it could be made at all. "powercfg said nothing" and "powercfg said
+/// there are no blockers" are opposite answers and must never collapse into the same empty list.
+/// </summary>
+public sealed record StandbyDiagnosis(
+    bool Available, string? Error, string? LastWakeReason, IReadOnlyList<string> SleepBlockers);
 
 public static class PowerCfgParser
 {
@@ -53,22 +59,44 @@ public static class PowerCfgParser
 
 public sealed class StandbyDoctor(IProcessRunner runner, ITdpController tdp, IFanController fan)
 {
+    // The restore backends moved to StandbyService; they stay on this constructor (and are exposed
+    // here) so the existing --probe-standby call shape in Program.cs keeps compiling unchanged.
+    public ITdpController Tdp { get; } = tdp;
+    public IFanController Fan { get; } = fan;
+
     public async Task<StandbyReport> DiagnoseAsync(CancellationToken ct)
     {
-        var requests = await runner.RunAsync("powercfg", "/requests", ct);
-        var lastWake = await runner.RunAsync("powercfg", "/lastwake", ct);
-        return new StandbyReport(PowerCfgParser.ParseLastWake(lastWake), PowerCfgParser.ParseRequests(requests));
+        var d = await DiagnoseDetailedAsync(ct);
+        return new StandbyReport(d.LastWakeReason, d.SleepBlockers);
     }
 
-    /// <summary>On resume the EC and SMU forget state; re-init the fan, then re-verify TDP - in that order.</summary>
-    public async Task<RestoreResult> RestoreOnResumeAsync(TdpProfile activeProfile, CancellationToken ct)
+    /// <summary>
+    /// Runs both powercfg queries and reports whether they answered. Never throws: a missing or
+    /// refusing powercfg degrades to Available=false with the reason attached.
+    /// </summary>
+    public async Task<StandbyDiagnosis> DiagnoseDetailedAsync(CancellationToken ct)
     {
-        var steps = new List<string>();
-        await fan.InitializeAsync(ct);
-        steps.Add("fan-reinit");
-        var tdpResult = await tdp.ApplyAsync(activeProfile, ct);
-        steps.Add(tdpResult.Verified ? "tdp-reapplied-verified" : "tdp-reapplied-unverified");
-        // HID restore hooks in here once the virtual-pad/device-hiding layer lands.
-        return new RestoreResult(steps);
+        string requests, lastWake;
+        try
+        {
+            requests = await runner.RunAsync("powercfg", "/requests", ct);
+            lastWake = await runner.RunAsync("powercfg", "/lastwake", ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return new StandbyDiagnosis(false, $"powercfg could not be run: {ex.Message}", null, []);
+        }
+
+        // Both queries print to stderr and leave stdout empty when they are refused (they need an
+        // elevated session). Silence is "we could not look", not "there is nothing to report".
+        if (string.IsNullOrWhiteSpace(requests) && string.IsNullOrWhiteSpace(lastWake))
+        {
+            return new StandbyDiagnosis(
+                false, "powercfg returned no output — /requests and /lastwake need an elevated session.", null, []);
+        }
+
+        return new StandbyDiagnosis(
+            true, null, PowerCfgParser.ParseLastWake(lastWake), PowerCfgParser.ParseRequests(requests));
     }
 }
