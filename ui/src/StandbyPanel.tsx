@@ -104,6 +104,65 @@ export function StandbyPanel() {
           reason="Nothing was restored — each step above says why."
         />
       )}
+
+      <SleepStudySection info={info} />
     </Frame>
+  )
+}
+
+const KIND_LABEL: Record<string, string> = {
+  'failed-resume': 'did not wake up',
+  bugcheck: 'bugcheck',
+  'worst-drain': 'worst drain',
+}
+
+/**
+ * The sleep study is the only thing here that can explain a machine that slept and never came back —
+ * the System event log routinely records no standby transition at all for exactly those nights.
+ *
+ * It deliberately renders four different things, because "we never looked", "we were not allowed to
+ * look", "we looked and all is well" and "we looked and here is what killed it" are four different
+ * answers and only the last one is a finding.
+ */
+function SleepStudySection({ info }: { info: Standby | null }) {
+  if (!info) return null
+
+  // `?? null` rather than a strict !== null test below: a daemon that predates these fields omits
+  // them entirely, and `undefined !== null` is true — which would render an error with no reason in
+  // it, inventing a failure out of an older build. An absent field means "not sampled yet".
+  const error = info.sleepStudyError ?? null
+  const study = info.sleepStudy ?? null
+  const findings = study?.findings ?? []
+
+  return (
+    <div className="standby-sleepstudy">
+      <h4>Sleep study</h4>
+
+      {error !== null ? (
+        <Unavailable testid="standby-sleepstudy-unavailable" reason={error} />
+      ) : study === null ? (
+        <p className="muted" data-testid="standby-sleepstudy-pending">
+          Not sampled yet — the daemon generates the report shortly after it starts, and then twice a
+          day.
+        </p>
+      ) : findings.length === 0 ? (
+        <p className="muted" data-testid="standby-sleepstudy-clean">
+          {study.sessions} session(s) examined, nothing to report.
+        </p>
+      ) : (
+        <ul className="job-list" data-testid="standby-sleepstudy" aria-label="Sleep study findings">
+          {findings.map((f) => (
+            <li key={`${f.kind}-${f.at}`} className="job-row">
+              <Badge tone={f.kind === 'worst-drain' ? 'muted' : 'warn'}>
+                {KIND_LABEL[f.kind] ?? f.kind}
+              </Badge>
+              <span className="muted">
+                {f.at.slice(0, 16).replace('T', ' ')} — {f.detail}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

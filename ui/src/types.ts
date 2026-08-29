@@ -127,6 +127,24 @@ export interface Standby {
   diagnosticsAvailable: boolean
   diagnosticsError: string | null
   lastRestore: StandbyRestoreOutcome | null
+  /**
+   * Findings from `powercfg /sleepstudy`, sampled on a slow cadence by the daemon — the report costs
+   * tens of seconds and ~9 MB, so it is never generated on the request path.
+   *
+   * Three states, and they must not be collapsed: `sleepStudy` null with `sleepStudyError` null
+   * means the sampler has not run yet; `sleepStudyError` set means powercfg refused (it needs an
+   * elevated session); a summary with an empty `findings` means it ran and found nothing.
+   */
+  sleepStudy: SleepStudySummary | null
+  sleepStudyError: string | null
+}
+
+export type SleepStudyKind = 'failed-resume' | 'bugcheck' | 'worst-drain'
+export interface SleepStudyFinding { kind: SleepStudyKind | string; at: string; detail: string }
+export interface SleepStudySummary {
+  measuredAt: string
+  sessions: number
+  findings: SleepStudyFinding[]
 }
 
 // GET /health — the daemon's identity. Exposed since the first release and never consumed by the

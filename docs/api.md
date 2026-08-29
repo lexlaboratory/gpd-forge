@@ -392,9 +392,41 @@ issue list colored by severity otherwise.
   sections were actually recognized and applied.
 
 ### `GET /standby`  ·  `POST /standby/restore`  (Standby Doctor)
-- `GET → { lastDrainPctPerHour: number, topWakeReason: string, blockers: string[], lastRestore: string[] | null }`
-- `POST /standby/restore → { restored: string[] }` — re-applies TDP + fan + HID state (what the daemon does
-  automatically on a resume event; this endpoint triggers it on demand).
+- `GET → { lastDrainPctPerHour, lastDrainSleptHours, lastDrainAt, topWakeReason, blockers: string[],
+  diagnosticsAvailable: boolean, diagnosticsError: string | null, lastRestore: StandbyRestoreOutcome | null,
+  sleepStudy: SleepStudySummary | null, sleepStudyError: string | null }`
+  - Every measurement is nullable and `null` means **not measured**, never zero. `blockers` being
+    empty only means anything when `diagnosticsAvailable` is `true`: powercfg refusing to run is not
+    the same as there being no blockers.
+  - `lastDrain*` comes from two real battery readings separated by an observed suspend — never
+    extrapolated, so it stays `null` until the machine has actually slept on battery.
+- `POST /standby/restore → StandbyRestoreOutcome` — `{ at, steps: [{ name, restored, detail }], anyRestored }`.
+  Re-applies fan then TDP (that order: the EC comes back from a suspend uninitialised, and writing
+  power limits against an uninitialised EC is how the Win 4 ends up hot and silent). Each step
+  reports whether it *actually* happened and why not. HID re-enumeration has no backend and always
+  reports `restored: false` with the reason rather than being omitted. The daemon already does this
+  automatically on resume (`ResumeRestoreWorker`); this endpoint triggers it on demand.
+
+#### `sleepStudy` — `powercfg /sleepstudy` findings
+`{ measuredAt, sessions: number, findings: [{ kind, at, detail }] }`, sampled by a background worker
+(shortly after start, then every 12 h) and cached. It is **never generated on the request path**: the
+report costs tens of seconds and ~9 MB.
+
+Three states that must not be collapsed by a client:
+
+| `sleepStudy` | `sleepStudyError` | meaning |
+|---|---|---|
+| `null` | `null` | the sampler has not run yet |
+| `null` | set | powercfg refused — `/sleepstudy` needs an elevated session |
+| set, `findings: []` | `null` | it ran and found nothing |
+
+`kind` is `failed-resume` (a suspend immediately followed by an abnormal shutdown — inferred from
+adjacency, which is what separates "it slept and never woke up" from "it crashed while in use"),
+`bugcheck` (carries the stop code), or `worst-drain`. Drain is only ever reported for the session
+types the report itself permits it for: subtracting the capacities of a Hibernate session yields a
+confident milliwatt figure that means nothing, because the machine is off, a zero exit capacity
+beside a zero full-charge capacity is a *missing reading* rather than an empty battery, and the
+session ends when the user presses power rather than when the machine stopped drawing.
 
 ### `GET /update/check`  (update checker)
 `200 → { current: string, latest: string | null, updateAvailable: boolean, url: string | null }` —

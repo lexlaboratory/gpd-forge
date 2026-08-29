@@ -36,6 +36,22 @@ test.describe('Mode panels', () => {
     await expect(page.getByTestId('standby-restored')).toContainText('hid')
   })
 
+  test('Standby mode surfaces the night the machine did not wake up', async ({ page }) => {
+    // The whole point of parsing the sleep study: the System event log routinely records no standby
+    // transition at all for exactly the nights that end in a hand power-cycle, so if this does not
+    // reach the panel the user has no way to see it short of a console probe.
+    await dash.pickMode('standby')
+
+    const findings = page.getByTestId('standby-sleepstudy')
+    await expect(findings).toBeVisible()
+    await expect(findings).toContainText('did not wake up')
+    await expect(findings).toContainText('0x133')
+
+    // "Not sampled yet" and "sampled, nothing found" must not be showing at the same time.
+    await expect(page.getByTestId('standby-sleepstudy-pending')).toBeHidden()
+    await expect(page.getByTestId('standby-sleepstudy-clean')).toBeHidden()
+  })
+
   test('panels are hidden in other modes', async ({ page }) => {
     await dash.pickMode('windows')
     await expect(page.getByTestId('jobs-panel')).toBeHidden()

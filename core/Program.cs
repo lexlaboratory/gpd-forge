@@ -354,6 +354,10 @@ builder.Services.AddHostedService<StandbyDrainWorker>();
 // suspend uninitialized whether or not the panel is open, so the resume is detected and repaired
 // without a human: see core/Standby/ResumeRestoreWorker.cs.
 builder.Services.AddHostedService<ResumeRestoreWorker>();
+// The sleep study is what explains a machine that slept and never came back — but it costs tens of
+// seconds and ~9 MB per run, so it is sampled on a slow cadence into a cache that GET /standby reads.
+builder.Services.AddSingleton<SleepStudyCache>();
+builder.Services.AddHostedService<SleepStudyWorker>();
 builder.Services.AddSingleton<ModeState>();
 builder.Services.AddSingleton<TelemetryHistory>();
 

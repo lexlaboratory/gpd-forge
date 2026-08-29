@@ -30,7 +30,12 @@ public sealed record StandbyStatus(
     IReadOnlyList<string> Blockers,
     bool DiagnosticsAvailable,
     string? DiagnosticsError,
-    StandbyRestoreOutcome? LastRestore);
+    StandbyRestoreOutcome? LastRestore,
+    // Three states, deliberately not two: SleepStudy null with no error means the background sampler
+    // has not run yet, which is not the same as powercfg refusing, which is not the same as a clean
+    // report with nothing in it.
+    SleepStudySummary? SleepStudy = null,
+    string? SleepStudyError = null);
 
 public interface IStandbyService
 {
@@ -53,6 +58,7 @@ public sealed class StandbyService : IStandbyService
     private readonly StandbyDrainTracker _tracker;
     private readonly IUnbiasedClock _clock;
     private readonly Func<DateTimeOffset> _now;
+    private readonly SleepStudyCache? _sleepStudy;
 
     // Whether a write would reach real silicon. The controller interfaces cannot answer this — the
     // no-hardware stubs satisfy them and even report TDP as "verified", because they echo back
@@ -72,8 +78,10 @@ public sealed class StandbyService : IStandbyService
         IProcessRunner? runner = null,
         IUnbiasedClock? clock = null,
         Func<DateTimeOffset>? now = null,
-        StandbyDrainTracker? tracker = null)
+        StandbyDrainTracker? tracker = null,
+        SleepStudyCache? sleepStudy = null)
     {
+        _sleepStudy = sleepStudy;
         _tdp = tdp;
         _fan = fan;
         _telemetry = telemetry;
@@ -92,6 +100,9 @@ public sealed class StandbyService : IStandbyService
     {
         var diagnosis = await _doctor.DiagnoseDetailedAsync(ct);
         var drain = _tracker.Last;
+        // Never generated here: the report costs tens of seconds. This is whatever SleepStudyWorker
+        // last managed to produce, or nothing at all if it has not run yet.
+        var (studyRan, study, studyError) = _sleepStudy?.Read() ?? (false, null, null);
 
         return new StandbyStatus(
             LastDrainPctPerHour: drain?.PctPerHour,
@@ -101,7 +112,9 @@ public sealed class StandbyService : IStandbyService
             Blockers: diagnosis.SleepBlockers,
             DiagnosticsAvailable: diagnosis.Available,
             DiagnosticsError: diagnosis.Error,
-            LastRestore: _lastRestore);
+            LastRestore: _lastRestore,
+            SleepStudy: study,
+            SleepStudyError: studyRan ? studyError : null);
     }
 
     public async Task SampleAsync(CancellationToken ct)

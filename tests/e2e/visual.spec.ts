@@ -221,6 +221,23 @@ const FIXTURES: Record<string, unknown> = {
     lastDrainPctPerHour: 6.2, lastDrainSleptHours: 7.5, lastDrainAt: '2026-08-28T01:45:00.000Z',
     topWakeReason: 'Fingerprint device (Win 4)', blockers: ['GPDKeyboard.exe'],
     diagnosticsAvailable: true, diagnosticsError: null, lastRestore: null,
+    // Fixed timestamps: these end up rendered in the baseline, so anything derived from "now" would
+    // make every snapshot differ from the last one.
+    sleepStudy: {
+      measuredAt: '2026-08-29T09:00:00.000Z',
+      sessions: 120,
+      findings: [
+        {
+          kind: 'failed-resume',
+          at: '2026-08-29T03:45:14.000Z',
+          detail:
+            'Hibernate lasting 5.0 h — the next thing the machine did was an abnormal shutdown, ' +
+            'so it did not come back on its own.',
+        },
+        { kind: 'bugcheck', at: '2026-08-28T07:38:16.000Z', detail: 'Bugcheck, stop code 0x133.' },
+      ],
+    },
+    sleepStudyError: null,
   },
   '/update/check': { current: '0.1.0', latest: null, updateAvailable: false, url: null },
   '/tuner': {

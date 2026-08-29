@@ -167,6 +167,27 @@ const state = {
     diagnosticsAvailable: true,
     diagnosticsError: null,
     lastRestore: null,
+    // The findings the real daemon's SleepStudyWorker caches. Modelled on what the reference Win 4
+    // actually produced: a hibernation it never came back from, and a DPC watchdog bugcheck.
+    sleepStudy: {
+      measuredAt: new Date(Date.now() - 1_800_000).toISOString(),
+      sessions: 120,
+      findings: [
+        {
+          kind: 'failed-resume',
+          at: new Date(Date.now() - 21_600_000).toISOString(),
+          detail:
+            'Hibernate lasting 5.0 h — the next thing the machine did was an abnormal shutdown, ' +
+            'so it did not come back on its own.',
+        },
+        {
+          kind: 'bugcheck',
+          at: new Date(Date.now() - 172_800_000).toISOString(),
+          detail: 'Bugcheck, stop code 0x133.',
+        },
+      ],
+    },
+    sleepStudyError: null,
   },
   // Auto-tuner: mirrors core/Tuner/TunerState.cs's shape. Unlike the real daemon (whose telemetry
   // has no FPS source yet — see the honesty note in docs/api.md), the mock simulates a small FPS

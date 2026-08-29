@@ -6,6 +6,29 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **The sleep study findings now reach the panel.** Parsing them was only half the job: until now the
+  only way to see that the machine had hibernated and never come back was `--probe-sleepstudy` from a
+  console, which is not where anyone looks after power-cycling a handheld by hand. `GET /standby`
+  gains `sleepStudy` + `sleepStudyError`, and the Standby Doctor panel renders failed resumes,
+  bugcheck stop codes and the worst measurable drain.
+
+  The report is **never generated on the request path** — it costs tens of seconds and ~9 MB.
+  `SleepStudyWorker` samples it two minutes after start (not at start: the daemon comes up with the
+  machine, and generating a sleep study while Windows is still starting services would compete with
+  the boot it exists to observe) and then every 12 h, into a cache the endpoint reads.
+
+  The wire format carries three states that clients must not collapse: `sleepStudy` and
+  `sleepStudyError` both null means the sampler has not run yet; an error means powercfg refused (it
+  needs elevation); a summary with no findings means it ran and found nothing. Treating a refusal as
+  a clean report would tell the user their machine is healthy on no evidence at all.
+
+### Fixed
+- **An absent `sleepStudy` field rendered as a failure with no reason.** The panel tested
+  `sleepStudyError !== null`, and a daemon predating these fields omits them entirely — `undefined
+  !== null` is true, so an older build produced an empty "unavailable" badge instead of "not sampled
+  yet". Caught by the visual baseline, not by the DOM assertions: the E2E asserting on findings
+  passed the whole time, because it ran against the mock daemon while the visual spec's own stub
+  still had the old shape.
 - **`powercfg /sleepstudy` is parsed, so the Standby Doctor can finally explain a machine that went
   to sleep and never came back** (`core/Standby/SleepStudy.cs`). On the reference Win 4 the System
   event log had recorded *no* standby transition at all for the night in question, while the sleep
