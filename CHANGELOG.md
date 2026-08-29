@@ -5,6 +5,29 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **The AI mode's sustained power shaping is now enforced instead of merely calculated.**
+  `ProfileShaper` collapses fast/slow boost onto one flat ceiling for a good reason — boost above
+  sustained STAPM buys no throughput once a workload is continuously CPU-bound, it only adds heat,
+  fan noise and thermal cycling. It had existed, been unit-tested, and been called from exactly one
+  place: `GET /ai`, where its result was rendered and thrown away. The profile that actually reached
+  the silicon came straight from the preset map.
+
+  Nothing looked wrong, because the default AI preset is written flat by hand. But nothing was
+  *keeping* it flat: `ModeProfiles.Set` clamped ranges without flattening, so a single
+  `POST /profiles/ai` put the boost headroom back and the shaper was not in the path to stop it.
+
+  Shaping now lives in `ModeProfiles.For`/`Set` — the point where all six callers converge — so the
+  guarantee covers the mode switch, the auto-profile worker, the standby restore and the resume
+  worker at once, rather than one call site. It flattens on the way in as well as out, so
+  `GET /profiles` cannot report a boost that will never be applied. The user still sets the sustained
+  ceiling; only the headroom above it is removed, and `POST` answers with `sustained: true` so a
+  client can say why the numbers came back changed.
+
+  The Power page no longer renders fast/slow sliders for this mode. Two controls a user can drag
+  that change nothing are worse than their absence, so they are replaced by a sentence explaining
+  the trade — and the sliders re-seed from the daemon's reply rather than from what was posted.
+
 ### Fixed
 - **A Smart App Control block on the service DLL uninstalled the daemon instead of failing the
   publish.** SAC judges each unsigned binary individually and inconsistently — on 2026-08-29 the same

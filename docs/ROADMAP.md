@@ -80,7 +80,17 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 
 ## Phase 3 — Agents / AI (local) mode
 - [ ] VRAM/UMA reassignment preset
-- [ ] Sustained-CPU power shaping + "sustained" fan curve
+- [x] **Sustained-CPU power shaping — now enforced, not just computed.** `ProfileShaper` had existed
+      and been unit-tested while being called from exactly one place (`GET /ai`), where its result was
+      displayed and discarded; the applied profile came straight from the preset map. The default AI
+      preset happened to be flat, so nothing looked wrong — but `ModeProfiles.Set` clamped ranges
+      without flattening, so one POST to `/profiles/ai` put the boost headroom back. Shaping now lives
+      in `ModeProfiles.For`/`Set`, which is where all six callers converge, so the guarantee holds for
+      the mode switch, the auto-profile worker, the standby restore and the resume worker alike.
+      The Power page drops the fast/slow sliders for this mode rather than offering two controls that
+      change nothing.
+- [ ] "Sustained" fan curve — **blocked** by the Phase 1 driver decision (2026-08-25): no fan writes
+      until a PawnIO-capable LibreHardwareMonitor ships stable. Not independently actionable.
 - [ ] Anti-Modern-Standby during inference (SetThreadExecutionState / power request)
 - [x] Job queue + local API endpoints for external agents (`/jobs` with requireAC/maxTempC/window)
 - [x] **MCP server exposing telemetry/control** — `mcp/server.mjs`, zero-dep stdio MCP with 15 tools

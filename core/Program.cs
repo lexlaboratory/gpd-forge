@@ -575,8 +575,9 @@ app.MapPost("/jobs", async (JobRequest req, JobsState j, ITelemetryService t, Ca
 // Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.
 app.MapGet("/ai", (AntiStandbyService anti, IVramReader vram, AiState ai) =>
 {
-    var preset = ModeProfiles.For("ai") ?? new TdpProfile(25, 25, 25, 90);
-    var shaped = ProfileShaper.Shape(preset.StapmW, preset.TctlC);
+    // One source of truth: ModeProfiles.For already shapes the sustained mode, so this reports the
+    // profile that actually gets applied rather than recomputing a parallel one for display.
+    var shaped = ModeProfiles.For(ModeProfiles.SustainedMode) ?? ProfileShaper.Shape(25, 90);
     var v = vram.Read();
     return Results.Json(new
     {
@@ -624,7 +625,13 @@ app.MapGet("/profiles", () => Results.Json(
 app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
 {
     var s = ModeProfiles.Set(mode, new GpdForge.Tdp.TdpProfile(e.StapmW, e.FastW, e.SlowW, e.TctlC));
-    return Results.Json(new { mode, stapmW = s.StapmW, fastW = s.FastW, slowW = s.SlowW, tctlC = s.TctlC });
+    // `sustained` tells the client WHY the boost figures it posted came back equal to STAPM, instead
+    // of leaving it to guess that its edit was ignored.
+    return Results.Json(new
+    {
+        mode, stapmW = s.StapmW, fastW = s.FastW, slowW = s.SlowW, tctlC = s.TctlC,
+        sustained = mode == ModeProfiles.SustainedMode,
+    });
 });
 
 // Per-app profile rules: "while this process is in the foreground, run in this mode", in precedence

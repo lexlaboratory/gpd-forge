@@ -587,8 +587,15 @@ const server = http.createServer(async (req, res) => {
     const mode = path.slice('/profiles/'.length)
     const body = await readBody(req)
     if (!body) return err(res, 400, 'bad', 'json')
-    state.presets[mode] = { stapmW: body.stapmW, fastW: body.fastW, slowW: body.slowW, tctlC: body.tctlC }
-    return send(res, 200, { mode, ...state.presets[mode] })
+    // The AI mode is a sustained ceiling, not a burst budget: the daemon collapses fast/slow onto
+    // STAPM on the way in, so what /profiles reports is what actually reaches the silicon. Mirrored
+    // here because a mock that accepts boost the real daemon discards would let the UI ship a field
+    // that silently does nothing. See core/Profiles/ModeProfiles.cs.
+    const sustained = mode === 'ai'
+    state.presets[mode] = sustained
+      ? { stapmW: body.stapmW, fastW: body.stapmW, slowW: body.stapmW, tctlC: body.tctlC }
+      : { stapmW: body.stapmW, fastW: body.fastW, slowW: body.slowW, tctlC: body.tctlC }
+    return send(res, 200, { mode, ...state.presets[mode], sustained })
   }
   // --- per-app profile rules -----------------------------------------------------------------
   // Prefix is /app-rules, NOT /profiles/rules: POST /profiles/:mode above already owns that space.

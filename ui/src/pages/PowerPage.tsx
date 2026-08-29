@@ -22,8 +22,22 @@ export function PowerPage() {
   }, [])
   useEffect(() => { setDraft(presets[mode] ?? null); setSaved(false) }, [mode, presets])
 
+  // Mirrors ModeProfiles.SustainedMode in the daemon: the mode whose profile is a flat ceiling
+  // rather than a burst budget, so fast/slow are not the user's to set.
+  const isSustained = mode === 'ai'
+
   const edit = (k: keyof Preset, v: number) => draft && setDraft({ ...draft, [k]: v })
-  const apply = () => { if (draft) setProfile(mode, draft).then(() => { setSaved(true); toast.push({ kind: 'success', message: `${PRESET_LABEL[mode] ?? mode} preset saved` }) }).catch(() => {}) }
+  const apply = () => {
+    if (!draft) return
+    // Re-seed the draft from the daemon's reply rather than from what was posted: the sustained mode
+    // collapses fast/slow onto STAPM, and showing the numbers we sent would leave the sliders lying
+    // about what is on the silicon.
+    setProfile(mode, draft).then((stored) => {
+      setDraft({ stapmW: stored.stapmW, fastW: stored.fastW, slowW: stored.slowW, tctlC: stored.tctlC })
+      setSaved(true)
+      toast.push({ kind: 'success', message: `${PRESET_LABEL[mode] ?? mode} preset saved` })
+    }).catch(() => {})
+  }
   const toggleFps = () => { const en = !afps.enabled; setAfps((s) => ({ ...s, enabled: en })); setAutoFps(afps.targetFps, en).then(setAfps).catch(() => {}) }
   const commitFps = (v: number) => { void setAutoFps(v, afps.enabled).then(setAfps).catch(() => {}) }
 
@@ -38,12 +52,28 @@ export function PowerPage() {
           options={Object.keys(presets).map((k) => ({ id: k, label: PRESET_LABEL[k] ?? k, testid: `preset-${k}` }))}
         />
         {draft ? (
-          <div className="grid2">
-            <Slider label="STAPM (sustained)" testid="p-stapm" value={draft.stapmW} min={5} max={40} unit=" W" onChange={(v) => edit('stapmW', v)} />
-            <Slider label="Fast (boost)"       testid="p-fast"  value={draft.fastW}  min={5} max={45} unit=" W" onChange={(v) => edit('fastW', v)} />
-            <Slider label="Slow"               testid="p-slow"  value={draft.slowW}  min={5} max={45} unit=" W" onChange={(v) => edit('slowW', v)} />
-            <Slider label="Thermal limit"      testid="p-tctl"  value={draft.tctlC}  min={60} max={95} unit=" °C" onChange={(v) => edit('tctlC', v)} />
-          </div>
+          <>
+            <div className="grid2">
+              <Slider label="STAPM (sustained)" testid="p-stapm" value={draft.stapmW} min={5} max={40} unit=" W" onChange={(v) => edit('stapmW', v)} />
+              {!isSustained && (
+                <>
+                  <Slider label="Fast (boost)" testid="p-fast" value={draft.fastW} min={5} max={45} unit=" W" onChange={(v) => edit('fastW', v)} />
+                  <Slider label="Slow"         testid="p-slow" value={draft.slowW} min={5} max={45} unit=" W" onChange={(v) => edit('slowW', v)} />
+                </>
+              )}
+              <Slider label="Thermal limit" testid="p-tctl" value={draft.tctlC} min={60} max={95} unit=" °C" onChange={(v) => edit('tctlC', v)} />
+            </div>
+            {isSustained && (
+              // Not rendered as disabled sliders: a control you can see and cannot move invites the
+              // question this sentence answers, and the daemon would discard the value anyway.
+              <p className="muted" data-testid="preset-sustained-note">
+                No boost sliders here on purpose. This mode runs at one flat ceiling —
+                fast and slow are pinned to STAPM ({draft.stapmW} W). Boosting above the sustained
+                limit buys no throughput once a job is continuously CPU-bound; it only adds heat,
+                fan noise and thermal cycling.
+              </p>
+            )}
+          </>
         ) : <p className="muted">Loading presets…</p>}
         <div className="row-end">
           {saved && <Badge tone="ok" testid="preset-saved">saved</Badge>}

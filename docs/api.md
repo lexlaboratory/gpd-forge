@@ -391,6 +391,17 @@ issue list colored by severity otherwise.
   `ModeProfiles.Set`, `guardian` merges partially like `POST /guardian`). `applied` lists which
   sections were actually recognized and applied.
 
+### `GET /profiles` · `POST /profiles/{mode}`  (per-mode TDP presets)
+- `GET → { [mode]: { stapmW, fastW, slowW, tctlC } }`
+- `POST /profiles/{mode} { stapmW, fastW, slowW, tctlC } → { mode, stapmW, fastW, slowW, tctlC, sustained }`
+  - Values are clamped to the device's safe band rather than rejected.
+  - **The `ai` mode is a sustained ceiling, not a burst budget.** `fastW` and `slowW` are collapsed
+    onto `stapmW` on the way in, so what `GET /profiles` reports is what actually reaches the
+    silicon — boost above the sustained limit buys no throughput once a job is continuously
+    CPU-bound, it only adds heat, fan noise and thermal cycling. `sustained: true` on the response
+    tells a client *why* the boost figures it posted came back equal to STAPM, instead of leaving it
+    to guess its edit was ignored. The user still sets the ceiling; only the headroom is removed.
+
 ### `GET /standby`  ·  `POST /standby/restore`  (Standby Doctor)
 - `GET → { lastDrainPctPerHour, lastDrainSleptHours, lastDrainAt, topWakeReason, blockers: string[],
   diagnosticsAvailable: boolean, diagnosticsError: string | null, lastRestore: StandbyRestoreOutcome | null,
