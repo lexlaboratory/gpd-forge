@@ -80,6 +80,68 @@ dotnet publish "$RepoDir\core\GpdForge.Service.csproj" -c Release -o "$InstallDi
 $dll = "$InstallDir\service\GpdForge.Service.dll"
 if (-not (Test-Path $dll)) { Write-Host "Publish failed (need the .NET 9 SDK)." -ForegroundColor Red; return }
 
+# Smart App Control judges each unsigned binary individually, by content, and inconsistently: on
+# 2026-08-29 the same source produced a build it allowed at 14:39 and one it blocked at 15:19. A
+# blocked service DLL does not fail the publish - it fails `Start-Service` six steps later, with an
+# error that says nothing about the cause, and by then the previous WORKING binary is already gone.
+#
+# scripts/update-shell.ps1 has verified the shell this way since it existed; the service had no such
+# guard, and this is the failure it was missing. Because the build is deterministic, a plain retry
+# reproduces the identical hash and the identical verdict - so the retry must change the hash, which
+# -p:Deterministic=false does without touching the code or the version.
+#
+# Start-Process rather than `& dotnet ... 2>&1`: in Windows PowerShell 5.1 redirecting a native
+# executable's stderr into the pipeline wraps each line in a NativeCommandError, which this script's
+# ErrorActionPreference = 'Stop' turns into a terminating error. The probe FAILING is the signal we
+# are testing for, so it must not abort the installer.
+#
+# Only 0x800711C7 counts as blocked. A non-zero exit for any other reason still means the assembly
+# LOADED, and rebuilding over that would hide a real fault behind a pointless retry.
+#
+# The check is retried because Smart App Control's verdict on a freshly written binary is a cloud
+# lookup: the same file can be refused on the first load and accepted seconds later.
+function Test-AssemblyBlocked([string]$Path) {
+    # Absolute path, not 'dotnet': Start-Process does not resolve a bare command name through PATH
+    # the way the call operator does. Getting this wrong made the check silently pass a blocked
+    # binary, because "could not run the test" looked exactly like "the test succeeded".
+    $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source
+    if (-not $dotnet) { $dotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe' }
+    if (-not (Test-Path $dotnet)) { throw "cannot find dotnet.exe to verify the published service" }
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $out = Join-Path $env:TEMP "gpdforge-loadtest-$([guid]::NewGuid().ToString('N')).log"
+        try {
+            $p = Start-Process -FilePath $dotnet -ArgumentList @("`"$Path`"", '--probe-standby') `
+                -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError "$out.err"
+            if ($p.ExitCode -eq 0) { return $false }
+            $text = ''
+            foreach ($f in @($out, "$out.err")) {
+                if (Test-Path $f) { $text += (Get-Content $f -Raw -ErrorAction SilentlyContinue) }
+            }
+            if ($text -notmatch '0x800711C7') { return $false }   # loaded; failed for another reason
+        } finally {
+            Remove-Item $out, "$out.err" -Force -ErrorAction SilentlyContinue
+        }
+        # Smart App Control's verdict on a freshly written binary is a cloud lookup; the same file
+        # can be refused on the first load and accepted seconds later.
+        if ($attempt -lt 3) { Start-Sleep -Seconds 3 }
+    }
+    return $true
+}
+
+if (Test-AssemblyBlocked $dll) {
+    Write-Host "  the published service was blocked by Smart App Control; rebuilding for a new hash..." -ForegroundColor Yellow
+    dotnet publish "$RepoDir\core\GpdForge.Service.csproj" -c Release -p:Deterministic=false `
+        -o "$InstallDir\service" --nologo
+    if (Test-AssemblyBlocked $dll) {
+        Write-Host "The published service still cannot load (Smart App Control)." -ForegroundColor Red
+        Write-Host "The service is NOT installed. Signing it (docs/signing.md) is the durable fix;" -ForegroundColor Red
+        Write-Host "re-running this installer may also succeed, since each build is judged afresh." -ForegroundColor Red
+        return
+    }
+    Write-Host "  rebuilt binary loads." -ForegroundColor Green
+}
+
 # --- 2) build the web UI and let the service serve it (wwwroot) ---
 # The bundle is origin-agnostic on purpose: ui/src/api.ts detects the Tauri shell at runtime
 # (origin http://tauri.localhost) and targets the daemon absolutely, while the browser served

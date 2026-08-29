@@ -5,6 +5,27 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **A Smart App Control block on the service DLL uninstalled the daemon instead of failing the
+  publish.** SAC judges each unsigned binary individually and inconsistently — on 2026-08-29 the same
+  source produced a build it allowed and, minutes later, one it refused. A refused *service* binary
+  does not fail `dotnet publish`; it fails `Start-Service` six steps later with an error naming no
+  cause, and by then step 1 has already unregistered the service and overwritten the binary that
+  worked. `update-shell.ps1` has verified the shell this way since it existed; the service had no
+  such guard, which is precisely the failure that hit.
+
+  `install-gpd-forge.ps1` now loads the published assembly before continuing, and on a block rebuilds
+  with `-p:Deterministic=false` — a plain retry is useless, because a deterministic build reproduces
+  the identical hash and therefore the identical verdict. Three details the first two attempts at this
+  guard got wrong, each of which made it silently useless:
+  - `Start-Process -FilePath 'dotnet'` does not resolve a bare command name through `PATH` the way the
+    call operator does. The launch failed, the failure was caught, and "could not run the test" was
+    indistinguishable from "the test passed" — so a blocked binary sailed through.
+  - Only `0x800711C7` counts as blocked. Any other non-zero exit means the assembly *loaded* and
+    failed for an unrelated reason, and rebuilding over that would hide a real fault behind a retry.
+  - The check is retried: SAC's verdict on a freshly written binary is a cloud lookup, and the same
+    file can be refused on one load and accepted seconds later.
+
 ### Added
 - **The resume restore's last empty step now does something.** `hid` has reported
   `restored: false — no backend yet` since the Standby Doctor shipped; it now re-enumerates the
