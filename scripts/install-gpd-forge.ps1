@@ -211,10 +211,39 @@ if ($Uninstall) {
 # --- 1) publish the service ---
 Write-Host "== 1/7  Publishing the core service ==" -ForegroundColor Cyan
 Remove-ForgeService
+# The GPU agent runs the SAME assembly as the service, so a running agent holds
+# GpdForge.Service.dll open and Windows refuses to overwrite it. dotnet publish then fails
+# quietly, the old dll stays, and the installer used to sail on and report success.
+# Stopping the service is not enough — this process is the other holder of that file.
+foreach ($proc in Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue) {
+    if ($proc.CommandLine -like "*--gpu-agent*") {
+        Write-Host "  stopping the GPU agent (pid $($proc.ProcessId)) - it holds the service dll" -ForegroundColor DarkGray
+        try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop } catch { }
+    }
+}
+Start-Sleep -Milliseconds 700
 New-Item -ItemType Directory -Force -Path "$InstallDir\service" | Out-Null
-dotnet publish "$RepoDir\core\GpdForge.Service.csproj" -c Release -o "$InstallDir\service" --nologo
 $dll = "$InstallDir\service\GpdForge.Service.dll"
+# Stamped BEFORE publishing so "did the file change?" is answerable afterwards. A publish that
+# silently fails leaves the PREVIOUS dll in place, and a Test-Path check happily passes on it.
+# That happened on 2026-08-30: the installer reported success while the service kept running a
+# binary from an earlier install, so a crash that had already been FIXED in source kept
+# happening, and the fix looked like it had not worked. Existence is not freshness — the same
+# lesson the shell step learned separately, in the same afternoon.
+$dllBefore = if (Test-Path $dll) { (Get-Item $dll).LastWriteTimeUtc } else { [DateTime]::MinValue }
+
+dotnet publish "$RepoDir\core\GpdForge.Service.csproj" -c Release -o "$InstallDir\service" --nologo
+
 if (-not (Test-Path $dll)) { Write-Host "Publish failed (need the .NET 9 SDK)." -ForegroundColor Red; return }
+if ((Get-Item $dll).LastWriteTimeUtc -le $dllBefore) {
+    Write-Host "Publish did NOT replace $dll - it still dates from $dllBefore (UTC)." -ForegroundColor Red
+    Write-Host "Refusing to continue: the service would keep running the previous build while this" -ForegroundColor Red
+    Write-Host "installer reported success. Usual cause: the file is locked by a running process." -ForegroundColor Red
+    Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*GpdForge.Service.dll*" } |
+        ForEach-Object { Write-Host "  still running: pid $($_.ProcessId)" -ForegroundColor Yellow }
+    return
+}
 
 # Smart App Control judges each unsigned binary individually, by content, and inconsistently: on
 # 2026-08-29 the same source produced a build it allowed at 14:39 and one it blocked at 15:19. A
