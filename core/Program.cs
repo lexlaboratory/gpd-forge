@@ -52,6 +52,29 @@ if (args.Contains("--probe-gpu"))
     {
         var services = adlx.Get3DSettingsServices();
         Console.WriteLine($"  3D settings services  : {(services == IntPtr.Zero ? "NOT reachable" : "reachable")}");
+
+        // Read-only pass over the 3D settings. Prints what the driver reports right now; writes
+        // nothing. "unreadable" is distinct from "unsupported" on purpose — the first means the call
+        // did not answer, the second means this GPU cannot do it.
+        var settings = new AdlxSettings(adlx.System);
+        var snap = settings.Read();
+        static string Describe(GpuFeatureState? f) => f is null
+            ? "unreadable"
+            : !f.Supported ? "unsupported"
+            : f.Value is int v ? $"{(f.Enabled ? "on" : "off")} (value {v})"
+            : f.Enabled ? "on" : "off";
+
+        Console.WriteLine($"  anti-lag              : {Describe(snap.AntiLag)}");
+        Console.WriteLine($"  chill                 : {Describe(snap.Chill)}");
+        Console.WriteLine($"  boost                 : {Describe(snap.Boost)}");
+        Console.WriteLine($"  image sharpening      : {Describe(snap.ImageSharpening)}");
+        Console.WriteLine($"  frame rate cap (FRTC) : {Describe(snap.FrameRateTargetControl)}");
+
+        if (snap.AntiLag is null)
+        {
+            Console.WriteLine("  -- diagnosis (the acquire chain, step by step) --");
+            foreach (var step in settings.Diagnose()) Console.WriteLine($"     {step}");
+        }
     }
     return;
 }
