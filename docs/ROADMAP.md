@@ -145,14 +145,27 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [x] **Applied automatically per app** — the profile hangs off the MODE, so the existing per-app rules
       and their hysteresis drive it, and every path that sets a mode applies it. No second matching
       system.
-- 🔴 **BLOCKED on device: ADLX does not work from the Windows service.** Measured 2026-08-29: the
-      identical build initialises ADLX from an interactive user session and fails under the service
-      with `ADLXInitialize did not return a system interface`. The service runs as LocalSystem in
-      **session 0**, and ADLX needs the display driver stack of an interactive session. So the code is
-      correct and the endpoint honestly reports `available:false` — but the feature cannot actually
-      drive the GPU until the ADLX calls live in a **helper process in the user's session**, commanded
-      by the daemon. The tray/overlay already establishes that there is a user-session component to
-      host it. **Next step, and a design decision.**
+- [x] **Unblocked: the ADLX calls run in a user-session agent.** ADLX cannot be reached from the
+      daemon — it is LocalSystem in **session 0**, and ADLX needs the display driver stack of an
+      interactive session (identical code initialises fine as a user and fails as a service). The
+      calls therefore live in `--gpu-agent`, the **same assembly** started in the user's session, so
+      no new unsigned binary is introduced for Smart App Control to refuse. The daemon holds only what
+      the agent reports, and says so: reports carry the agent's read time, anything older than 30 s is
+      returned but marked unusable, and "no agent has reported yet" is a distinct status from "the
+      agent says ADLX is unavailable".
+      **Verified end to end on device 2026-08-30:** ADLX 1.5.0.124, `available:true`, and in `battery`
+      mode Chill reads enabled at 60 — which is exactly what the battery profile applies.
+      ⚠️ The daemon must never hold an ADLX handle. It briefly did, and a second handle's
+      `ADLXTerminate` invalidated the first one's pointers, crashing the service with an access
+      violation. **An `AccessViolationException` is not catchable in .NET** — the `try/catch` around
+      those interop calls reads like containment and provides none. The only containment is not making
+      the call from there.
+
+### Desktop shell
+- [x] **Closing the window hides it to the tray** rather than exiting, with a tray icon whose left
+      click toggles the window and whose menu is on right click. Confirmed by the user on 2026-08-30.
+      The tray "quit" closes the WINDOW and is labelled as such: the thing controlling the handheld is
+      the Windows service, and TDP, fan and profile enforcement continue with nothing on screen.
 
 ## Phase 4 — Replacement
 - [x] **Conflict guard**: detection + **auto-yield** done — `ProfileApplier` skips the TDP write while
