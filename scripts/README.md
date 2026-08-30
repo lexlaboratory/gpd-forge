@@ -13,8 +13,23 @@ powershell -ExecutionPolicy Bypass -File scripts\install-gpd-forge.ps1
 ```
 Flags: `-Substitute` also stops + disables MotionAssistant / GPD Tool (the takeover — two power
 controllers must not run together); `-Restore` **undoes that takeover**; `-DryRun` rehearses the
-restore and writes nothing; `-NoHardware` installs telemetry in driverless WMI mode only;
-`-Uninstall` removes everything (and runs the restore first). TDP/fan writes stay gated regardless.
+restore and writes nothing; `-EnableGpuProfiles` lets GPD Forge set the Radeon 3D settings;
+`-EnableHotkeys` registers the resident global hotkeys at logon; `-NoHardware` installs telemetry in
+driverless WMI mode only; `-Uninstall` removes everything (and runs the restore first). TDP/fan
+writes stay gated regardless.
+
+### Resident helpers
+
+Two things must run in YOUR session rather than in the service, and not for convenience: a Windows
+service in session 0 cannot register a user-session hotkey, and cannot reach ADLX at all.
+
+- **GPU agent** (`-EnableGpuProfiles`) — applies the Radeon profile for the active mode.
+- **Hotkeys** (`-EnableHotkeys`) — `Ctrl+Alt+Home` toggles the overlay; `Ctrl+Alt+Up`/`Down` step TDP;
+  `Ctrl+Alt+M` cycles mode. Opt-in because a global hotkey is a claim on chords the whole machine
+  shares. Test either without going resident with `-SelfTest`.
+
+Both are hosted by the Microsoft-signed `powershell.exe` or by `dotnet.exe` running an assembly
+Windows already accepted, so Smart App Control has no unsigned binary of ours to refuse.
 
 ### Undoing the takeover
 

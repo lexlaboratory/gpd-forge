@@ -19,6 +19,7 @@
     ...\install-gpd-forge.ps1 -NoFps          # skip the PresentMon/ETW FPS probe (fps stays 0)
     ...\install-gpd-forge.ps1 -NoFanControl   # telemetry + TDP only; leave the fan to the EC
     ...\install-gpd-forge.ps1 -EnableGpuProfiles  # let GPD Forge set Radeon Anti-Lag/Chill/Boost
+    ...\install-gpd-forge.ps1 -EnableHotkeys      # resident global hotkeys (overlay, TDP, mode)
     ...\install-gpd-forge.ps1 -Restore        # undo -Substitute: hand MA / GPD Tool back
     ...\install-gpd-forge.ps1 -DryRun         # rehearse -Restore, writing nothing
     ...\install-gpd-forge.ps1 -Uninstall      # remove the service and shortcut (restores first)
@@ -39,7 +40,11 @@ param(
     # Let GPD Forge drive the Radeon 3D settings (Anti-Lag / Chill / Boost) through ADLX. OFF by
     # default and opt-in on purpose: these settings are visible in the user's own Adrenalin install and
     # changing them without being asked would be taking over something nobody handed us.
-    [switch]$EnableGpuProfiles
+    [switch]$EnableGpuProfiles,
+    # Register the resident global hotkeys at logon: Ctrl+Alt+Home toggles the overlay, Ctrl+Alt+Up /
+    # Down step TDP, Ctrl+Alt+M cycles mode. Opt-in because a global hotkey is a claim on chords the
+    # whole machine shares — taking one without being asked is how a tool breaks somebody's game.
+    [switch]$EnableHotkeys
 )
 $ErrorActionPreference = 'Stop'
 $ServiceName = 'GPDForge'
@@ -197,7 +202,8 @@ if ($Uninstall) {
     Remove-ForgeService
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
-    foreach ($p in @("$StartMenu\GPD Forge.lnk", "$StartupDir\GPD Forge Tray.lnk", "$StartupDir\GPD Forge GPU Agent.lnk")) { if (Test-Path $p) { Remove-Item -Force $p } }
+    foreach ($p in @("$StartMenu\GPD Forge.lnk", "$StartupDir\GPD Forge Tray.lnk", "$StartupDir\GPD Forge GPU Agent.lnk",
+                     "$StartupDir\GPD Forge Overlay Hotkey.lnk", "$StartupDir\GPD Forge Hotkeys.lnk")) { if (Test-Path $p) { Remove-Item -Force $p } }
     # Kill a running GPU agent too. Left alive it would keep driving the Radeon settings from a session
     # whose GPD Forge no longer exists — a process nobody can find still changing the machine.
     foreach ($proc in Get-Process dotnet -ErrorAction SilentlyContinue) {
@@ -322,6 +328,12 @@ New-Item -ItemType Directory -Force -Path "$InstallDir\service\wwwroot" | Out-Nu
 Copy-Item "$RepoDir\ui\dist\*" "$InstallDir\service\wwwroot\" -Recurse -Force
 Copy-Item "$RepoDir\ui\src-tauri\icons\icon.ico" "$InstallDir\icon.ico" -Force
 Copy-Item "$RepoDir\scripts\forge-notify.ps1" "$InstallDir\forge-notify.ps1" -Force
+# The hotkey listeners ship alongside it. Copied unconditionally so -EnableHotkeys can be turned
+# on later without another full install, and so the Startup shortcuts never point at a path
+# inside a repo checkout that may move or be deleted.
+foreach ($hs in @('overlay-hotkey.ps1', 'forge-hotkeys.ps1')) {
+    Copy-Item "$RepoDir\scripts\$hs" "$InstallDir\$hs" -Force
+}
 
 # --- 2b) build the native Tauri shell, then install it ---
 # This step used to be a bare Copy-Item of whatever happened to sit in target\release. That is how
@@ -471,6 +483,31 @@ $trayLink.WorkingDirectory = $InstallDir; $trayLink.IconLocation = "$InstallDir\
 # service at all (LocalSystem, session 0, no display driver stack), so without this the Radeon
 # profiles simply do not apply. It is the same signed-host + accepted-assembly combination the
 # service uses, so Smart App Control has nothing new to refuse.
+# Resident hotkeys, in the USER'S session. The daemon runs in session 0 and cannot register a
+# user-session hotkey at all, so this is not a convenience wrapper — it is the only place the
+# mechanism can live. Both scripts are hosted by the Microsoft-signed powershell.exe, so Smart App
+# Control has no unsigned binary of ours to refuse.
+$hotkeyLinks = @(
+    @{ Path = "$StartupDir\GPD Forge Overlay Hotkey.lnk"; Script = 'overlay-hotkey.ps1'; Desc = 'GPD Forge overlay hotkey (Ctrl+Alt+Home)' },
+    @{ Path = "$StartupDir\GPD Forge Hotkeys.lnk";        Script = 'forge-hotkeys.ps1';  Desc = 'GPD Forge hotkeys (TDP and mode)' }
+)
+foreach ($hk in $hotkeyLinks) {
+    if ($EnableHotkeys) {
+        $l = $wsh.CreateShortcut($hk.Path)
+        $l.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell1.0\powershell.exe"
+        $l.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\$($hk.Script)`""
+        $l.WorkingDirectory = $InstallDir
+        $l.IconLocation = "$InstallDir\icon.ico"
+        $l.Description = $hk.Desc
+        $l.WindowStyle = 7
+        $l.Save()
+    } elseif (Test-Path $hk.Path) {
+        # Installing without the flag must not leave a listener behind still holding those chords.
+        Remove-Item -Force $hk.Path
+    }
+}
+if ($EnableHotkeys) { Write-Host "  Global hotkeys will start at logon (Ctrl+Alt+Home / Up / Down / M)." -ForegroundColor DarkGray }
+
 $agentLink = "$StartupDir\GPD Forge GPU Agent.lnk"
 if ($EnableGpuProfiles) {
     $dotnetPath = (Get-Command dotnet).Source
