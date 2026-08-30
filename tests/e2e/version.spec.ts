@@ -71,3 +71,29 @@ test.describe('Version model', () => {
     expect('builtUtc' in body).toBeTruthy()
   })
 })
+
+// The guard that was missing on 2026-08-30.
+//
+// Removing one DI block took the registrations below it with it. The build stayed green, all 828 unit
+// tests stayed green, and EVERY endpoint returned 500 — including /health — because ASP.NET could not
+// construct an endpoint whose services were gone, and endpoint routing throws for the whole app, not
+// for one route. Nothing in the suite started a host, so nothing noticed.
+//
+// This runs against the mock daemon rather than the C# service, so it does not catch a C# DI break by
+// itself; scripts/verify-install.ps1 is what caught the real one and is the check that matters on the
+// device. What this pins is the contract: these routes exist and answer, so a client can rely on them.
+test.describe('The API answers on every route the UI depends on', () => {
+  const ROUTES = ['/health', '/version', '/telemetry', '/mode', '/ai', '/gpu', '/ai/inference-hold', '/app-rules']
+
+  for (const route of ROUTES) {
+    test(`GET ${route} answers 200 with JSON`, async ({ request }) => {
+      const res = await request.get(`http://127.0.0.1:8799${route}`)
+      expect(res.status(), `${route} should answer 200`).toBe(200)
+
+      // A 200 alone is not proof: this API serves an SPA fallback that answers 200 with index.html for
+      // unknown paths. Requiring parseable JSON is what makes the assertion mean "the route exists".
+      const body = await res.text()
+      expect(() => JSON.parse(body), `${route} should return JSON, not the SPA fallback`).not.toThrow()
+    })
+  }
+})

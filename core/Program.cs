@@ -462,6 +462,27 @@ builder.Services.AddSingleton<AiState>();
 // stores what the agent reports.
 builder.Services.AddSingleton<GpuAgentState>();
 
+// P3.3 — the UMA split stays BIOS-only, but the reading is persisted so a change can be CONFIRMED
+// across a reboot instead of assumed. A read plus a small local file, so not behind the hardware gate.
+//
+// These registrations were lost on 2026-08-30 when the GPU DI block above was removed and the cut
+// took the lines below it as well. Nothing failed at build time and every unit test stayed green,
+// because none of them start the web host: ASP.NET could not construct the /ai endpoint, endpoint
+// routing threw, and EVERY request returned 500 — including /health. Caught by verify-install, which
+// is exactly what that step is for.
+builder.Services.AddSingleton<IBootClock, WmiBootClock>();
+builder.Services.AddSingleton<IVramHistoryStore>(sp => new FileVramHistoryStore());
+builder.Services.AddSingleton<VramHistory>();
+
+// P3.2 — keep the machine awake for inference GPD Forge did NOT start. Not behind
+// GPDFORGE_ENABLE_HARDWARE: SetThreadExecutionState is an unprivileged, self-cleaning power request.
+// Ships OBSERVE-ONLY; it only takes a real hold when GPDFORGE_INFERENCE_HOLD=1.
+var inferenceHold = InferenceHoldOptions.FromEnvironment();
+builder.Services.AddSingleton(inferenceHold);
+builder.Services.AddSingleton(new InferenceHoldState(inferenceHold));
+builder.Services.AddSingleton<IProcessCpuSampler, SystemProcessCpuSampler>();
+builder.Services.AddHostedService<InferenceHoldWorker>();
+
 builder.Services.AddSingleton<JobsState>();   // holds an anti-standby lock while a job is "running"
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
 builder.Services.AddSingleton<ProfileApplier>();
