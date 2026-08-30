@@ -140,10 +140,34 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       when it is the sole controller. `install-gpd-forge.ps1 -Substitute` stops/disables the incumbents.
 - [x] **Auto-TDP per mode**: the active mode (auto or manual) applies its TDP preset through the closed
       loop, guarded by the conflict check. Unit-tested.
-- [ ] Uninstall/disable MA + GPDT services safely (installer `-Substitute` covers stop+disable)
-- [ ] Take ownership of RTSS / driver / autostart
-- [ ] Firmware-update assistant with preconditions
-- [ ] First public OSS release (semantic version + changelog)
+- [x] **Uninstall/disable MA + GPDT services safely — and, now, undo it.** `-Substitute` stopped the
+      incumbents, disabled `GPDToolService`, renamed their `Run` keys and disabled their tasks. It was
+      written to be reversible (renaming rather than deleting) but **nothing could reverse it**, and
+      `-Uninstall` removed GPD Forge while leaving all of that in place: a user uninstalls and is left
+      with **no power controller at all**, no message saying why, and no route back. A change that is
+      only reversible in principle is not reversible. `-Restore` is that mechanism, `-Uninstall` runs
+      it first, and `-Substitute` now records the prior service start type under `%ProgramData%`
+      (which `-Uninstall` does not delete) so the undo restores what was there instead of a guess —
+      and says so plainly when no record exists.
+      `-DryRun` rehearses the undo without writing, because handing a power controller back is not a
+      step to learn the behaviour of by running it. That rehearsal immediately earned itself: it
+      caught a `-replace` precedence bug that left the renamed key unchanged, and a `schtasks`
+      `NativeCommandError` that aborted the whole run on a machine with no GPD scheduled tasks.
+- [ ] Take ownership of RTSS / driver / autostart — **autostart is done** (installer registers the
+      service and the tray shortcut, and `-Substitute`/`-Restore` own the incumbents' autostart).
+      **RTSS is not started and has no code**: `Rtss/ single-owner arbitration` is still open in Phase 1
+      too, and nothing in `core/` references RTSS. Audited 2026-08-29 — the checkbox covered three
+      unrelated things, of which only one existed.
+- [ ] Firmware-update assistant with preconditions — **not started, no code.** Relevant on this device:
+      the G1618-04 is on BIOS **0.10 (Nov 2024)**, and the intermittent hibernation resume failure of
+      2026-08-29 leaves no crash dump, which places it *before* Windows takes control — bootloader or
+      firmware. Any assistant must treat a BIOS update as the irreversible, user-authorised step it is.
+- [~] First public OSS release (semantic version + changelog) — **the versioning half landed
+      2026-08-29**: one declared version in `Directory.Build.props`, read from the assembly by
+      `/health` and `/version`, enforced across `package.json`/`tauri.conf.json` by `VersionModelTests`,
+      and consumed by the update checker (which previously compared releases against a literal default
+      that nobody would ever bump). `CHANGELOG.md` is maintained. What remains is the release act
+      itself: tag, release notes, and a published artefact.
 
 ## Non-goals (for now)
 - Non-GPD handhelds (design leaves room, but not a target).

@@ -12,8 +12,28 @@
 powershell -ExecutionPolicy Bypass -File scripts\install-gpd-forge.ps1
 ```
 Flags: `-Substitute` also stops + disables MotionAssistant / GPD Tool (the takeover — two power
-controllers must not run together); `-NoHardware` installs telemetry in driverless WMI mode only;
-`-Uninstall` removes everything. TDP/fan writes stay gated regardless. The NSIS installer itself is built
+controllers must not run together); `-Restore` **undoes that takeover**; `-DryRun` rehearses the
+restore and writes nothing; `-NoHardware` installs telemetry in driverless WMI mode only;
+`-Uninstall` removes everything (and runs the restore first). TDP/fan writes stay gated regardless.
+
+### Undoing the takeover
+
+`-Substitute` renames the incumbents' `Run` keys, disables `GPDToolService` and disables their
+scheduled tasks. Until 2026-08-29 there was no way to reverse any of it, and `-Uninstall` removed
+GPD Forge while leaving it all disabled — leaving the machine with **no power controller at all** and
+nothing on screen explaining why.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\install-gpd-forge.ps1 -DryRun    # rehearse
+powershell -ExecutionPolicy Bypass -File scripts\install-gpd-forge.ps1 -Restore   # do it
+```
+
+`-Substitute` records the prior service start type in `%ProgramData%\GPD Forge\takeover-state.json`
+(outside Program Files, which `-Uninstall` deletes) so the restore puts back what was actually there.
+For a takeover performed before that record existed, the restore uses `Automatic` and **says that it
+is guessing** rather than implying it knows.
+
+Run `-DryRun` first. It prints each change it would make and writes nothing. The NSIS installer itself is built
 with `npx tauri build` in `ui/` (output: `ui/src-tauri/target/release/bundle/nsis/*-setup.exe`).
 
 ### When the build dies with `os error 4551`

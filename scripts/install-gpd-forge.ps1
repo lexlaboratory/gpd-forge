@@ -18,7 +18,9 @@
     ...\install-gpd-forge.ps1 -NoHardware     # telemetry in driverless WMI mode only
     ...\install-gpd-forge.ps1 -NoFps          # skip the PresentMon/ETW FPS probe (fps stays 0)
     ...\install-gpd-forge.ps1 -NoFanControl   # telemetry + TDP only; leave the fan to the EC
-    ...\install-gpd-forge.ps1 -Uninstall      # remove the service and shortcut
+    ...\install-gpd-forge.ps1 -Restore        # undo -Substitute: hand MA / GPD Tool back
+    ...\install-gpd-forge.ps1 -DryRun         # rehearse -Restore, writing nothing
+    ...\install-gpd-forge.ps1 -Uninstall      # remove the service and shortcut (restores first)
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +28,13 @@ param(
     [switch]$Uninstall,
     [switch]$NoHardware,
     [switch]$NoFps,
-    [switch]$NoFanControl
+    [switch]$NoFanControl,
+    # Undo -Substitute: hand MotionAssistant / GPD Tool back their service, autostart and tasks.
+    # Runs on its own, and automatically as part of -Uninstall.
+    [switch]$Restore,
+    # Report what -Restore would change and exit without changing it. Handing a power controller back
+    # is not a step to discover the behaviour of by running it, so the rehearsal is a first-class flag.
+    [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 $ServiceName = 'GPDForge'
@@ -63,7 +71,124 @@ function Remove-ForgeService {
     }
 }
 
+# --- the takeover, and its undo ---------------------------------------------------------------
+#
+# -Substitute stops MotionAssistant / GPD Tool and disables their service, autostart and tasks,
+# because two power controllers fighting over the same silicon is a real, field-confirmed clash.
+# It was written to be reversible — the Run keys are RENAMED rather than deleted — but there was no
+# way to actually reverse it, and -Uninstall removed GPD Forge while leaving the incumbents disabled.
+# The result: a user uninstalls GPD Forge and is left with NO power controller at all, no message
+# saying why, and no obvious way back. A change that is only reversible in principle is not
+# reversible; this is the mechanism that makes the claim true.
+#
+# The prior state is recorded under %ProgramData% (not Program Files, which -Uninstall deletes) so
+# the undo restores what was actually there. When no record exists — a takeover performed before
+# this existed — the restore says so plainly and uses documented defaults rather than pretending to
+# know what the machine looked like.
+$TakeoverState = Join-Path $env:ProgramData 'GPD Forge\takeover-state.json'
+$RunHives = @(
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+)
+$IncumbentTasks = @('MotionAssistant','GPDTool')
+$DisabledSuffix = '_disabledByGPDForge'
+
+function Restore-Incumbents {
+    param([switch]$Rehearse)
+
+    if ($Rehearse) {
+        Write-Host "== DRY RUN: what -Restore would change (nothing is being written) ==" -ForegroundColor Cyan
+    } else {
+        Write-Host "== Restoring MotionAssistant / GPD Tool ==" -ForegroundColor Cyan
+    }
+
+    $recorded = $null
+    if (Test-Path $TakeoverState) {
+        try { $recorded = Get-Content $TakeoverState -Raw | ConvertFrom-Json } catch { $recorded = $null }
+    }
+    if (-not $recorded) {
+        Write-Host "  No takeover record found - restoring with defaults." -ForegroundColor Yellow
+        Write-Host "  The GPD Tool service start type will be set to Automatic; if it was something" -ForegroundColor Yellow
+        Write-Host "  else before, set it by hand. This is a guess and is labelled as one." -ForegroundColor Yellow
+    }
+
+    # 1) Autostart entries: rename back. Renaming is what made this recoverable at all.
+    foreach ($hive in $RunHives) {
+        $props = Get-ItemProperty $hive -ErrorAction SilentlyContinue
+        if (-not $props) { continue }
+        $props.PSObject.Properties | Where-Object { $_.Name -like "*$DisabledSuffix" } | ForEach-Object {
+            # Parenthesised deliberately: -replace binds tighter than +, so the unparenthesised form
+            # `-replace [regex]::Escape($x) + '$', ''` replaces the suffix ANYWHERE and then appends
+            # nothing, leaving the name unchanged. The 2026-08-29 dry run caught exactly that.
+            $original = $_.Name -replace ([regex]::Escape($DisabledSuffix) + '$'), ''
+            if ($Rehearse) {
+                Write-Host "    would restore autostart: $($_.Name) -> $original" -ForegroundColor Yellow
+                Write-Host "      value: $($_.Value)" -ForegroundColor DarkGray
+                return
+            }
+            try {
+                Rename-ItemProperty -Path $hive -Name $_.Name -NewName $original -ErrorAction Stop
+                Write-Host "    autostart restored: $original" -ForegroundColor Green
+            } catch {
+                Write-Host "    could not restore autostart '$original': $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+    }
+
+    # 2) The GPD Tool service. Only touched if it exists; its previous start type is used when known.
+    $gsvc = Get-Service 'GPDToolService' -ErrorAction SilentlyContinue
+    if ($gsvc) {
+        $startType = if ($recorded -and $recorded.gpdToolServiceStartType) { $recorded.gpdToolServiceStartType } else { 'Automatic' }
+        if ($Rehearse) {
+            $current = (Get-CimInstance Win32_Service -Filter "Name='GPDToolService'").StartMode
+            Write-Host "    would set GPDToolService start type: $current -> $startType" -ForegroundColor Yellow
+        } else {
+        try {
+            Set-Service 'GPDToolService' -StartupType $startType -ErrorAction Stop
+            Write-Host "    GPDToolService start type -> $startType" -ForegroundColor Green
+        } catch {
+            Write-Host "    could not set GPDToolService start type: $($_.Exception.Message)" -ForegroundColor Red
+        }
+        }
+    }
+
+    # 3) Scheduled tasks. Best-effort, same as disabling them was.
+    foreach ($t in $IncumbentTasks) {
+        if ($Rehearse) {
+            # Get-ScheduledTask rather than `schtasks /Query`: schtasks writes to stderr for a task
+            # that does not exist, and with ErrorActionPreference='Stop' that becomes a TERMINATING
+            # NativeCommandError — the same trap this script already documents for `dotnet`. Guarding
+            # it with try/catch stops the abort but still fills the install transcript with alarming
+            # text about a completely normal situation, and a log full of false errors is how real
+            # ones get ignored. The cmdlet just returns nothing.
+            if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
+                Write-Host "    would enable scheduled task: $t" -ForegroundColor Yellow
+            }
+            continue
+        }
+        try { & schtasks /Change /TN $t /ENABLE *> $null } catch {}
+    }
+
+    if ($Rehearse) {
+        Write-Host "  Dry run complete - nothing was changed." -ForegroundColor Cyan
+        return
+    }
+
+    # The record has served its purpose; leaving it would make a later restore claim knowledge of a
+    # takeover that has already been undone.
+    if (Test-Path $TakeoverState) { Remove-Item $TakeoverState -Force -ErrorAction SilentlyContinue }
+
+    Write-Host "  Incumbents restored. They start again at next logon/boot." -ForegroundColor Green
+    Write-Host "  NOTE: two power controllers must not run together - GPD Forge yields while they run," -ForegroundColor Yellow
+    Write-Host "  but if you keep both, expect them to fight over TDP." -ForegroundColor Yellow
+}
+
+if ($Restore -or ($DryRun -and -not $Uninstall)) { Restore-Incumbents -Rehearse:$DryRun; return }
+
 if ($Uninstall) {
+    # Undo the takeover FIRST. Removing GPD Forge while its takeover stands is what would leave the
+    # machine with no power controller at all.
+    Restore-Incumbents
     Remove-ForgeService
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
@@ -290,7 +415,29 @@ if ($Substitute) {
     foreach ($p in @('MotionAssistant','pmgui','GPDTool','GPDKeyboard')) {
         Get-Process $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
+    # Record what we are about to change BEFORE changing it, so -Restore puts back what was there
+    # rather than a plausible default. Written to ProgramData because -Uninstall deletes Program Files.
     $gsvc = Get-Service 'GPDToolService' -ErrorAction SilentlyContinue
+    $priorStartType = $null
+    if ($gsvc) {
+        # StartType exists on PS 5.1's ServiceController via the WMI record; fall back rather than guess.
+        try { $priorStartType = (Get-CimInstance Win32_Service -Filter "Name='GPDToolService'").StartMode } catch { $priorStartType = $null }
+        # Win32 StartMode words differ from Set-Service's ("Auto" vs "Automatic"); normalise now, while
+        # the meaning is still in front of us, rather than at restore time.
+        switch ($priorStartType) {
+            'Auto'     { $priorStartType = 'Automatic' }
+            'Manual'   { $priorStartType = 'Manual' }
+            'Disabled' { $priorStartType = 'Disabled' }
+            default    { $priorStartType = $null }
+        }
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path $TakeoverState) | Out-Null
+    @{
+        takenOverUtc            = (Get-Date).ToUniversalTime().ToString('o')
+        gpdToolServiceStartType = $priorStartType
+        gpdToolServicePresent   = [bool]$gsvc
+    } | ConvertTo-Json | Set-Content -Path $TakeoverState -Encoding UTF8
+
     if ($gsvc) { Stop-Service 'GPDToolService' -Force -ErrorAction SilentlyContinue; Set-Service 'GPDToolService' -StartupType Disabled }
     # disable their autostart (Run keys), REVERSIBLY (renamed, not deleted)
     foreach ($hive in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\Software\Microsoft\Windows\CurrentVersion\Run')) {
@@ -304,6 +451,7 @@ if ($Substitute) {
     # scheduled tasks (best-effort; ignore if they do not exist)
     foreach ($t in @('MotionAssistant','GPDTool')) { try { & schtasks /Change /TN $t /DISABLE *> $null } catch {} }
     Write-Host "  incumbents stopped, service + autostart disabled." -ForegroundColor Green
+    Write-Host "  Undo any time with:  install-gpd-forge.ps1 -Restore   (also runs during -Uninstall)" -ForegroundColor DarkGray
 }
 
 # --- 7) verify the install end to end, then open ---
