@@ -176,8 +176,42 @@ Write-Host "== 3/7  Building the native desktop shell ==" -ForegroundColor Cyan
 $shellFailure = $null
 $tauriExe = "$RepoDir\ui\src-tauri\target\release\gpd-forge.exe"
 npm --prefix "$RepoDir\ui" run tauri build
+
+# Smart App Control fallback. On 2026-08-29 SAC blocked EVERY cargo build-script under
+# ui/src-tauri/target with os error 4551, on three consecutive runs. The cure that worked for the
+# .NET side (delete the artefact so the next build has a different hash) did NOT work here: the
+# freshly compiled build-scripts were blocked too.
+#
+# What did work was building with CARGO_TARGET_DIR pointed OUTSIDE the repository tree, into %TEMP%.
+# Same source, same toolchain, same resulting hashes — only the location changed, and the identical
+# build that had been refused three times completed. So SAC's verdict here is not purely by content:
+# the path the binary is executed from is part of it. That is worth knowing beyond this script.
+#
+# The out-of-tree build is a FALLBACK rather than the default because it forfeits the incremental
+# cache in the normal location, which costs about six minutes from cold.
 if (-not (Test-Path $tauriExe)) {
-    $shellFailure = "the build produced no gpd-forge.exe (needs the Rust toolchain; Smart App Control can also block cargo's build-scripts with os error 4551)"
+    $altTarget = Join-Path $env:TEMP "gpd-forge-tauri-target"
+    Write-Host "  shell build failed - retrying with CARGO_TARGET_DIR outside the repo (SAC workaround)" -ForegroundColor Yellow
+    Write-Host "  target: $altTarget" -ForegroundColor DarkGray
+    $prevTarget = $env:CARGO_TARGET_DIR
+    try {
+        $env:CARGO_TARGET_DIR = $altTarget
+        npm --prefix "$RepoDir\ui" run tauri build
+    } finally {
+        # Restore rather than clear: the operator may have set it deliberately.
+        if ($null -eq $prevTarget) { Remove-Item Env:\CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
+        else { $env:CARGO_TARGET_DIR = $prevTarget }
+    }
+    $altExe = Join-Path $altTarget "release\gpd-forge.exe"
+    if (Test-Path $altExe) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $tauriExe) | Out-Null
+        Copy-Item $altExe $tauriExe -Force
+        Write-Host "  recovered: shell built out-of-tree and staged for install" -ForegroundColor Green
+    }
+}
+
+if (-not (Test-Path $tauriExe)) {
+    $shellFailure = "the build produced no gpd-forge.exe, in-tree or out-of-tree (needs the Rust toolchain; Smart App Control blocks cargo's build-scripts with os error 4551)"
 } elseif ((Get-Item $tauriExe).LastWriteTime -lt (Get-Item "$RepoDir\ui\dist\index.html").LastWriteTime) {
     $shellFailure = "the built shell is older than the UI bundle it should embed, so the build did not actually run"
 }

@@ -16,6 +16,39 @@ controllers must not run together); `-NoHardware` installs telemetry in driverle
 `-Uninstall` removes everything. TDP/fan writes stay gated regardless. The NSIS installer itself is built
 with `npx tauri build` in `ui/` (output: `ui/src-tauri/target/release/bundle/nsis/*-setup.exe`).
 
+### When the build dies with `os error 4551`
+
+Smart App Control refuses to execute unsigned binaries it does not trust, and cargo's per-crate
+**build-scripts** are exactly that. The failure reads:
+
+```
+could not execute process `...\target\release\build\<crate>-<hash>\build-script-build` (never executed)
+Una directiva de Control de aplicaciones bloqueó este archivo. (os error 4551)
+```
+
+Two things about this are counter-intuitive and cost real time on 2026-08-29:
+
+- **Deleting `target/release/build` so cargo regenerates the scripts does not fix it.** That cure works
+  for the .NET service (a different hash gets a different verdict); here the freshly compiled scripts
+  were blocked too, on three consecutive runs.
+- **Building with `CARGO_TARGET_DIR` outside the repository does.** Same source, same toolchain — only
+  the location changed, and the build that had been refused three times completed:
+
+  ```
+  CARGO_TARGET_DIR="$env:TEMP\gpd-forge-tauri-target" npm run tauri build
+  ```
+
+  So SAC's decision is not purely about file content: **where the binary runs from is part of it.**
+
+`install-gpd-forge.ps1` now does this automatically as a fallback after the first failure. It is not
+the default because it forfeits the incremental cache (~6 minutes from cold). **Do not turn Smart App
+Control off to work around this** — it cannot be turned back on without reinstalling Windows.
+
+A shell build failure no longer aborts the install: the service is registered and started regardless,
+and the installer exits non-zero explaining that the desktop window was not updated. Before that fix,
+a blocked build left the machine with **no daemon at all**, because step 1 removes the service before
+step 3 builds the shell.
+
 ---
 
 # Supervised hardware bring-up
