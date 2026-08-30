@@ -121,10 +121,16 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       `pnputil` (one action covers all seven nodes the pad presents — confirmed on device
       2026-08-29, VID_2F24&PID_0135), and re-reads the device afterwards rather than trusting the
       exit code. A pad that survived the suspend is deliberately left untouched.
-- [ ] Fingerprint toggle / **hibernate helper** — rewritten 2026-08-29: there is no S0↔S3 toggle to
-      build on this board. `powercfg /a` reports S1/S2/S3 as *unsupported by the system firmware*, so
-      the only states available are S0 low-power idle (Modern Standby) and Hibernate. The useful
-      control is therefore "hibernate instead of Modern Standby", not a sleep-state switch.
+- [x] **Hibernate helper** — the item was "fingerprint toggle / S0↔S3 switch"; the firmware reports
+      S1/S2/S3 unsupported, so what shipped is the control that actually exists: how long the machine
+      idles in Modern Standby before hibernating. `GET`/`POST /standby/hibernate`. Measured on device
+      2026-08-30 — on battery, 300 s to standby and 7200 s to hibernate, which is two hours of S0
+      drain before the machine finally stops costing anything.
+      Reads come from the **registry**, not from `powercfg /q`: that output is localised (here it says
+      "Índice de configuración de corriente continua actual") and a parser keyed on those words finds
+      nothing the moment the OS language changes. Writes go through powercfg, including
+      `/setactive`, because editing the scheme without re-activating it leaves a setting that reads as
+      changed and behaves as it was. The new value is read back rather than assumed.
 - [x] `powercfg` integration — `/requests` (sleep blockers), `/lastwake` and now **`sleepstudy`**
       (`core/Standby/SleepStudy.cs`). The overnight drain stays **measured** from two real battery
       readings separated by an observed suspend, never extrapolated.
@@ -281,10 +287,12 @@ doing as one piece precisely because four separate items unblock together.
 
 - [ ] **Hibernate helper.** There is no S0↔S3 toggle on this board — firmware reports S1/S2/S3
       unsupported — so the only useful control is "hibernate instead of Modern Standby".
-- [ ] **Firmware-update assistant with preconditions.** Not started. This device is on BIOS 0.10
-      (Nov 2024), and the intermittent hibernate-resume failure leaves no crash dump, placing it before
-      Windows takes control. Any assistant must treat a BIOS update as the irreversible,
-      explicitly-authorised step it is.
+- [x] **Firmware assistant** — `GET /firmware`, and it does NOT update anything, by design. It
+      reports what is installed (BIOS 0.10, 2024-11-28, confirmed on device) and states the
+      preconditions for updating by hand: on AC, above 50%, no other power tool running, no sleep
+      during the flash. `canAttempt` is always false. A daemon that flashed firmware on a handheld
+      with no vendor recovery path would be the most dangerous thing in this repository by a wide
+      margin, and an assistant that implied it might is not much better.
 
 ### Sequencing, and why
 

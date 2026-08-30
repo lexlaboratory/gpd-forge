@@ -553,6 +553,11 @@ builder.Services.AddSingleton<AiState>();
 // user-session agent (where it must be anyway, session 0 cannot reach ADLX) and the daemon merely
 // stores what the agent reports.
 builder.Services.AddSingleton<GpuAgentState>();
+// SystemProcessRunner was never registered: types took it as an optional constructor argument and
+// quietly got null. HibernateService needs it for real, and a missing registration is a runtime
+// failure rather than a build one — this endpoint returned 500 until the host was actually started.
+builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
+builder.Services.AddSingleton<HibernateService>();
 builder.Services.AddSingleton<GpuDesiredState>();
 
 // P3.3 — the UMA split stays BIOS-only, but the reading is persisted so a change can be CONFIRMED
@@ -742,6 +747,80 @@ app.MapGet("/update/check", async (UpdateService updates, CancellationToken ct) 
 {
     var r = await updates.CheckAsync(ct);
     return Results.Json(new { current = r.Current, latest = r.Latest, updateAvailable = r.UpdateAvailable, url = r.Url });
+});
+
+// Hibernate policy. The roadmap called this an "S0<->S3 toggle"; the firmware on this board reports
+// S1/S2/S3 unsupported, so the only real choice is how long the machine idles in Modern Standby
+// before hibernating instead. That is the control that decides what a closed lid costs overnight.
+app.MapGet("/standby/hibernate", async (HibernateService svc, CancellationToken ct) =>
+{
+    var s = await svc.ReadAsync(ct);
+    return Results.Json(new
+    {
+        hibernateAvailable = s.HibernateAvailable,
+        // Null when hibernate IS available — there is no reason to report, and inventing one would
+        // be noise. Populated with powercfg's own explanation when it is not.
+        unavailable = s.Unavailable,
+        // Seconds. 0 means "never"; null means the value could not be read, which is a different
+        // thing entirely — "we do not know when this machine hibernates" is not "it never does".
+        onAc = new { standbyIdleSeconds = s.OnAc.StandbyIdleSeconds, hibernateIdleSeconds = s.OnAc.HibernateIdleSeconds },
+        onBattery = new { standbyIdleSeconds = s.OnBattery.StandbyIdleSeconds, hibernateIdleSeconds = s.OnBattery.HibernateIdleSeconds },
+    });
+});
+
+app.MapPost("/standby/hibernate", async (HibernateIdleRequest r, HibernateService svc, CancellationToken ct) =>
+{
+    foreach (var v in new[] { r.OnBatterySeconds, r.OnAcSeconds })
+        if (v is int seconds && HibernatePolicy.Reject(seconds) is string why)
+            return Results.Json(new { applied = false, reason = why }, statusCode: 400);
+
+    if (r.OnBatterySeconds is null && r.OnAcSeconds is null)
+        return Results.Json(new { applied = false, reason = "Nothing to change: supply onBatterySeconds and/or onAcSeconds." }, statusCode: 400);
+
+    var (applied, detail, state) = await svc.SetHibernateIdleAsync(r.OnBatterySeconds, r.OnAcSeconds, ct);
+    return Results.Json(new
+    {
+        applied,
+        reason = detail,
+        onAc = new { standbyIdleSeconds = state.OnAc.StandbyIdleSeconds, hibernateIdleSeconds = state.OnAc.HibernateIdleSeconds },
+        onBattery = new { standbyIdleSeconds = state.OnBattery.StandbyIdleSeconds, hibernateIdleSeconds = state.OnBattery.HibernateIdleSeconds },
+    });
+});
+
+// Firmware. GPD Forge does NOT update the BIOS and this endpoint does not pretend otherwise: it
+// reports what is installed and whether the machine is in a state where an update would be safe to
+// attempt by hand. A tool that flashed firmware on a handheld with no recovery path, from a daemon,
+// would be the most dangerous thing in this repository by a wide margin.
+app.MapGet("/firmware", (ITelemetryService telemetry, CancellationToken ct) =>
+{
+    string? version = null, releaseDate = null;
+    try
+    {
+        using var searcher = new System.Management.ManagementObjectSearcher(
+            "SELECT SMBIOSBIOSVersion, ReleaseDate FROM Win32_BIOS");
+        foreach (var o in searcher.Get())
+        {
+            version = o["SMBIOSBIOSVersion"] as string;
+            releaseDate = o["ReleaseDate"] as string;
+            break;
+        }
+    }
+    catch (System.Management.ManagementException) { /* unknown stays null */ }
+
+    return Results.Json(new
+    {
+        biosVersion = version,
+        biosReleaseDate = releaseDate,
+        model = "GPD Win 4 (G1618-04)",
+        // Preconditions, checked rather than recited. A firmware update interrupted by a flat battery
+        // is how a handheld becomes a brick, so AC and charge are the two that matter.
+        canAttempt = false,
+        advisory =
+            "GPD Forge does not update firmware and will not attempt to. It reports what is installed "
+            + "so you can compare against GPD's release notes. If you do update by hand: run on AC, "
+            + "above 50% charge, close GPD Forge and any other power tool first, and do not let the "
+            + "machine sleep during the flash. This board has no vendor recovery path if it fails.",
+    });
 });
 
 // Every hardware write this daemon made, newest first. Read-only.
@@ -1588,6 +1667,10 @@ namespace GpdForge.Api
     /// clock we do not control is not evidence about it.</summary>
     /// <summary>POST /gpu/frame-cap. Null Fps disables the cap, which is an intent, not an omission.</summary>
     public sealed record FrameCapRequest(int? Fps);
+
+    /// <summary>POST /standby/hibernate. Seconds of idle before hibernating; 0 means never. Null for
+    /// a field leaves that power source untouched.</summary>
+    public sealed record HibernateIdleRequest(int? OnBatterySeconds, int? OnAcSeconds);
 
     public sealed record GpuAgentReportRequest(
         bool Available,

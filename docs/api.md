@@ -508,6 +508,35 @@ daemon calls `TotalSystemRAM` and checks it against the machine's RAM read over 
 means the library is marked unusable and nothing else is called through it. `--probe-gpu` reproduces
 that check and writes nothing.
 
+### `GET /standby/hibernate`  ·  `POST /standby/hibernate`  (hibernate instead of draining)
+`GET → { hibernateAvailable, unavailable: string | null, onAc: {...}, onBattery: {...} }`
+`POST { onBatterySeconds?: number, onAcSeconds?: number } → { applied, reason, onAc, onBattery }`
+
+There is no S0↔S3 toggle on this board — firmware reports S1/S2/S3 unsupported — so the control that
+exists is how long the machine idles in Modern Standby before hibernating. Modern Standby keeps
+drawing power; hibernate does not, because the machine is off. Measured here: 300 s to standby and
+**7200 s to hibernate** on battery, i.e. two hours of S0 drain before it stops costing anything.
+
+- Timeouts are in **seconds**; `0` means *never*; **`null` means the value could not be read**, which
+  is not the same claim. Out-of-range values are refused with a reason rather than clamped — silently
+  turning a mistyped 100000 into an hour applies something nobody asked for.
+- Reads come from the registry, not from `powercfg /q`, whose output is **localised**: on this device
+  it reads *"Índice de configuración de corriente continua actual"*, and a parser keyed on those words
+  finds nothing the moment the OS language changes. GUIDs and registry keys do not translate.
+- Writes go through powercfg **including `/setactive`**: editing the scheme without re-activating it
+  leaves a setting that reads as changed and behaves as it was. The result is re-read afterwards, so
+  `applied:false` with a reason is what you get when powercfg exits quietly without the rights to
+  change the active scheme.
+
+### `GET /firmware`  (what is installed — it does NOT update anything)
+`200 → { biosVersion, biosReleaseDate, model, canAttempt: false, advisory }`
+
+Reports the installed BIOS so it can be compared against GPD's release notes, and states the
+preconditions for updating **by hand**: on AC, above 50% charge, no other power tool running, no sleep
+during the flash. `canAttempt` is always false and there is no POST. A daemon that flashed firmware on
+a handheld with no vendor recovery path would be the most dangerous thing in this repository, and an
+assistant that implied it might is not much better.
+
 ### `GET /settings/export`  ·  `POST /settings/import`  (settings backup / restore)
 - `GET /settings/export → { modePresets: Record<ModeId, Preset>, guardian: Guardian-config,
   fanMode: string, brightness: number | null, powerSource: PowerSource-config, autoFps: AutoFps }`
