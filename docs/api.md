@@ -28,7 +28,32 @@ interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: 
 ## Endpoints
 
 ### `GET /health`
-`200 → { ok: true, version: string, model: string }`
+`200 → { ok: true, version: string, model: string }` — `version` is read from the assembly (see
+`GET /version`), never from a literal.
+
+### `GET /version`  (what this build actually is)
+`200 → { version: string, commit: string | null, builtUtc: string | null, runtime: string, model: string }`
+
+The version model has **one source of truth**: `<GpdForgeVersion>` in `Directory.Build.props`. It feeds
+the assembly, and `ui/package.json` + `ui/src-tauri/tauri.conf.json` carry copies that
+`VersionModelTests` asserts equal — so a drifting copy is a failing build, not a support thread.
+
+- `version` — read from the assembly's informational version. Nothing here is hand-typed. The old
+  hard-coded `"0.1.0"` also fed `UpdateService`, which therefore compared every GitHub release against
+  a constant nobody would remember to bump: it would keep offering an update that was already
+  installed. `UpdateService` now *requires* the version and `Program.cs` supplies the real one, so
+  forgetting is a compile error rather than a wrong answer.
+- `commit` — the source revision, when the build recorded one (`InformationalVersion` gains `+<sha>`
+  for a repository build). **`null` when not recorded** — an unknown commit reads as unknown.
+- `builtUtc` — the PE header's link timestamp of the running assembly. This is the field that answers
+  *"is the thing running older than the fix?"*. ⚠️ Deterministic builds put a content **hash** in that
+  header, which read as unix seconds yields a confident, plausible, wrong date; implausible values are
+  rejected and reported as `null` rather than shipped as a date.
+
+**Why it exists:** on 2026-08-28 the app showed no telemetry while the daemon was healthy throughout —
+the shell in Program Files predated the commit that fixed it, and establishing that meant diffing the
+installed binary against a fresh build hunting for marker strings. The Settings ▸ About card now
+compares the **shell** build against the **daemon** build and says plainly when they disagree.
 
 ### `GET /telemetry`
 `200 → Telemetry` — the latest snapshot.

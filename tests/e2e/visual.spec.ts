@@ -56,7 +56,15 @@ const ALERT_SEEN = '2026-08-28T09:12:00.000Z'
 const ALERT_LAST = '2026-08-28T09:41:00.000Z'
 
 const FIXTURES: Record<string, unknown> = {
-  '/health': { ok: true, version: '0.1.0-mock', model: 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370' },
+  '/health': { ok: true, version: '0.1.0', model: 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370' },
+  // Frozen on purpose. Left to the live mock, `runtime` would carry the Node version, so a routine
+  // Node upgrade would fail every "sections" baseline for a reason unrelated to the UI. The version
+  // itself is deliberately NOT frozen away from the real one: the About card compares shell against
+  // daemon, and a fixture that disagreed would bake the mismatch warning into every baseline.
+  '/version': {
+    version: '0.1.0', commit: null, builtUtc: null,
+    runtime: 'frozen runtime (visual fixture)', model: 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370',
+  },
   '/telemetry': {
     cpuTempC: 61.4, gpuTempC: 58.2, packageW: 19.6, cpuClockMhz: 3300, fanRpm: 3560,
     fanDutyPct: 45, fps: 60, fps1PctLow: 48, batteryPct: 78, dischargeW: 18.2,

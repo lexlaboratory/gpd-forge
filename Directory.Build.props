@@ -1,0 +1,39 @@
+<!--
+  GPD Forge — the single source of truth for the product version. GPL-3.0-or-later.
+
+  Before this file the version lived as a hand-typed literal in four independent places: the
+  `/health` endpoint, `UpdateService`'s `currentVersion` DEFAULT PARAMETER, ui/package.json and
+  ui/src-tauri/tauri.conf.json. Nothing kept them equal and nothing failed when they diverged.
+
+  That is not a tidiness complaint. `UpdateService` compares the latest GitHub release against the
+  version it believes is running, so a literal nobody remembers to bump makes the update checker
+  answer confidently and wrongly forever — it would keep offering an update already installed. The
+  same shape as every other defect this project has paid for: a value that is asserted rather than
+  measured.
+
+  So the version is declared ONCE, here, and everything else derives from it:
+    - the assembly (this file feeds Version/InformationalVersion into the build),
+    - `GET /version` and `GET /health`, which read the assembly rather than a literal,
+    - `UpdateService`, which is handed the real running version instead of defaulting,
+    - the UI and the Tauri shell, whose copies are asserted equal by VersionModelTests — the test
+      fails the build when someone bumps one and forgets the others.
+
+  Bumping a release therefore means editing this file and running that test; if the test is green,
+  every surface agrees, because agreement is checked rather than assumed.
+-->
+<Project>
+  <PropertyGroup>
+    <!-- THE version. Keep in sync with ui/package.json and ui/src-tauri/tauri.conf.json —
+         VersionModelTests enforces it, so a mismatch is a failing test, not a silent drift. -->
+    <GpdForgeVersion>0.1.0</GpdForgeVersion>
+
+    <Version>$(GpdForgeVersion)</Version>
+    <!-- InformationalVersion is what `GET /version` reports. .NET appends the source-revision id
+         (+<commit sha>) to it when the build knows one, which is exactly the marker that would have
+         made the 2026-08-28 "installed binary predates the fix" diagnosis a glance instead of an
+         afternoon of string-hunting inside a shipped .exe. -->
+    <InformationalVersion>$(GpdForgeVersion)</InformationalVersion>
+    <Product>GPD Forge</Product>
+    <Company>GPD Forge contributors</Company>
+  </PropertyGroup>
+</Project>

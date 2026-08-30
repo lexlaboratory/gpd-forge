@@ -187,6 +187,18 @@ export interface SleepStudySummary {
 // UI, so the app could not tell you which build it was talking to or which board it had detected.
 export interface DaemonHealth { ok: boolean; version: string; model: string }
 
+// What the daemon build actually IS, read from its assembly rather than typed into a literal.
+// `commit` and `builtUtc` are null when the build did not record them — unknown must render as
+// unknown, because the entire value of these fields is that they can be trusted. `builtUtc` is the
+// field that answers "is the thing running older than the fix?" without archaeology on a binary.
+export interface DaemonVersion {
+  version: string
+  commit: string | null
+  builtUtc: string | null
+  runtime: string
+  model: string
+}
+
 // System health check / anomaly detection (mirror of core/Health/HealthCheck.cs).
 export type HealthLevel = 'warn' | 'critical'
 export interface HealthIssue { level: HealthLevel; code: string; message: string }

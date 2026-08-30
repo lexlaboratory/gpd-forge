@@ -13,7 +13,7 @@ import type {
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
-  DaemonHealth, StandbyRestoreOutcome,
+  DaemonHealth, DaemonVersion, StandbyRestoreOutcome,
   AppRulesInfo, AppRule, GameSession, SessionsResponse, GamesResponse,
 } from './types'
 
@@ -44,6 +44,9 @@ function post(body?: unknown): RequestInit {
 }
 
 export const getHealth = () => json<DaemonHealth>('/health')
+// What the daemon build is, from its assembly. The UI compares this against its OWN build so a stale
+// shell talking to a fresh daemon is visible on screen instead of being diagnosed from marker strings.
+export const getVersion = () => json<DaemonVersion>('/version')
 export const getTelemetry = () => json<Telemetry>('/telemetry')
 export const getMode = async () => (await json<{ active: ModeId }>('/mode')).active
 export const setMode = async (mode: ModeId) =>

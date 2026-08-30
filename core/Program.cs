@@ -466,7 +466,11 @@ builder.Services.AddSingleton<TunerState>();
 // Update checker: read-only GitHub REST call with a short timeout, degrades to "no update" on any
 // failure (see core/Update/). Not a hardware/BIOS write, so NOT gated behind GPDFORGE_ENABLE_HARDWARE.
 builder.Services.AddSingleton<ILatestReleaseSource, GitHubReleaseSource>();
-builder.Services.AddSingleton<UpdateService>();
+// The running version comes from the assembly, not from a literal. Handing it in explicitly is what
+// makes "is there an update?" a real comparison rather than a comparison against a forgotten constant.
+builder.Services.AddSingleton(sp => new UpdateService(
+    sp.GetRequiredService<ILatestReleaseSource>(),
+    GpdForge.Build.BuildInfo.Current.Version));
 
 // Migration + per-power-source config: reading MotionAssistant's saved profiles is read-only
 // filesystem access (same trust level as the WMI reads above), so it is NOT gated behind
@@ -515,7 +519,32 @@ app.UseCors();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapGet("/health", () => Results.Json(new { ok = true, version = "0.1.0", model = "GPD Win 4 (G1618-04)" }));
+app.MapGet("/health", () => Results.Json(new
+{
+    ok = true,
+    // Read from the assembly, never a literal. The hand-typed "0.1.0" that used to sit here could not
+    // go stale in a way anyone would notice, and the update checker believed it.
+    version = GpdForge.Build.BuildInfo.Current.Version,
+    model = "GPD Win 4 (G1618-04)",
+}));
+
+// What this build actually is. Exists because of the 2026-08-28 incident: the shell in Program Files
+// predated the commit that fixed telemetry, the daemon was healthy the whole time, and the only way
+// to establish that was hunting marker strings inside the installed binary. `builtUtc` answers that
+// by being read; `commit` is null when the build did not record one, because unknown must read as
+// unknown. The UI compares its own build against this to surface a stale shell on sight.
+app.MapGet("/version", () =>
+{
+    var b = GpdForge.Build.BuildInfo.Current;
+    return Results.Json(new
+    {
+        version = b.Version,
+        commit = b.Commit,
+        builtUtc = b.BuiltUtc,
+        runtime = GpdForge.Build.BuildInfo.Runtime,
+        model = "GPD Win 4 (G1618-04)",
+    });
+});
 
 app.MapGet("/alerts", (HttpContext ctx, AlertService alerts) =>
 {

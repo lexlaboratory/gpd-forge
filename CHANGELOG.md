@@ -5,6 +5,33 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **A version model with one source of truth, and `GET /version`.** The version used to be a
+  hand-typed literal in four independent places, with nothing keeping them equal and nothing failing
+  when they drifted. One of those places was `UpdateService`'s `currentVersion` **default parameter** —
+  and DI took the default, so the daemon compared every GitHub release against a constant nobody would
+  ever bump. It would have kept offering an update that was already installed. Every unit test passed
+  a version explicitly; production was the sole caller taking the default, which is the worst possible
+  place for that mistake to hide.
+
+  `<GpdForgeVersion>` in `Directory.Build.props` is now the only declaration. It feeds the assembly;
+  `/health` and the new `/version` read the assembly; `UpdateService` *requires* the version, so
+  forgetting to supply it is a compile error rather than a wrong answer. `ui/package.json` and
+  `ui/src-tauri/tauri.conf.json` keep copies because npm and Tauri each demand their own field, and
+  `VersionModelTests` asserts all three equal — drift is a failing build, not a slow surprise.
+
+  `/version` also reports the commit and the build timestamp, both **nullable and null when the build
+  did not record them**. Deterministic builds put a content hash in the PE timestamp field, which read
+  as unix seconds yields a confident, plausible, wrong date; implausible values are rejected rather
+  than shipped as a date, because the entire value of that field is that it can be trusted.
+
+- **Settings ▸ About now shows the shell build, the daemon build, and says when they disagree.** This
+  is the point of the whole change. On 2026-08-28 the app showed no telemetry while the daemon was
+  healthy the entire time — the shell in Program Files predated the commit that fixed it, and
+  establishing that took diffing the installed binary against a fresh build hunting for marker
+  strings. Nothing on screen could say which build was on screen. Now it can, and agreement stays
+  silent so the warning keeps its meaning.
+
 ### Changed
 - **The AI mode's sustained power shaping is now enforced instead of merely calculated.**
   `ProfileShaper` collapses fast/slow boost onto one flat ceiling for a good reason — boost above

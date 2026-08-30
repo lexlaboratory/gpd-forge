@@ -8,9 +8,18 @@
 // Run: node tools/mock-daemon/server.mjs   (PORT env, default 8787)
 
 import http from 'node:http'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 
 const PORT = Number(process.env.PORT ?? 8787)
-const VERSION = '0.1.0-mock'
+// The version the mock reports. Read from ui/package.json — the same copy VersionModelTests keeps
+// equal to Directory.Build.props — rather than hard-coded, so the UI's shell-vs-daemon comparison
+// exercises its AGREEING path here instead of permanently showing a mismatch against a literal that
+// only exists in this file. The old hard-coded '0.1.0-mock' did exactly that.
+const MOCK_DIR = dirname(fileURLToPath(import.meta.url))
+const VERSION = JSON.parse(
+  readFileSync(resolve(MOCK_DIR, '..', '..', 'ui', 'package.json'), 'utf8')).version
 const MODEL = 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370'
 
 const MODES = new Set(['gaming', 'ai', 'windows', 'battery', 'standby'])
@@ -515,6 +524,15 @@ const server = http.createServer(async (req, res) => {
   if (method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
 
   if (method === 'GET' && path === '/health') return send(res, 200, { ok: true, version: VERSION, model: MODEL })
+  // Mirrors core/Build/BuildInfo.cs. commit/builtUtc are null and that is the honest answer: a mock
+  // has no build. It is also the shape the UI must render without inventing a substitute, so making
+  // it the DEFAULT here is deliberate — the null path is the one that gets tested.
+  if (method === 'GET' && path === '/version') {
+    return send(res, 200, {
+      version: VERSION, commit: null, builtUtc: null,
+      runtime: `${process.release?.name ?? 'node'} ${process.version} (mock daemon)`, model: MODEL,
+    })
+  }
   if (method === 'GET' && path === '/alerts') {
     const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 100))
     const unread = url.searchParams.get('unreadOnly') === 'true'

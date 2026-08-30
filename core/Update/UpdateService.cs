@@ -64,7 +64,13 @@ public sealed class GitHubReleaseSource : ILatestReleaseSource, IDisposable
 /// Reports whatever the source found even when it isn't newer (so the UI can still show "latest:
 /// vX.Y.Z"); <see cref="UpdateCheckResult.UpdateAvailable"/> is the only field a caller needs to gate
 /// on. Never throws — a failed lookup surfaces as latest:null / updateAvailable:false.</summary>
-public sealed class UpdateService(ILatestReleaseSource source, string currentVersion = "0.1.0")
+// `currentVersion` is REQUIRED on purpose. It used to default to the literal "0.1.0", and DI built
+// this type with that default, so the daemon compared every GitHub release against a string nobody
+// would ever remember to bump — offering an update that was already installed, indefinitely. Every
+// test passed a version explicitly; production was the one caller taking the default, which is the
+// worst possible distribution of that mistake. Removing the default makes forgetting it a compile
+// error instead of a wrong answer. Program.cs supplies BuildInfo.Current.Version.
+public sealed class UpdateService(ILatestReleaseSource source, string currentVersion)
 {
     public async Task<UpdateCheckResult> CheckAsync(CancellationToken ct)
     {
