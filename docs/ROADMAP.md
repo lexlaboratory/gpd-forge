@@ -53,10 +53,26 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
     (confirmed against the live daemon 2026-08-29).
 - [x] `Telemetry/` read-only via WMI (battery/AC/discharge/clock/thermal-zone) — verified on device
 - [x] `Telemetry/` package power + fan RPM (broker) + FPS (Intel PresentMon, `GPDFORGE_ENABLE_FPS=1`)
-- [~] `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify — the safe-write layer
-      (backup → patch → verify → restore) is unit-tested but the byte offsets are still placeholders.
-      Device identity is now **confirmed on hardware**: VID_2F24 & PID_0135, presenting as 7 PnP
-      nodes (USB composite parent + MI_00/01/02, each also appearing as a HID node).
+- ⛔ `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify — **blocked on a measured fact,
+      not on effort.** The safe-write layer (backup → patch → verify → restore) is written and
+      unit-tested, and the device identity is confirmed on hardware (VID_2F24 & PID_0135, 7 PnP
+      nodes). What is NOT true is the transport this module was built on.
+
+      Measured 2026-08-30 with the new read-only probes: all three HID interfaces (MI_00/01/02) open —
+      with zero-access `CreateFile`, since Windows holds the input ones — and **all three report a
+      feature-report length of 0**. The 1024-byte config blob is therefore not reachable via
+      `HidD_GetFeature` on this device, so the placeholder offsets cannot be confirmed the way the
+      module assumes, and no write may be attempted.
+
+      Landed anyway, because it turns an assumption into a fact and makes the next step cheap:
+      `--probe-hid-dump` and `--probe-hid-diff` (read-only), interface enumeration that does not
+      depend on localised device names, zero-access open, and device-reported report lengths instead
+      of a hard-coded 1024. `WindowsHidConfigDevice.SetConfig` throws rather than no-op, so
+      `SafeConfigWriter`'s verify can never compare a blob against itself and call it success.
+
+      **Next step is investigation, not coding:** find out how WinControls actually reaches the pad —
+      a different PID in a config mode, a WinUSB interface, or a vendor endpoint. That is a piece of
+      work to decide on, not a detail to guess at.
 - [~] `Rtss/` single-owner arbitration — **mostly obsoleted 2026-08-30.** The reason this existed was
       the frame cap, and AMD's own FRTC now provides a real one through ADLX (`POST /gpu/frame-cap`),
       with no third-party dependency and nothing to arbitrate. What remains of the item is only the

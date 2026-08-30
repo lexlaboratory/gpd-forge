@@ -30,6 +30,85 @@ using GpdForge.Gpu;
 using GpdForge.Sessions;
 using Microsoft.Extensions.Logging;
 
+// HID config probes. READ ONLY — neither of these writes a byte to the controller.
+//
+// They exist to establish the byte offsets in ConfigOffsets, which are placeholders that have never
+// been confirmed against hardware. The loop is: dump, change ONE setting in GPD's own WinControls,
+// dump again, diff. The bytes that moved are the offset. WinControls does the writing with the
+// vendor's protocol; GPD Forge only observes, which is the difference between confirming an offset
+// and betting on one.
+//
+//   dotnet GpdForge.Service.dll --probe-hid-dump before.bin
+//   (remap L4 in WinControls)
+//   dotnet GpdForge.Service.dll --probe-hid-dump after.bin
+//   dotnet GpdForge.Service.dll --probe-hid-diff before.bin after.bin
+if (args.Contains("--probe-hid-dump"))
+{
+    var outPath = args.SkipWhile(a => a != "--probe-hid-dump").Skip(1).FirstOrDefault() ?? "hid-config.bin";
+    var paths = HidConfigPaths.Candidates().ToArray();
+
+    Console.WriteLine("GPD Forge HID config dump (read-only):");
+    Console.WriteLine($"  candidate interfaces: {paths.Length}");
+    foreach (var candidate in paths) Console.WriteLine($"    {candidate}");
+
+    // Try EVERY interface, not just the first that opens: opening succeeds on all three, and only
+    // one of them actually carries feature reports. Stopping at the first open was why this reported
+    // failure on a device that answers perfectly well on another node.
+    byte[]? blob = null;
+    string? source = null;
+    foreach (var candidate in paths)
+    {
+        using var dev = WindowsHidConfigDevice.TryOpen([candidate], out var why);
+        if (dev is null) { Console.WriteLine($"  {candidate}: {why}"); continue; }
+
+        var len = dev.FeatureReportLength();
+        Console.WriteLine($"  {candidate}: feature report length {(len is null ? "unreadable" : len.ToString())}");
+        try
+        {
+            blob = dev.GetConfig();
+            source = candidate;
+            break;
+        }
+        catch (Exception e) { Console.WriteLine($"    read failed: {e.Message}"); }
+    }
+
+    if (blob is null) { Console.WriteLine("  No interface returned a feature report."); return; }
+
+    Console.WriteLine($"  read from {source}");
+    try
+    {
+        File.WriteAllBytes(outPath, blob);
+        Console.WriteLine($"  wrote {blob.Length} bytes to {Path.GetFullPath(outPath)}");
+        // A blob that is entirely one value is almost certainly not the config: say so rather than
+        // let someone diff two pages of zeroes and conclude the offsets do not exist.
+        if (blob.Distinct().Count() <= 1)
+            Console.WriteLine("  WARNING: every byte is identical — this interface probably is not the config one.");
+    }
+    catch (Exception e) { Console.WriteLine($"  write failed: {e.Message}"); }
+    return;
+}
+
+if (args.Contains("--probe-hid-diff"))
+{
+    var rest = args.SkipWhile(a => a != "--probe-hid-diff").Skip(1).Take(2).ToArray();
+    if (rest.Length != 2) { Console.WriteLine("usage: --probe-hid-diff <before.bin> <after.bin>"); return; }
+
+    var a = File.ReadAllBytes(rest[0]);
+    var b = File.ReadAllBytes(rest[1]);
+    if (a.Length != b.Length) { Console.WriteLine($"different sizes: {a.Length} vs {b.Length}"); return; }
+
+    var changed = Enumerable.Range(0, a.Length).Where(i => a[i] != b[i]).ToArray();
+    Console.WriteLine($"GPD Forge HID config diff: {changed.Length} byte(s) changed of {a.Length}");
+    foreach (var i in changed)
+        Console.WriteLine($"  0x{i:X3}  {a[i]:X2} -> {b[i]:X2}   ({a[i]} -> {b[i]})");
+
+    if (changed.Length == 0)
+        Console.WriteLine("  Nothing moved. Either the setting was not applied, or it does not live in this blob.");
+    else if (changed.Length > 32)
+        Console.WriteLine("  That is a lot of movement for one setting — check that only ONE thing was changed.");
+    return;
+}
+
 // The GPU agent: `dotnet GpdForge.Service.dll --gpu-agent`, started in the USER'S session.
 //
 // ADLX cannot be reached from the daemon — it runs as LocalSystem in session 0 and ADLX needs the
