@@ -204,3 +204,82 @@ public class GpuProfileApplierTests
         Assert.Contains("unavailable", outcome.Reason, StringComparison.OrdinalIgnoreCase);
     }
 }
+
+public class GpuAgentStateTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 8, 29, 23, 0, 0, TimeSpan.Zero);
+
+    private static GpuAgentReport ReportAt(DateTimeOffset at, bool available = true)
+        => new(available, available ? "Ready" : "InitFailed", "1.5.0.124", "detail", null, at);
+
+    [Fact]
+    public void Never_having_reported_is_not_the_same_as_unavailable()
+    {
+        // The distinction this type exists for. "No agent has looked yet" told to a user as "your GPU
+        // cannot be controlled" is a lie that sends them hunting for a hardware problem.
+        var (report, usable, why) = new GpuAgentState().Current(Now);
+
+        Assert.Null(report);
+        Assert.False(usable);
+        Assert.Contains("has not reported yet", why);
+    }
+
+    [Fact]
+    public void A_recent_report_is_usable()
+    {
+        var state = new GpuAgentState();
+        state.Report(ReportAt(Now.AddSeconds(-3)));
+
+        var (report, usable, _) = state.Current(Now);
+        Assert.NotNull(report);
+        Assert.True(usable);
+    }
+
+    [Fact]
+    public void A_stale_report_is_returned_but_marked_unusable_with_its_age()
+    {
+        // Returned rather than discarded: a client that wants to say "last seen 4 minutes ago" needs
+        // the data. Unusable so it can never be rendered as the current state of the machine.
+        var state = new GpuAgentState();
+        state.Report(ReportAt(Now.AddMinutes(-4)));
+
+        var (report, usable, why) = state.Current(Now);
+        Assert.NotNull(report);
+        Assert.False(usable);
+        Assert.Contains("gone quiet", why);
+        Assert.Contains("240s", why);
+    }
+
+    [Fact]
+    public void An_agent_reporting_unavailable_is_believed_rather_than_second_guessed()
+    {
+        // The agent is the only thing that can actually talk to ADLX. If it says no, that IS the
+        // answer, and the reason it gives is the one worth showing.
+        var state = new GpuAgentState();
+        state.Report(ReportAt(Now, available: false));
+
+        var (_, usable, _) = state.Current(Now);
+        Assert.False(usable);
+    }
+
+    [Fact]
+    public void The_newest_report_wins()
+    {
+        var state = new GpuAgentState();
+        state.Report(ReportAt(Now.AddMinutes(-5)));
+        state.Report(ReportAt(Now));
+
+        Assert.True(state.IsFresh(Now));
+    }
+
+    [Fact]
+    public void Freshness_is_measured_from_the_report_not_from_process_start()
+    {
+        // An agent that started an hour ago but reported a second ago is healthy; one that started a
+        // second ago and has not reported is not. Only the report time answers that.
+        var state = new GpuAgentState();
+        Assert.False(state.IsFresh(Now));
+        state.Report(ReportAt(Now.AddSeconds(-1)));
+        Assert.True(state.IsFresh(Now));
+    }
+}

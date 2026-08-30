@@ -319,6 +319,10 @@ export interface GpuInfo {
   detail: string
   adapter: string | null
   adlxVersion?: string | null
-  settings?: GpuSettings
+  // When the user-session agent last checked in. ADLX cannot be reached from the session-0 service,
+  // so everything here is second-hand: null means no agent has ever reported, which is a different
+  // answer from "the agent said the GPU is unavailable".
+  lastReportUtc?: string | null
+  settings?: GpuSettings | null
   modeProfiles?: Record<string, GpuModeProfile>
 }

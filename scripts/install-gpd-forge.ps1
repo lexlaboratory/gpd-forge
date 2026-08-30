@@ -197,7 +197,12 @@ if ($Uninstall) {
     Remove-ForgeService
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
-    foreach ($p in @("$StartMenu\GPD Forge.lnk", "$StartupDir\GPD Forge Tray.lnk")) { if (Test-Path $p) { Remove-Item -Force $p } }
+    foreach ($p in @("$StartMenu\GPD Forge.lnk", "$StartupDir\GPD Forge Tray.lnk", "$StartupDir\GPD Forge GPU Agent.lnk")) { if (Test-Path $p) { Remove-Item -Force $p } }
+    # Kill a running GPU agent too. Left alive it would keep driving the Radeon settings from a session
+    # whose GPD Forge no longer exists — a process nobody can find still changing the machine.
+    foreach ($proc in Get-Process dotnet -ErrorAction SilentlyContinue) {
+        try { if ($proc.CommandLine -like '*--gpu-agent*') { $proc.Kill(); Write-Host "  stopped the GPU agent (pid $($proc.Id))" } } catch { }
+    }
     Write-Host "GPD Forge removed." -ForegroundColor Green
     return
 }
@@ -413,6 +418,28 @@ $trayLink.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershe
 $trayLink.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\forge-notify.ps1`""
 $trayLink.WorkingDirectory = $InstallDir; $trayLink.IconLocation = "$InstallDir\icon.ico"; $trayLink.Description = 'GPD Forge premium tray icon'; $trayLink.Save()
 
+# The GPU agent, in the USER'S session. It is not optional plumbing: ADLX cannot be reached from the
+# service at all (LocalSystem, session 0, no display driver stack), so without this the Radeon
+# profiles simply do not apply. It is the same signed-host + accepted-assembly combination the
+# service uses, so Smart App Control has nothing new to refuse.
+$agentLink = "$StartupDir\GPD Forge GPU Agent.lnk"
+if ($EnableGpuProfiles) {
+    $dotnetPath = (Get-Command dotnet).Source
+    $gpuLink = $wsh.CreateShortcut($agentLink)
+    $gpuLink.TargetPath = $dotnetPath
+    $gpuLink.Arguments = "`"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent"
+    $gpuLink.WorkingDirectory = "$InstallDir\service"
+    $gpuLink.IconLocation = "$InstallDir\icon.ico"
+    $gpuLink.Description = 'GPD Forge GPU agent (applies Radeon profiles; must run in your session)'
+    $gpuLink.WindowStyle = 7   # minimised: it is a background agent, not something to look at
+    $gpuLink.Save()
+    Write-Host "  GPU agent will start at logon (Radeon profiles)." -ForegroundColor DarkGray
+} elseif (Test-Path $agentLink) {
+    # Installing without the gate must not leave an agent behind that keeps driving the GPU.
+    Remove-Item -Force $agentLink
+    Write-Host "  removed the GPU agent autostart (GPU profiles not enabled)." -ForegroundColor DarkGray
+}
+
 # --- 6) start the service ---
 Write-Host "== 6/7  Starting the service ==" -ForegroundColor Cyan
 Start-Service $ServiceName
@@ -490,6 +517,16 @@ if ($shellFailure) {
         Write-Host "There is no installed window at all; use the web UI at $Url, which IS current." -ForegroundColor Yellow
     }
     exit 1
+}
+
+# Start the agent now rather than making the user log out to see the feature work.
+if ($EnableGpuProfiles) {
+    foreach ($p in Get-Process dotnet -ErrorAction SilentlyContinue) {
+        # A previous agent still running would hold the old assembly and post stale reports.
+        try { if ($p.CommandLine -like '*--gpu-agent*') { $p.Kill() } } catch { }
+    }
+    Start-Process (Get-Command dotnet).Source -ArgumentList "`"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent" -WindowStyle Hidden
+    Write-Host "GPU agent started in this session." -ForegroundColor DarkGray
 }
 
 Start-Process "$InstallDir\GPD Forge.exe"

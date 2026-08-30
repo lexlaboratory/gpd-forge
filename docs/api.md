@@ -435,13 +435,26 @@ issue list colored by severity otherwise.
   requiresBiosReboot: true, advisory }` — always `applied:false`: GPD Forge does not perform a blind UMA
   write (see `vram` above). Honest by construction rather than faking success.
 
-### `GET /gpu`  (AMD Radeon profiles via ADLX)
-`200 → { available: false, status, detail, adapter }`
-`200 → { available: true, status, adlxVersion, adapter, detail, settings, modeProfiles }`
+### `GET /gpu`  ·  `POST /gpu/state`  (AMD Radeon profiles via ADLX)
+`200 → { available: false, status, detail, adapter, lastReportUtc }`
+`200 → { available: true, status, adlxVersion, adapter, detail, lastReportUtc, settings, modeProfiles }`
 
-Anti-Lag, Chill, Boost, Image Sharpening and the driver's own frame-rate cap (FRTC), read live on
-every call — Adrenalin is a second writer to these settings, so reporting our last write as the
-current state would be a stale claim dressed up as a reading.
+Anti-Lag, Chill, Boost, Image Sharpening and the driver's own frame-rate cap (FRTC).
+
+🔴 **The daemon cannot read these itself, and does not pretend to.** Measured 2026-08-29: identical
+code initialises ADLX from an interactive session and fails under the service with *"ADLXInitialize
+did not return a system interface"* — the service is LocalSystem in **session 0**, and ADLX needs the
+display driver stack of an interactive session. The ADLX calls therefore run in a **GPU agent** in the
+user's session (`dotnet GpdForge.Service.dll --gpu-agent`, the same assembly so no new unsigned binary
+is introduced), which posts to `POST /gpu/state`. Everything `GET /gpu` returns is second-hand.
+
+- `lastReportUtc` is when the agent last checked in; the daemon stamps arrival itself rather than
+  trusting a clock it does not control, since freshness is the one thing that endpoint establishes.
+- A report older than 30 s is returned but marked `available:false`, with a detail saying how long it
+  has been quiet — the values describe that moment, not now.
+- `status: "NoAgent"` with `lastReportUtc: null` means **nothing has looked yet**. That is a different
+  answer from the agent reporting ADLX unavailable, and telling a user their GPU cannot be controlled
+  when the truth is "we have not checked" sends them hunting for a hardware fault.
 
 - **`available: false` means the client renders NOTHING**, not a disabled row. A greyed-out control
   still reads as "nearly working" when the honest answer is "this machine cannot" or "you have not

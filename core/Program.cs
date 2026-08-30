@@ -30,6 +30,22 @@ using GpdForge.Gpu;
 using GpdForge.Sessions;
 using Microsoft.Extensions.Logging;
 
+// The GPU agent: `dotnet GpdForge.Service.dll --gpu-agent`, started in the USER'S session.
+//
+// ADLX cannot be reached from the daemon — it runs as LocalSystem in session 0 and ADLX needs the
+// display driver stack of an interactive session (measured 2026-08-29). This is the same assembly
+// rather than a second executable on purpose: every new unsigned binary is another thing Smart App
+// Control can refuse, and reusing one Windows already accepts costs nothing.
+if (args.Contains("--gpu-agent"))
+{
+    // Not `return await ...`: this file is a top-level program, and returning a value here would
+    // retype Main as Task<int> and force every other early exit to return one too.
+    using var agentCts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; agentCts.Cancel(); };
+    await GpuAgentLoop.RunAsync("http://127.0.0.1:8787", null, agentCts.Token);
+    return;
+}
+
 // AMD GPU profile probe: `dotnet run -- --probe-gpu`. Initialises ADLX and verifies the hand-written
 // vtable layout against a fact read independently over WMI, then terminates. Reads only — it does not
 // change a single Radeon setting. This is the check that has to pass before anything is allowed to
@@ -432,6 +448,8 @@ builder.Services.AddSingleton<AiState>();
 // both wasteful and a good way to find its reentrancy bugs. It is created lazily, only once the
 // availability probe has verified the vtable, so a machine without ADLX never loads it at all.
 builder.Services.AddSingleton<ISystemMemoryProbe, WmiSystemMemoryProbe>();
+// Holds what the user-session GPU agent last reported. The daemon cannot read ADLX itself.
+builder.Services.AddSingleton<GpuAgentState>();
 builder.Services.AddSingleton<GpuProfileService>();
 builder.Services.AddSingleton<AdlxInterop>(sp =>
 {
@@ -789,44 +807,68 @@ app.MapPost("/ai/anti-standby", (AntiStandbyRequest r, AntiStandbyService anti, 
 // AMD GPU profiles. `available:false` means the UI hides the section entirely rather than greying it
 // out — a disabled row still reads as "nearly working", and the honest answer here is either "this
 // machine cannot" or "you have not switched it on".
-app.MapGet("/gpu", (GpuProfileService svc, AdlxInterop interop, IVramReader vram) =>
+// AMD GPU profiles. The daemon reports what the user-session agent last told it: ADLX cannot be
+// reached from a session-0 service, so these values are second-hand by construction and the response
+// says so rather than presenting them as a live reading.
+//
+// `available:false` means the UI hides the section entirely rather than greying it out — a disabled
+// row still reads as "nearly working", and the honest answers here are "no agent has looked yet",
+// "the agent went quiet" or "ADLX said no", which are three different things.
+app.MapGet("/gpu", (GpuAgentState agent, IVramReader vram) =>
 {
-    var status = svc.Status(vram.Read().AdapterName);
-    if (!status.Available)
-        return Results.Json(new { available = false, status = status.Status, detail = status.Detail, adapter = status.AdapterName });
+    var (report, usable, explanation) = agent.Current(DateTimeOffset.UtcNow);
+    var adapter = vram.Read().AdapterName;
 
-    // Read live rather than from a cache: Adrenalin is a second writer to these settings and the user
-    // may have changed them there since we last looked. Reporting our last write as the current state
-    // would be exactly the kind of stale claim this project keeps removing.
-    var settings = new AdlxSettings(interop.System);
-    var snap = settings.Read();
+    if (report is null || !usable)
+        return Results.Json(new
+        {
+            available = false,
+            status = report?.Status ?? "NoAgent",
+            detail = explanation,
+            adapter,
+            // Present but stale is a different situation from never-reported, and a client that wants
+            // to say "last seen 4 minutes ago" needs the timestamp to do it.
+            lastReportUtc = report?.AtUtc,
+        });
+
     static object? Feature(GpuFeatureState? f) => f is null
-        ? null   // null = could not be queried. NOT the same as unsupported, and not the same as off.
+        ? null   // null = the driver did not answer. NOT "unsupported", NOT "off".
         : new { supported = f.Supported, enabled = f.Enabled, value = f.Value };
 
+    var s = report.Settings;
     return Results.Json(new
     {
         available = true,
-        status = status.Status,
-        adlxVersion = status.AdlxVersion,
-        adapter = status.AdapterName,
-        detail = status.Detail,
-        settings = new
+        status = report.Status,
+        adlxVersion = report.AdlxVersion,
+        adapter,
+        detail = report.Detail,
+        lastReportUtc = report.AtUtc,
+        settings = s is null ? null : new
         {
-            antiLag = Feature(snap.AntiLag),
-            chill = Feature(snap.Chill),
-            boost = Feature(snap.Boost),
-            imageSharpening = Feature(snap.ImageSharpening),
-            frameRateCap = Feature(snap.FrameRateTargetControl),
+            antiLag = Feature(s.AntiLag),
+            chill = Feature(s.Chill),
+            boost = Feature(s.Boost),
+            imageSharpening = Feature(s.ImageSharpening),
+            frameRateCap = Feature(s.FrameRateTargetControl),
         },
-        // What each mode will do to the GPU, so the panel can say what is about to happen rather than
-        // only what happened.
         modeProfiles = GpuModeProfiles.Modes.ToDictionary(m => m, m =>
         {
             var p = GpuModeProfiles.For(m)!;
             return new { name = p.Name, antiLag = p.AntiLag, chill = p.Chill, boost = p.Boost };
         }),
     });
+});
+
+// Where the agent checks in. Localhost-only like the rest of this API.
+app.MapPost("/gpu/state", (GpuAgentReportRequest r, GpuAgentState agent) =>
+{
+    // Stamped HERE rather than trusting a timestamp from the caller: freshness is the one thing this
+    // endpoint exists to establish, and a clock we do not control is not evidence about it.
+    agent.Report(new GpuAgentReport(
+        r.Available, r.Status ?? "Unknown", r.AdlxVersion, r.Detail ?? string.Empty,
+        r.Settings, DateTimeOffset.UtcNow));
+    return Results.Json(new { accepted = true });
 });
 
 // VRAM/UMA is a BIOS setting (GOP/_DSM at boot) — GPD Forge reads it live but never writes it
@@ -1368,6 +1410,16 @@ namespace GpdForge.Api
 
     // --- Agents / AI mode ---
     public sealed record AntiStandbyRequest(bool Enable);
+
+    /// <summary>What the user-session GPU agent posts to /gpu/state. No timestamp: the daemon stamps
+    /// arrival itself, because freshness is exactly what this endpoint exists to establish and a
+    /// clock we do not control is not evidence about it.</summary>
+    public sealed record GpuAgentReportRequest(
+        bool Available,
+        string? Status,
+        string? AdlxVersion,
+        string? Detail,
+        GpdForge.Gpu.GpuSettingsSnapshot? Settings);
     public sealed record VramRequest(double? RequestedMb);
 
     /// <summary>Tracks whether the manual "keep awake" override (POST /ai/anti-standby) is on, so a

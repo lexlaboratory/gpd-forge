@@ -866,16 +866,21 @@ const server = http.createServer(async (req, res) => {
   // is closed) and, more importantly, the case the UI must handle by rendering nothing at all. A mock
   // that served the interesting case would leave the hide-entirely path untested — which is exactly
   // how this repo once shipped alert severities that only worked against their own maquette.
+  // The agent posts here; the daemon stamps arrival time itself. Accepted and ignored by the mock —
+  // it exists so a client exercising the full agent loop does not get a 404 it has to special-case.
+  if (method === 'POST' && path === '/gpu/state') return send(res, 200, { accepted: true })
   if (method === 'GET' && path === '/gpu') {
     if (!state.gpu.available) {
       return send(res, 200, {
-        available: false, status: 'Disabled', adapter: state.ai.adapterName,
-        detail: 'GPU profile control is off. Set GPDFORGE_ENABLE_GPU_PROFILES=1 on the service to enable it.',
+        available: false, status: 'NoAgent', adapter: state.ai.adapterName,
+        lastReportUtc: null,
+        detail: 'The GPU agent has not reported yet. It runs in your Windows session (ADLX cannot be reached from the service), so it starts when you log in.',
       })
     }
     return send(res, 200, {
       available: true, status: 'Ready', adlxVersion: '1.5.0.124', adapter: state.ai.adapterName,
       detail: 'Verified against TotalSystemRAM = 28280 MB.',
+      lastReportUtc: new Date().toISOString(),
       settings: state.gpu.settings,
       modeProfiles: {
         gaming: { name: 'Gaming', antiLag: true, chill: false, boost: false },
