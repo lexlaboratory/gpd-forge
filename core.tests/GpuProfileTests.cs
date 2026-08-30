@@ -180,31 +180,6 @@ public class GpuModeProfileTests
     }
 }
 
-public class GpuProfileApplierTests
-{
-    private sealed class FakeMemory : ISystemMemoryProbe { public uint TotalRamMb() => 28280; }
-
-    private static GpuProfileApplier WithGateClosed()
-        => new(new GpuProfileService(new FakeMemory(), null, _ => null), () => null);
-
-    [Fact]
-    public void A_mode_without_a_gpu_profile_is_skipped_with_a_reason()
-    {
-        var outcome = WithGateClosed().ApplyForMode("standby");
-        Assert.False(outcome.Attempted);
-        Assert.Contains("no GPU profile", outcome.Reason);
-    }
-
-    [Fact]
-    public void With_the_gate_closed_nothing_is_attempted_and_the_reason_says_so()
-    {
-        var outcome = WithGateClosed().ApplyForMode("gaming");
-        Assert.False(outcome.Attempted);
-        Assert.Empty(outcome.Applied);
-        Assert.Contains("unavailable", outcome.Reason, StringComparison.OrdinalIgnoreCase);
-    }
-}
-
 public class GpuAgentStateTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 29, 23, 0, 0, TimeSpan.Zero);

@@ -13,8 +13,6 @@
 //
 // The defaults below are opinions about a handheld, and each is argued rather than assumed, because a
 // default that silently changes how someone's games look or feel is worse than no default at all.
-using Microsoft.Extensions.Logging;
-
 namespace GpdForge.Gpu;
 
 public static class GpuModeProfiles
@@ -52,52 +50,4 @@ public static class GpuModeProfiles
 
     /// <summary>The modes that carry a GPU profile. For the UI, so it can show what will happen.</summary>
     public static IReadOnlyCollection<string> Modes => (IReadOnlyCollection<string>)Defaults.Keys;
-}
-
-/// <summary>The outcome of applying a mode's GPU profile. Never "success" by default.</summary>
-/// <param name="Attempted">False when there was nothing to do or no way to do it.</param>
-/// <param name="Applied">Per-feature results as the driver reported them.</param>
-public sealed record GpuApplyOutcome(bool Attempted, string Reason, IReadOnlyDictionary<string, bool> Applied)
-{
-    public static GpuApplyOutcome Skipped(string reason)
-        => new(false, reason, new Dictionary<string, bool>());
-}
-
-/// <summary>
-/// Applies a mode's GPU profile, if there is one and if ADLX is usable. Every path is a no-op that
-/// says why rather than a silent one: a GPU profile that quietly did not apply is indistinguishable
-/// from a driver that ignored it, and this project has paid for that confusion before.
-/// </summary>
-public sealed class GpuProfileApplier(
-    GpuProfileService availability,
-    Func<AdlxSettings?> settingsFactory,
-    ILogger<GpuProfileApplier>? logger = null)
-{
-    public GpuApplyOutcome ApplyForMode(string mode)
-    {
-        var profile = GpuModeProfiles.For(mode);
-        if (profile is null)
-            return GpuApplyOutcome.Skipped($"Mode '{mode}' has no GPU profile — the GPU is left as configured.");
-
-        if (profile.Conflict is string conflict)
-            return GpuApplyOutcome.Skipped(conflict);
-
-        var status = availability.Status();
-        if (!status.Available)
-            return GpuApplyOutcome.Skipped($"GPU profile control unavailable: {status.Detail}");
-
-        var settings = settingsFactory();
-        if (settings is null)
-            return GpuApplyOutcome.Skipped("ADLX reported ready but no settings handle was available.");
-
-        var applied = settings.Apply(profile);
-
-        // Log what did NOT take. A partially applied profile is the failure mode worth noticing, and
-        // it is invisible unless something says so.
-        foreach (var (feature, ok) in applied.Where(kv => !kv.Value))
-            logger?.LogInformation("GPU profile '{Profile}': {Feature} did not apply (unsupported, or the driver refused).",
-                profile.Name, feature);
-
-        return new GpuApplyOutcome(true, $"Applied GPU profile '{profile.Name}' for mode '{mode}'.", applied);
-    }
 }

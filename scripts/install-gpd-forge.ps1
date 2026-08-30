@@ -203,6 +203,7 @@ if ($Uninstall) {
     foreach ($proc in Get-Process dotnet -ErrorAction SilentlyContinue) {
         try { if ($proc.CommandLine -like '*--gpu-agent*') { $proc.Kill(); Write-Host "  stopped the GPU agent (pid $($proc.Id))" } } catch { }
     }
+    [Environment]::SetEnvironmentVariable('GPDFORGE_ENABLE_GPU_PROFILES', $null, 'Machine')
     Write-Host "GPD Forge removed." -ForegroundColor Green
     return
 }
@@ -407,7 +408,19 @@ if (-not $NoFps) {
 # ADLX is a user-mode driver API, unrelated to the MSR/EC paths, so it gets its own gate rather than
 # riding on -NoHardware: a fault here must not be able to take down power control that has been
 # validated on the metal.
-if ($EnableGpuProfiles) { $envLines += "GPDFORGE_ENABLE_GPU_PROFILES=1" }
+# The gate must be visible to the AGENT, which is a process in the user's session and cannot see the
+# service's registry Environment. Setting it machine-wide is what makes the same opt-in govern both,
+# and it is removed again when installing without the flag so an autostart entry can never outlive
+# its own permission.
+if ($EnableGpuProfiles) {
+    [Environment]::SetEnvironmentVariable('GPDFORGE_ENABLE_GPU_PROFILES', '1', 'Machine')
+    $env:GPDFORGE_ENABLE_GPU_PROFILES = '1'   # so the agent started below inherits it immediately
+} else {
+    [Environment]::SetEnvironmentVariable('GPDFORGE_ENABLE_GPU_PROFILES', $null, 'Machine')
+}
+# NOT added to the service's own environment: the daemon must never hold an ADLX handle. It did once,
+# and a second handle's ADLXTerminate invalidated the first one's pointers, crashing the service with
+# an access violation that no try/catch can intercept (2026-08-30).
 
 New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name Environment `
     -PropertyType MultiString -Value $envLines -Force | Out-Null

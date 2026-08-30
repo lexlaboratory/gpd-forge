@@ -31,6 +31,20 @@ public static class GpuAgentLoop
     {
         using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = HttpTimeout };
 
+        // The agent honours the same gate as the rest of the feature. Without this it would drive the
+        // Radeon settings whenever someone started it, regardless of whether the machine was ever
+        // configured to allow that — an autostart entry outliving its own opt-in.
+        if (Environment.GetEnvironmentVariable(GpuProfileService.GateVariable) != "1")
+        {
+            Console.WriteLine($"GPD Forge GPU agent: {GpuProfileService.GateVariable} is not set — exiting.");
+            Console.WriteLine("  Install with -EnableGpuProfiles to allow GPD Forge to set Radeon profiles.");
+            return 0;
+        }
+
+        // Exactly ONE AdlxInterop per process, for its whole lifetime. A second one would call
+        // ADLXTerminate on Dispose, which invalidates every ADLX object in the process and turns the
+        // survivor's pointers into invalid memory — that crashed the daemon on 2026-08-30, and an
+        // AccessViolationException cannot be caught, so there is no recovering from it afterwards.
         using var adlx = new AdlxInterop(logger);
         var memory = new WmiSystemMemoryProbe();
         var probe = adlx.Initialise(memory.TotalRamMb());

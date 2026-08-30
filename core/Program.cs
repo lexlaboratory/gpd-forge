@@ -445,57 +445,22 @@ builder.Services.AddSingleton<AntiStandbyService>();
 builder.Services.AddSingleton<IVramReader, WmiVramReader>();
 builder.Services.AddSingleton<AiState>();
 
-// AMD GPU profiles (Anti-Lag / Chill / Boost) via ADLX. Own gate, separate from the hardware one on
-// purpose: ADLX is a user-mode driver API with nothing to do with the MSR/EC paths, and a fault here
-// must not be able to take down power control that has been validated on the metal.
+// AMD GPU profiles. The daemon deliberately holds NO ADLX handle and never calls it.
 //
-// The ADLX handle is process-lifetime: initialising and terminating a driver library per request is
-// both wasteful and a good way to find its reentrancy bugs. It is created lazily, only once the
-// availability probe has verified the vtable, so a machine without ADLX never loads it at all.
-builder.Services.AddSingleton<ISystemMemoryProbe, WmiSystemMemoryProbe>();
-// Holds what the user-session GPU agent last reported. The daemon cannot read ADLX itself.
+// It used to. On 2026-08-30 that crashed the service with an access violation
+// (0xc0000005 in AdlxSettings.SetEnabled) moments after install, taking TDP and fan control down
+// with it. Two mistakes compounded: the daemon still applied GPU profiles through ProfileApplier —
+// leftover from before the agent existed — and GpuProfileService built its OWN AdlxInterop whose
+// Dispose calls ADLXTerminate, which invalidates every ADLX object in the PROCESS. The other
+// handle's pointers became invalid memory and the next call walked into it. That is precisely the
+// ADLX_ORPHAN_OBJECTS condition the SDK warns about.
+//
+// The lesson that generalises: an AccessViolationException is NOT catchable in .NET. The try/catch
+// around those interop calls reads like containment and provides none — the process simply dies.
+// The only real containment is to not make the call, which is why every ADLX call now lives in the
+// user-session agent (where it must be anyway, session 0 cannot reach ADLX) and the daemon merely
+// stores what the agent reports.
 builder.Services.AddSingleton<GpuAgentState>();
-builder.Services.AddSingleton<GpuProfileService>();
-builder.Services.AddSingleton<AdlxInterop>(sp =>
-{
-    var interop = new AdlxInterop(sp.GetService<ILogger<AdlxInterop>>());
-    interop.Initialise(sp.GetRequiredService<ISystemMemoryProbe>().TotalRamMb());
-    return interop;
-});
-builder.Services.AddSingleton(sp => new GpuProfileApplier(
-    sp.GetRequiredService<GpuProfileService>(),
-    () =>
-    {
-        var interop = sp.GetRequiredService<AdlxInterop>();
-        return interop.System == IntPtr.Zero ? null : new AdlxSettings(interop.System, sp.GetService<ILogger<AdlxSettings>>());
-    },
-    sp.GetService<ILogger<GpuProfileApplier>>()));
-
-// P3.3 — the UMA split stays BIOS-only (there is still no safe user-mode write; see VramAdvisor), but
-// the reading is now persisted so a change can be CONFIRMED across a reboot instead of assumed. This
-// is a read plus a small local file, so it is not gated behind GPDFORGE_ENABLE_HARDWARE.
-builder.Services.AddSingleton<IBootClock, WmiBootClock>();
-builder.Services.AddSingleton<IVramHistoryStore>(sp => new FileVramHistoryStore());
-builder.Services.AddSingleton<VramHistory>();
-
-// P3.2 — keep the machine awake for inference GPD Forge did NOT start (ollama, LM Studio,
-// llama-server, a training script in a terminal). Like AntiStandbyService itself this performs no
-// hardware write — SetThreadExecutionState is an unprivileged, self-cleaning power request — so it is
-// deliberately NOT behind GPDFORGE_ENABLE_HARDWARE.
-//
-// It ships OBSERVE-ONLY: the worker always samples and always publishes what it WOULD hold for, and
-// only takes a real hold when GPDFORGE_INFERENCE_HOLD=1. That default is the point. Until 2026-08-29
-// this machine never entered Modern Standby, so there is no field evidence about which processes
-// deserve a hold; enforcing first and gathering evidence afterwards is how the 14.4 W overnight drain
-// happened. The feature collects its own justification before it is allowed to act.
-//
-// The worker is registered unconditionally rather than gated out of existence, so that the endpoint
-// below always answers with something real instead of a shape that only exists in one configuration.
-var inferenceHold = InferenceHoldOptions.FromEnvironment();
-builder.Services.AddSingleton(inferenceHold);
-builder.Services.AddSingleton(new InferenceHoldState(inferenceHold));
-builder.Services.AddSingleton<IProcessCpuSampler, SystemProcessCpuSampler>();
-builder.Services.AddHostedService<InferenceHoldWorker>();
 
 builder.Services.AddSingleton<JobsState>();   // holds an anti-standby lock while a job is "running"
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
