@@ -36,6 +36,20 @@ jobs:
           if (-not $v) { $v = "${{ github.ref_name }}".TrimStart('v') }
           Write-Host "Packaging portable v$v"
           ./scripts/package-portable.ps1 -Version $v
+
+      # Extract THIS version's notes. `body_path: CHANGELOG.md` published v0.2.0 with the whole file
+      # as its body - header, empty [Unreleased] section and every previous release's notes - and
+      # nobody saw it until it was public, because this workflow finishes before a human looks.
+      #
+      # The script exits non-zero when the version has no section, which fails the job on purpose: a
+      # missing section means the changelog was not updated for this release, and falling back to the
+      # whole file would silently recreate the bug.
+      - name: Extract release notes for this version
+        shell: pwsh
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          if (-not $v) { $v = "${{ github.ref_name }}".TrimStart('v') }
+          ./scripts/changelog-section.ps1 -Version $v -OutFile release-notes.md
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -46,7 +60,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist-release/*.zip
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
 
   signed-native:
     runs-on: windows-latest

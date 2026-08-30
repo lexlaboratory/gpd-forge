@@ -43,3 +43,20 @@ jobs:
         run: dotnet build core/GpdForge.Service.csproj -c Release
       - name: Test core
         run: dotnet test core.tests/GpdForge.Core.Tests.csproj -c Release
+
+      # The release notes extractor, checked here rather than discovered on a tag push. It only runs
+      # during a release, so without this its first execution would be the one that matters - and the
+      # bug it replaces was published before anyone could look at it.
+      - name: Self-test the changelog extractor
+        shell: pwsh
+        run: ./scripts/changelog-section.ps1 -SelfTest
+
+      # The notes for the version currently declared must actually exist. This fails the build when
+      # Directory.Build.props is bumped and the changelog is not, which is precisely the state that
+      # would make a future release job die halfway through cutting a tag.
+      - name: The declared version has a changelog section
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Directory.Build.props -Pattern '<GpdForgeVersion>([^<]+)').Matches[0].Groups[1].Value
+          Write-Host "Declared version: $v"
+          ./scripts/changelog-section.ps1 -Version $v -OutFile $env:RUNNER_TEMP/notes.md
