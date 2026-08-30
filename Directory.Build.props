@@ -25,7 +25,7 @@
   <PropertyGroup>
     <!-- THE version. Keep in sync with ui/package.json and ui/src-tauri/tauri.conf.json —
          VersionModelTests enforces it, so a mismatch is a failing test, not a silent drift. -->
-    <GpdForgeVersion>0.1.0</GpdForgeVersion>
+    <GpdForgeVersion>0.2.0</GpdForgeVersion>
 
     <Version>$(GpdForgeVersion)</Version>
     <!-- InformationalVersion is what `GET /version` reports. .NET appends the source-revision id

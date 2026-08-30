@@ -27,6 +27,8 @@
 //
 // Nothing here changes the app: the stubbing lives in the test, the app is byte-for-byte the one
 // that ships.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
 
 // Must match the VITE_FORGE_API baked into the preview build by playwright.config.ts — that is the
@@ -52,17 +54,26 @@ const THEMES = ['dark', 'light'] as const
 // Captured from tools/mock-daemon/server.mjs at its start-up state, with the jittered numbers
 // pinned. Keyed by pathname; anything not listed falls through to the real mock so a newly added
 // endpoint shows up as a visible diff rather than a silent 404.
+// Read from package.json, not hard-coded. A frozen '0.1.0' here meant that bumping the release made
+// the About card show a shell-vs-daemon MISMATCH warning in every baseline — a fixture disagreeing
+// with the app it is supposed to depict, failing seven screenshots for a reason that had nothing to
+// do with the UI. The whole point of the version model is that there is one source of truth.
+// __dirname, not import.meta: Playwright loads specs as CommonJS here, where import.meta is a
+// syntax error rather than a missing value — the whole file fails to load.
+const UI_VERSION: string = JSON.parse(
+  readFileSync(join(__dirname, '..', '..', 'ui', 'package.json'), 'utf8')).version
+
 const ALERT_SEEN = '2026-08-28T09:12:00.000Z'
 const ALERT_LAST = '2026-08-28T09:41:00.000Z'
 
 const FIXTURES: Record<string, unknown> = {
-  '/health': { ok: true, version: '0.1.0', model: 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370' },
+  '/health': { ok: true, version: UI_VERSION, model: 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370' },
   // Frozen on purpose. Left to the live mock, `runtime` would carry the Node version, so a routine
   // Node upgrade would fail every "sections" baseline for a reason unrelated to the UI. The version
   // itself is deliberately NOT frozen away from the real one: the About card compares shell against
   // daemon, and a fixture that disagreed would bake the mismatch warning into every baseline.
   '/version': {
-    version: '0.1.0', commit: null, builtUtc: null,
+    version: UI_VERSION, commit: null, builtUtc: null,
     runtime: 'frozen runtime (visual fixture)', model: 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370',
   },
   '/telemetry': {

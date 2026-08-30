@@ -5,6 +5,32 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-30
+
+First release with the daemon doing real work on real hardware. The theme, if there is one, is that
+the app stopped claiming things it had not verified.
+
+### The headline
+- **AMD Radeon profiles** — Anti-Lag, Chill, Boost, Image Sharpening and the driver's own frame-rate
+  cap, applied automatically per mode (and therefore per app, through the existing rules). Reached
+  through ADLX's C interface with no native shim, verified against the driver on every read.
+- **A real frame cap** (FRTC), distinct from the auto-TDP target it used to be mislabelled as.
+- **The window closes to the tray** instead of exiting — it is a controller's UI, and the daemon keeps
+  working either way.
+- **Hibernate policy**, because this board has no S1/S2/S3 and Modern Standby is what drains it.
+- **A version model with one source of truth**, and an About card that says when the shell and daemon
+  are from different builds.
+- **An audit log of every hardware write**, with three-valued verification: written, refused, or
+  could-not-be-confirmed.
+
+### What is honest about it
+Several things this release does are refusals. `/firmware` reports and will not flash. The controller
+config write path is blocked on a measured fact — none of the pad's HID interfaces expose feature
+reports — rather than shipped on a guess. GPU profiles report `available:false` with a reason rather
+than a switch that does nothing. Where a value cannot be measured it is `null`, never a plausible
+substitute.
+
+
 ### Added
 - **A version model with one source of truth, and `GET /version`.** The version used to be a
   hand-typed literal in four independent places, with nothing keeping them equal and nothing failing

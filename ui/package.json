@@ -1,7 +1,7 @@
 {
   "name": "gpd-forge-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "GPD Forge UI — Vite + React client of the local daemon API. Wrapped by Tauri 2 for the desktop app; also servable in a browser as a remote dashboard.",
   "license": "GPL-3.0-or-later",
