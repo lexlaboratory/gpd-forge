@@ -169,12 +169,16 @@ const state = {
   // flips availability on it exercises a real shape rather than an invented one.
   gpu: {
     available: false,
+    capRequested: false,
+    frameCapFps: null,
     settings: {
       antiLag: { supported: true, enabled: false, value: null },
       chill: { supported: true, enabled: true, value: 60 },
       boost: { supported: true, enabled: false, value: 84 },
       imageSharpening: { supported: true, enabled: false, value: 80 },
-      frameRateCap: { supported: true, enabled: false, value: 60 },
+      // min/max are the real values this device's driver reports (15..1000), so a client exercising
+      // the range check meets the same bounds it will meet in production.
+      frameRateCap: { supported: true, enabled: false, value: 60, min: 15, max: 1000 },
     },
   },
   presets: {
@@ -869,6 +873,33 @@ const server = http.createServer(async (req, res) => {
   // The agent posts here; the daemon stamps arrival time itself. Accepted and ignored by the mock —
   // it exists so a client exercising the full agent loop does not get a 404 it has to special-case.
   if (method === 'POST' && path === '/gpu/state') return send(res, 200, { accepted: true })
+  if (method === 'GET' && path === '/gpu/desired') {
+    return send(res, 200, { requested: state.gpu.capRequested, frameCapFps: state.gpu.frameCapFps, requestedAtUtc: null })
+  }
+  // Mirrors the daemon: never claims applied:true, because the daemon cannot apply it either — the
+  // user-session agent does, seconds later. A mock that answered "applied" would train the UI to
+  // trust a confirmation the real thing never sends.
+  if (method === 'POST' && path === '/gpu/frame-cap') {
+    // Every other POST route reads the body this way; omitting it crashed the mock on the first
+    // request. The E2E still passed, because it only asserted that the POST was SENT — a test that
+    // is green while the server it talks to is dying.
+    const capBody = await readBody(req)
+    const fps = capBody?.fps ?? null
+    const frtc = state.gpu.settings.frameRateCap
+    if (fps !== null && (fps < frtc.min || fps > frtc.max)) {
+      return send(res, 400, { applied: false, pending: false, reason: `The driver's supported frame cap range is ${frtc.min}-${frtc.max} FPS.` })
+    }
+    if (fps !== null && state.autoFps.enabled && fps < state.autoFps.targetFps) {
+      return send(res, 409, {
+        applied: false, pending: false,
+        reason: `A ${fps} FPS cap sits below the ${state.autoFps.targetFps} FPS auto-FPS target.`,
+      })
+    }
+    state.gpu.capRequested = true
+    state.gpu.frameCapFps = fps
+    state.gpu.settings.frameRateCap = { ...frtc, enabled: fps !== null, value: fps ?? frtc.value }
+    return send(res, 200, { applied: false, pending: true, requested: fps, reason: 'Handed to the GPU agent.' })
+  }
   if (method === 'GET' && path === '/gpu') {
     if (!state.gpu.available) {
       return send(res, 200, {

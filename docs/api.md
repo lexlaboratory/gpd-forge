@@ -486,6 +486,11 @@ steers TDP toward a target and does not stop the GPU exceeding it. `fps: null` d
   endpoint claiming success for work that has not happened is the thing this project keeps deleting.
 - `400` with the driver's real limit when the value is out of range (this device reports **15–1000**),
   so a refused value teaches what would work. `409` when no agent is reporting or the GPU has no FRTC.
+- ⚠️ **`409` when the cap would sit below an ACTIVE auto-FPS target.** Auto-FPS steers TDP to *reach*
+  a rate; FRTC refuses to *exceed* one. A cap under the target makes auto-FPS raise power forever
+  chasing frames the driver is holding back — hot, loud, no extra frames, and no error anywhere. The
+  same check runs on `POST /auto-fps`, so it cannot be walked around from the other side. A disabled
+  auto-FPS never blocks a cap: its target governs nothing.
 - `GET /gpu/desired` is what the agent reconciles towards; only it reads this. `requested: false`
   means nobody has asked for anything and the GPU must be left alone — starting the daemon is not a
   reason to change someone's Adrenalin settings. Desired state rather than a command queue, so an

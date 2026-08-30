@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModeId, Telemetry, BatteryBudget } from './types'
 import {
   getTelemetry, getMode, setMode, setTdp, getProfiles, getFan, setFan,
-  getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby,
+  getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby, getGpu, setFrameCap,
 } from './api'
 import { Segmented, Stepper } from './components'
 import { useToast } from './Toast'
@@ -25,10 +25,17 @@ const QMODES: { id: ModeId; icon: string; label: string }[] = [
   { id: 'standby', icon: '🩺', label: 'Standby' },
 ]
 const FAN_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive']
+// Two different things, and the overlay used to show only the first under the second's name.
+//   FPS_TARGETS -> auto-FPS: steers TDP to REACH this rate. Does not stop the GPU exceeding it.
+//   CAP_OPTIONS -> FRTC: the driver refusing to EXCEED this rate. An actual cap.
+// Labelling auto-FPS as "FPS cap" promised a ceiling and delivered a goal — the exact class of
+// mislabelled control this project has spent releases removing.
 const FPS_TARGETS = [{ label: 'Off', v: 0 }, { label: '30', v: 30 }, { label: '60', v: 60 }, { label: '90', v: 90 }, { label: '120', v: 120 }]
+const CAP_TARGETS = [{ label: 'Off', v: 0 }, { label: '30', v: 30 }, { label: '45', v: 45 }, { label: '60', v: 60 }, { label: '90', v: 90 }]
 
 const FAN_OPTIONS = FAN_MODES.map((f) => ({ id: f, label: f, testid: `qam-fan-${f}` }))
 const FPS_OPTIONS = FPS_TARGETS.map((t) => ({ id: String(t.v), label: t.label, testid: `qam-fps-${t.v}` }))
+const CAP_OPTIONS = CAP_TARGETS.map((t) => ({ id: String(t.v), label: t.label, testid: `qam-cap-${t.v}` }))
 
 /** Close the overlay: hide the native window if we're in Tauri, else close the browser app-window. */
 function closeOverlay() {
@@ -57,6 +64,10 @@ export function OverlayApp() {
   const [verified, setVerified] = useState(true)
   const [fan, setFanS] = useState('Auto')
   const [fpsTarget, setFpsTarget] = useState(0)
+  // Null while unknown. The cap row stays hidden until the daemon says the GPU can do it — a control
+  // that cannot work is worse than an absent one.
+  const [frameCap, setFrameCapS] = useState<number | null>(null)
+  const [capSupported, setCapSupported] = useState(false)
   const [bright, setBright] = useState(70)
   const [budget, setBudget] = useState<BatteryBudget | null>(null)
 
@@ -68,6 +79,14 @@ export function OverlayApp() {
     getProfiles().then((p) => { if (alive) { setPresets(p); if (p[mode]) setTdp_(p[mode].stapmW) } }).catch(() => {})
     getFan().then((f) => alive && setFanS(f)).catch(() => {})
     getBrightness().then((b) => alive && b != null && setBright(b)).catch(() => {})
+    // The cap row only appears when the driver actually offers one. Hidden rather than disabled: on a
+    // gamepad-first overlay an unusable row is one more thing to skip past with the D-pad.
+    getGpu().then((g) => {
+      if (!alive) return
+      const frtc = g.available ? g.settings?.frameRateCap : null
+      setCapSupported(Boolean(frtc?.supported))
+      setFrameCapS(frtc?.enabled ? frtc.value : null)
+    }).catch(() => {})
     getAutoFps().then((a) => alive && setFpsTarget(a.enabled ? a.targetFps : 0)).catch(() => {})
     const bt = () => getBudget().then((b) => alive && setBudget(b)).catch(() => {})
     bt(); const bid = setInterval(bt, 5000)
@@ -91,6 +110,17 @@ export function OverlayApp() {
   }
   const pickFan = async (f: string) => { setFanS(f); try { await setFan(f) } catch { /* ignore */ } }
   const pickFps = async (v: number) => { setFpsTarget(v); try { await setAutoFps(v || 60, v > 0) } catch { /* ignore */ } }
+  const pickCap = async (v: number) => {
+    const previous = frameCap
+    setFrameCapS(v || null)
+    try {
+      await setFrameCap(v || null)
+    } catch {
+      // Put the control back where it was. The daemon refuses a cap below an active auto-FPS target
+      // — leaving the switch showing a value that was rejected is how a UI starts lying.
+      setFrameCapS(previous)
+    }
+  }
   const applyBright = async (next: number) => {
     setBright(next)
     try { const b = await setBrightness(next); setBright(b) } catch { /* ignore */ }
@@ -148,10 +178,18 @@ export function OverlayApp() {
       </div>
 
       <div className="qam-line stack">
-        <span className="qam-label">FPS cap</span>
-        <Segmented flavour="qam" label="FPS cap" options={FPS_OPTIONS} value={String(fpsTarget)}
+        <span className="qam-label">FPS target</span>
+        <Segmented flavour="qam" label="FPS target" options={FPS_OPTIONS} value={String(fpsTarget)}
           onChange={(id) => pickFps(Number(id))} />
       </div>
+
+      {capSupported && (
+        <div className="qam-line stack">
+          <span className="qam-label">FPS cap</span>
+          <Segmented flavour="qam" label="FPS cap" options={CAP_OPTIONS} value={String(frameCap ?? 0)}
+            onChange={(id) => pickCap(Number(id))} />
+        </div>
+      )}
 
       <div className="qam-line">
         <span className="qam-label">Brightness</span>

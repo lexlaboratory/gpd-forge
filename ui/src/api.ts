@@ -109,6 +109,15 @@ export const requestVram = (requestedMb?: number) =>
 // summary of the same state, so most callers do not need this — it exists for the detail view.
 export const getInferenceHold = () => json<InferenceHold>('/ai/inference-hold')
 
+// The DRIVER's frame cap (FRTC) — it holds each frame back. Distinct from setAutoFps, which steers
+// TDP toward a target and does not stop the GPU exceeding it. `fps: null` turns the cap off.
+//
+// Never answers applied:true — the daemon cannot reach ADLX, so it records an intent the user-session
+// agent carries out within a few seconds. Read GET /gpu afterwards for what the driver actually did.
+export const setFrameCap = (fps: number | null) =>
+  json<{ applied: boolean; pending: boolean; requested?: number | null; reason: string }>(
+    '/gpu/frame-cap', post({ fps }))
+
 // --- AMD GPU profiles (ADLX) ---
 // Read live on every call: Adrenalin is a second writer to these settings, so reporting our last
 // write as the current state would be a stale claim dressed up as a reading.

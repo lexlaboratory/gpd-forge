@@ -1074,7 +1074,7 @@ app.MapGet("/gpu", (GpuAgentState agent, IVramReader vram) =>
 // `applied:false` with `pending:true`. It deliberately does not claim success: the agent reconciles
 // within a few seconds and GET /gpu then shows what the driver actually reports. An endpoint that
 // answered "applied" here would be describing work that had not happened yet.
-app.MapPost("/gpu/frame-cap", (FrameCapRequest r, GpuDesiredState desired, GpuAgentState agent) =>
+app.MapPost("/gpu/frame-cap", (FrameCapRequest r, GpuDesiredState desired, GpuAgentState agent, AutoFpsState autoFps) =>
 {
     var (report, usable, explanation) = agent.Current(DateTimeOffset.UtcNow);
     if (!usable)
@@ -1088,6 +1088,12 @@ app.MapPost("/gpu/frame-cap", (FrameCapRequest r, GpuDesiredState desired, GpuAg
 
     if (GpuDesiredState.Reject(r.Fps, frtc?.Min, frtc?.Max) is string why)
         return Results.Json(new { applied = false, pending = false, reason = why }, statusCode: 400);
+
+    // Checked on BOTH endpoints, not just here. A rule enforced on one door is a rule you can walk
+    // around by using the other one — and the pathological pair is just as harmful whichever setting
+    // was changed last.
+    if (FrameRateGovernance.Conflict(autoFps.Enabled, autoFps.TargetFps, r.Fps) is string clash)
+        return Results.Json(new { applied = false, pending = false, reason = clash }, statusCode: 409);
 
     desired.RequestFrameCap(r.Fps, DateTimeOffset.UtcNow);
     return Results.Json(new
@@ -1390,8 +1396,15 @@ app.MapPost("/freezer/thaw", (FreezerRequest req, FreezerService f) =>
 
 // Auto-TDP to target FPS (steers TDP in gaming mode once FPS telemetry is available).
 app.MapGet("/auto-fps", (AutoFpsState s) => Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps }));
-app.MapPost("/auto-fps", (AutoFpsRequest req, AutoFpsState s) =>
+app.MapPost("/auto-fps", (AutoFpsRequest req, AutoFpsState s, GpuDesiredState desired) =>
 {
+    // The same rule from the other side. Enabling auto-FPS at 60 under a 30 FPS cap is the identical
+    // pathological pair as setting a 30 FPS cap under a 60 FPS target, and it must be refused with
+    // the same explanation rather than depending on which one the user happened to touch second.
+    var target = req.TargetFps > 0 ? req.TargetFps : s.TargetFps;
+    if (FrameRateGovernance.Conflict(req.Enable, target, desired.FrameCapFps) is string clash)
+        return Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps, reason = clash }, statusCode: 409);
+
     s.Enabled = req.Enable;
     if (req.TargetFps > 0) s.TargetFps = req.TargetFps;
     return Results.Json(new { enabled = s.Enabled, targetFps = s.TargetFps });

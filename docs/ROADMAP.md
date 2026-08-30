@@ -250,13 +250,20 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 
 Everything here is reachable today; none of it waits on a driver or a decision.
 
-- [ ] **Wire the overlay's "FPS cap" to the real cap.** It currently calls auto-FPS, which steers TDP
-      toward a target — a control whose label promises something it does not do. Point it at
-      `POST /gpu/frame-cap` and rename the auto-FPS control to what it is.
-- [ ] **Frame-cap control in the UI**, with the driver's reported range (15–1000 here) as the bounds.
-- [ ] ⚠️ **Decide what happens when auto-FPS and FRTC are both on.** One steers watts to reach a frame
-      rate while the other refuses to exceed one; together they can chase each other. This needs a
-      rule, not a discovery in the field.
+- [x] **The overlay's frame-rate controls are two things again.** Auto-FPS is labelled "FPS target"
+      (it steers TDP to REACH a rate) and the driver cap is its own "FPS cap" row wired to
+      `POST /gpu/frame-cap` (the driver refusing to EXCEED one). The old single control promised a
+      ceiling and delivered a goal.
+- [x] **Frame-cap control in the overlay**, hidden entirely when the driver reports no FRTC — on a
+      gamepad-first surface an unusable row is one more thing to skip past with the D-pad. A rejected
+      cap rolls the control back rather than leaving it showing a value the daemon refused.
+- [x] ⚠️ **The auto-FPS / FRTC rule, decided.** Most pairings are fine and some are useful — "aim for
+      45, never spike past 60" is a sensible thing to want. Exactly one is pathological: a cap BELOW
+      an active target makes auto-FPS raise power forever chasing frames the driver is withholding,
+      so the machine runs hot and loud for nothing while no error appears anywhere. That pairing is
+      refused, naming both numbers, and **checked on both endpoints** — a rule enforced on one door is
+      one you walk around through the other. Refused rather than silently adjusted: quietly moving
+      someone's target or cap applies a setting they did not choose and hides which one changed.
 - [ ] **Resident overlay hotkey + topmost over exclusive fullscreen** — `scripts/overlay-hotkey.ps1`
       and `forge-hotkeys.ps1` exist; the binding to a WinControls Home button does not.
 - [ ] **First public OSS release.** The versioning half landed 2026-08-29 (one declared version,
