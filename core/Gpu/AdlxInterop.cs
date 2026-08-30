@@ -143,7 +143,8 @@ public sealed partial class AdlxInterop : IDisposable
             // We ship no ADLX SDK of our own, so claiming a version we were built against would be a
             // number with nothing behind it.
             if (ADLXInitialize(fullVersion, out _system) != ADLX_OK || _system == IntPtr.Zero)
-                return new AdlxProbe(AdlxStatus.InitFailed, versionText, "ADLXInitialize did not return a system interface.");
+                return new AdlxProbe(AdlxStatus.InitFailed, versionText,
+                    "ADLXInitialize did not return a system interface." + SessionZeroCaveat());
 
             _initialised = true;
         }
@@ -218,6 +219,30 @@ public sealed partial class AdlxInterop : IDisposable
 
         why = string.Empty;
         return true;
+    }
+
+    /// <summary>
+    /// The likely reason, when we are running somewhere ADLX does not work.
+    ///
+    /// Measured on 2026-08-29: the identical build initialised ADLX fine from an interactive user
+    /// session and failed here under the Windows service (LocalSystem, session 0). ADLX talks to the
+    /// display driver stack, which a session-0 service has no access to. Saying so turns a dead end
+    /// into a next step — without it the message is true and useless, and someone re-derives this.
+    /// </summary>
+    private static string SessionZeroCaveat()
+    {
+        try
+        {
+            // global:: because this class exposes a `System` property, which otherwise shadows the
+            // namespace and makes System.Diagnostics unresolvable right here.
+            using var p = global::System.Diagnostics.Process.GetCurrentProcess();
+            if (p.SessionId != 0) return string.Empty;
+        }
+        catch { return string.Empty; }   // cannot tell — say nothing rather than guess
+
+        return " This process is running in session 0 (a Windows service). ADLX needs the display "
+             + "driver stack of an interactive session, so the Radeon settings cannot be driven from "
+             + "here; they need a helper running in the user's session.";
     }
 
     /// <summary>The 3D settings services interface, or IntPtr.Zero. Only valid after a Ready probe.</summary>

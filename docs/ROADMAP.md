@@ -134,6 +134,26 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       (read + closed-loop writes + constraint-gated `submit_job`). Verified end-to-end against the live
       service: `set_mode` → `AppliedVerified`, `submit_job` → running. Lets KRÓNOS/CYBERLEX drive the handheld.
 
+### AMD GPU profiles (added 2026-08-29)
+- [x] **Read and write the Radeon 3D settings from C#** — Anti-Lag, Chill, Boost, Image Sharpening and
+      the driver's own frame-rate cap, through ADLX's C interface with hand-written vtable offsets
+      transcribed from the SDK headers. AMD's documented C# route (SWIG + a C++ compiler + an unsigned
+      native DLL) was rejected because that DLL is precisely what Smart App Control blocks here. The
+      layout is verified at startup against a fact read independently over WMI, so a misaligned vtable
+      is caught before anything is called through it. Verified on device: ADLX 1.5.0.124, and the live
+      settings read back correctly.
+- [x] **Applied automatically per app** — the profile hangs off the MODE, so the existing per-app rules
+      and their hysteresis drive it, and every path that sets a mode applies it. No second matching
+      system.
+- 🔴 **BLOCKED on device: ADLX does not work from the Windows service.** Measured 2026-08-29: the
+      identical build initialises ADLX from an interactive user session and fails under the service
+      with `ADLXInitialize did not return a system interface`. The service runs as LocalSystem in
+      **session 0**, and ADLX needs the display driver stack of an interactive session. So the code is
+      correct and the endpoint honestly reports `available:false` — but the feature cannot actually
+      drive the GPU until the ADLX calls live in a **helper process in the user's session**, commanded
+      by the daemon. The tray/overlay already establishes that there is a user-session component to
+      host it. **Next step, and a design decision.**
+
 ## Phase 4 — Replacement
 - [x] **Conflict guard**: detection + **auto-yield** done — `ProfileApplier` skips the TDP write while
       MotionAssistant / GPD Tool are running (field-confirmed clash), so GPD Forge takes over power only
