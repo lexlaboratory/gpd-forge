@@ -17,7 +17,9 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use tauri::Manager;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, WindowEvent};
 
 const HEALTH_HOST: &str = "127.0.0.1";
 const HEALTH_PORT: u16 = 8787;
@@ -141,8 +143,42 @@ fn wait_for_daemon() -> bool {
     false
 }
 
+/// Show the main window and bring it to the front. Used by the tray icon and its menu.
+///
+/// `set_focus` after `show` matters: a window unhidden without focus can come back BEHIND the
+/// fullscreen game the user was in, which reads exactly like the tray click did nothing.
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn main() {
     tauri::Builder::default()
+        // Closing the window HIDES it to the tray instead of exiting.
+        //
+        // Worth being precise about why, because the obvious reason is wrong: the thing that
+        // controls this handheld is the Windows service, not this window. TDP, fan and profile
+        // enforcement continue whether or not anything is on screen — closing the shell has never
+        // stopped the control loop, and quitting from the tray does not stop it either.
+        //
+        // The real reasons are that a controller's UI which vanishes from the taskbar looks like the
+        // control went with it, and that reopening it costs a Start-Menu round trip while a game is
+        // running. Hiding keeps it one click away and keeps the state visible.
+        //
+        // "Quit" in the tray menu therefore closes the WINDOW, and says so — it does not, and must
+        // not, pretend to be an off switch for the daemon. Uninstalling or stopping the service is
+        // the way to actually stop controlling the machine.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             // 1) Cheap TCP probe: anything listening on 127.0.0.1:8787 yet?
             let mut daemon_alive = probe_port();
@@ -163,6 +199,53 @@ fn main() {
                     eprintln!("[forge] could not locate GpdForge.Service.dll next to the shell");
                 }
             }
+
+            // 2b) The tray icon. This is what makes closing-to-hide honest rather than a
+            // disappearing act: there is always a visible way back, and the tooltip states the
+            // thing users get wrong — that the daemon keeps working with the window closed.
+            let show = MenuItem::with_id(app, "show", "Open GPD Forge", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Close window (daemon keeps running)", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+
+            TrayIconBuilder::with_id("gpd-forge-tray")
+                .icon(app.default_window_icon().expect("bundled icon").clone())
+                .tooltip("GPD Forge — the daemon runs as a Windows service, with or without this window")
+                .menu(&menu)
+                // The menu must NOT open on a left click, or the primary click has two meanings and
+                // the common action (show the window) becomes the awkward one.
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => show_main_window(app),
+                    // Hides rather than app.exit(): the window is the only thing being closed, which
+                    // is what the label promises. Exiting the process would also tear down the tray
+                    // icon and leave no way back to a service that is still very much running.
+                    "quit" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Left click toggles: down-then-up on the same icon is the Windows convention for
+                    // "restore me", and matching Up specifically avoids firing twice per click.
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                show_main_window(app);
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
 
             // 3) Stamp the window title with the daemon state so App.tsx's offline banner can
             // recover instantly without waiting for the first polled /telemetry to fail.
