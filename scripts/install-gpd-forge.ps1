@@ -163,28 +163,42 @@ Copy-Item "$RepoDir\scripts\forge-notify.ps1" "$InstallDir\forge-notify.ps1" -Fo
 # a shell binary older than the UI it was supposed to embed reached Program Files on 2026-08-27 and
 # left the dashboard showing "--" for every tile. Build it, and refuse to install without it.
 Write-Host "== 3/7  Building the native desktop shell ==" -ForegroundColor Cyan
+#
+# A shell failure must NOT abort the install. Step 1 has already DELETED the service, so returning
+# here leaves the handheld with no TDP or fan control at all — which is exactly what happened on
+# 2026-08-29, when Smart App Control blocked every cargo build-script and this `return` turned a
+# cosmetic problem (no desktop window) into an unmanaged machine. The shell is a window onto the
+# daemon; it is not a prerequisite for it, and the ordering here implied otherwise.
+#
+# So: record the failure, keep going, register and start the service, and fail loudly at the END.
+# The refusal to copy a stale shell stands — that part was right, and it is why the old binary is
+# left untouched rather than overwritten with something older than the bundle it should embed.
+$shellFailure = $null
 $tauriExe = "$RepoDir\ui\src-tauri\target\release\gpd-forge.exe"
 npm --prefix "$RepoDir\ui" run tauri build
 if (-not (Test-Path $tauriExe)) {
-    Write-Host "Tauri shell build failed - no gpd-forge.exe produced (need the Rust toolchain)." -ForegroundColor Red
-    Write-Host "Refusing to install: copying a stale shell is what broke telemetry last time." -ForegroundColor Red
-    return
+    $shellFailure = "the build produced no gpd-forge.exe (needs the Rust toolchain; Smart App Control can also block cargo's build-scripts with os error 4551)"
+} elseif ((Get-Item $tauriExe).LastWriteTime -lt (Get-Item "$RepoDir\ui\dist\index.html").LastWriteTime) {
+    $shellFailure = "the built shell is older than the UI bundle it should embed, so the build did not actually run"
 }
-if ((Get-Item $tauriExe).LastWriteTime -lt (Get-Item "$RepoDir\ui\dist\index.html").LastWriteTime) {
-    Write-Host "Tauri shell is older than the UI bundle it should embed - build did not run." -ForegroundColor Red
-    return
+if ($shellFailure) {
+    Write-Host "Desktop shell NOT updated: $shellFailure" -ForegroundColor Red
+    Write-Host "Refusing to copy a stale shell - that is what broke telemetry on 2026-08-28." -ForegroundColor Red
+    Write-Host "Continuing so the SERVICE is still installed: the web UI at $Url stays fully current." -ForegroundColor Yellow
 }
 # The shell being replaced is very often running - the previous install opened it, or it is sitting
 # in the tray. Windows keeps a lock on a running image, so Copy-Item fails; before the transcript
 # existed that failure was invisible and left the machine with no service at all.
-foreach ($name in @('GPD Forge', 'gpd-forge')) {
-    Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
-        Write-Host "  stopping running shell (pid $($_.Id))" -ForegroundColor DarkGray
-        try { $_.Kill() } catch { }
+if (-not $shellFailure) {
+    foreach ($name in @('GPD Forge', 'gpd-forge')) {
+        Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  stopping running shell (pid $($_.Id))" -ForegroundColor DarkGray
+            try { $_.Kill() } catch { }
+        }
     }
+    Start-Sleep -Milliseconds 500
+    Copy-Item $tauriExe "$InstallDir\GPD Forge.exe" -Force
 }
-Start-Sleep -Milliseconds 500
-Copy-Item $tauriExe "$InstallDir\GPD Forge.exe" -Force
 
 # --- 4) register the service via the signed dotnet host (SAC-safe) ---
 Write-Host "== 4/7  Registering the Windows Service ==" -ForegroundColor Cyan
@@ -266,12 +280,26 @@ Write-Host "== 7/7  Verifying the installation ==" -ForegroundColor Cyan
 & "$RepoDir\scripts\verify-install.ps1"
 $verifyOk = ($LASTEXITCODE -eq 0)
 
-if ($verifyOk) {
-    Start-Process "$InstallDir\GPD Forge.exe"
-    Write-Host "`nDone. GPD Forge runs as a service (autostart). Open the dashboard from the Start Menu" -ForegroundColor Green
-    Write-Host "('GPD Forge') or from the premium tray icon. The local API remains at $Url." -ForegroundColor DarkGray
-} else {
+if (-not $verifyOk) {
     Write-Host "`nInstall completed but verification FAILED - see the checks above." -ForegroundColor Red
     Write-Host "Not opening the window: it would most likely show '--' for every tile." -ForegroundColor Red
     exit 1
 }
+
+# The service is good. Report the shell honestly rather than quietly finishing green: a partial
+# install that announces success is how a stale binary survives unnoticed for a day.
+if ($shellFailure) {
+    Write-Host "`nService installed and verified - the daemon is current." -ForegroundColor Green
+    Write-Host "The DESKTOP SHELL was NOT updated: $shellFailure" -ForegroundColor Red
+    if (Test-Path "$InstallDir\GPD Forge.exe") {
+        Write-Host "The previously installed window is still there and is now OLDER than the daemon." -ForegroundColor Yellow
+        Write-Host "Settings > About will say so: it compares the shell build against the daemon build." -ForegroundColor Yellow
+    } else {
+        Write-Host "There is no installed window at all; use the web UI at $Url, which IS current." -ForegroundColor Yellow
+    }
+    exit 1
+}
+
+Start-Process "$InstallDir\GPD Forge.exe"
+Write-Host "`nDone. GPD Forge runs as a service (autostart). Open the dashboard from the Start Menu" -ForegroundColor Green
+Write-Host "('GPD Forge') or from the premium tray icon. The local API remains at $Url." -ForegroundColor DarkGray
