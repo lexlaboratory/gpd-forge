@@ -292,3 +292,33 @@ export interface SessionsResponse {
 }
 
 export interface GamesResponse { fpsAvailable: boolean; games: GameSummary[] }
+
+// --- AMD GPU profiles (ADLX) -------------------------------------------------------------------
+// One Radeon feature as the driver reports it. A feature that could not be QUERIED comes back as
+// null in GpuSettings — which is not the same fact as `supported: false` (this GPU cannot do it) or
+// `enabled: false` (it can, and it is off). Render the three differently or do not render at all.
+export interface GpuFeature { supported: boolean; enabled: boolean; value: number | null }
+
+export interface GpuSettings {
+  antiLag: GpuFeature | null
+  chill: GpuFeature | null
+  boost: GpuFeature | null
+  imageSharpening: GpuFeature | null
+  frameRateCap: GpuFeature | null
+}
+
+// What a mode will do to the GPU when it becomes active.
+export interface GpuModeProfile { name: string; antiLag: boolean; chill: boolean; boost: boolean }
+
+// `available: false` carries only status/detail — there is nothing else true to send. The panel hides
+// itself entirely in that case rather than greying out: a disabled row still reads as "nearly
+// working" when the honest answer is "this machine cannot" or "you have not switched it on".
+export interface GpuInfo {
+  available: boolean
+  status: string
+  detail: string
+  adapter: string | null
+  adlxVersion?: string | null
+  settings?: GpuSettings
+  modeProfiles?: Record<string, GpuModeProfile>
+}

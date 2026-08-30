@@ -18,6 +18,7 @@
     ...\install-gpd-forge.ps1 -NoHardware     # telemetry in driverless WMI mode only
     ...\install-gpd-forge.ps1 -NoFps          # skip the PresentMon/ETW FPS probe (fps stays 0)
     ...\install-gpd-forge.ps1 -NoFanControl   # telemetry + TDP only; leave the fan to the EC
+    ...\install-gpd-forge.ps1 -EnableGpuProfiles  # let GPD Forge set Radeon Anti-Lag/Chill/Boost
     ...\install-gpd-forge.ps1 -Restore        # undo -Substitute: hand MA / GPD Tool back
     ...\install-gpd-forge.ps1 -DryRun         # rehearse -Restore, writing nothing
     ...\install-gpd-forge.ps1 -Uninstall      # remove the service and shortcut (restores first)
@@ -34,7 +35,11 @@ param(
     [switch]$Restore,
     # Report what -Restore would change and exit without changing it. Handing a power controller back
     # is not a step to discover the behaviour of by running it, so the rehearsal is a first-class flag.
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Let GPD Forge drive the Radeon 3D settings (Anti-Lag / Chill / Boost) through ADLX. OFF by
+    # default and opt-in on purpose: these settings are visible in the user's own Adrenalin install and
+    # changing them without being asked would be taking over something nobody handed us.
+    [switch]$EnableGpuProfiles
 )
 $ErrorActionPreference = 'Stop'
 $ServiceName = 'GPDForge'
@@ -387,6 +392,11 @@ if (-not $NoFps) {
         Write-Host "  PresentMon unavailable - FPS telemetry stays off (fps will read 0)." -ForegroundColor Yellow
     }
 }
+# ADLX is a user-mode driver API, unrelated to the MSR/EC paths, so it gets its own gate rather than
+# riding on -NoHardware: a fault here must not be able to take down power control that has been
+# validated on the metal.
+if ($EnableGpuProfiles) { $envLines += "GPDFORGE_ENABLE_GPU_PROFILES=1" }
+
 New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name Environment `
     -PropertyType MultiString -Value $envLines -Force | Out-Null
 

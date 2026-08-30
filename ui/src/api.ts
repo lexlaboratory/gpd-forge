@@ -13,7 +13,7 @@ import type {
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
-  DaemonHealth, DaemonVersion, StandbyRestoreOutcome,
+  DaemonHealth, DaemonVersion, GpuInfo, StandbyRestoreOutcome,
   AppRulesInfo, AppRule, GameSession, SessionsResponse, GamesResponse,
 } from './types'
 
@@ -108,6 +108,11 @@ export const requestVram = (requestedMb?: number) =>
 // Attribution for the inference keep-awake: which process is holding, and since when. /ai carries a
 // summary of the same state, so most callers do not need this — it exists for the detail view.
 export const getInferenceHold = () => json<InferenceHold>('/ai/inference-hold')
+
+// --- AMD GPU profiles (ADLX) ---
+// Read live on every call: Adrenalin is a second writer to these settings, so reporting our last
+// write as the current state would be a stale claim dressed up as a reading.
+export const getGpu = () => json<GpuInfo>('/gpu')
 
 // --- telemetry history + CSV export ---
 export const getHistory = (minutes?: number) => json<HistoryResponse>(`/history${minutes ? `?minutes=${minutes}` : ''}`)

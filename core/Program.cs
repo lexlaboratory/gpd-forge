@@ -424,6 +424,30 @@ builder.Services.AddSingleton<AntiStandbyService>();
 builder.Services.AddSingleton<IVramReader, WmiVramReader>();
 builder.Services.AddSingleton<AiState>();
 
+// AMD GPU profiles (Anti-Lag / Chill / Boost) via ADLX. Own gate, separate from the hardware one on
+// purpose: ADLX is a user-mode driver API with nothing to do with the MSR/EC paths, and a fault here
+// must not be able to take down power control that has been validated on the metal.
+//
+// The ADLX handle is process-lifetime: initialising and terminating a driver library per request is
+// both wasteful and a good way to find its reentrancy bugs. It is created lazily, only once the
+// availability probe has verified the vtable, so a machine without ADLX never loads it at all.
+builder.Services.AddSingleton<ISystemMemoryProbe, WmiSystemMemoryProbe>();
+builder.Services.AddSingleton<GpuProfileService>();
+builder.Services.AddSingleton<AdlxInterop>(sp =>
+{
+    var interop = new AdlxInterop(sp.GetService<ILogger<AdlxInterop>>());
+    interop.Initialise(sp.GetRequiredService<ISystemMemoryProbe>().TotalRamMb());
+    return interop;
+});
+builder.Services.AddSingleton(sp => new GpuProfileApplier(
+    sp.GetRequiredService<GpuProfileService>(),
+    () =>
+    {
+        var interop = sp.GetRequiredService<AdlxInterop>();
+        return interop.System == IntPtr.Zero ? null : new AdlxSettings(interop.System, sp.GetService<ILogger<AdlxSettings>>());
+    },
+    sp.GetService<ILogger<GpuProfileApplier>>()));
+
 // P3.3 — the UMA split stays BIOS-only (there is still no safe user-mode write; see VramAdvisor), but
 // the reading is now persisted so a change can be CONFIRMED across a reboot instead of assumed. This
 // is a read plus a small local file, so it is not gated behind GPDFORGE_ENABLE_HARDWARE.
@@ -760,6 +784,49 @@ app.MapPost("/ai/anti-standby", (AntiStandbyRequest r, AntiStandbyService anti, 
     if (r.Enable && !ai.ManualAntiStandby) { anti.Start(); ai.ManualAntiStandby = true; }
     else if (!r.Enable && ai.ManualAntiStandby) { anti.Stop(); ai.ManualAntiStandby = false; }
     return Results.Json(new { active = anti.Active, holders = anti.HolderCount, manual = ai.ManualAntiStandby });
+});
+
+// AMD GPU profiles. `available:false` means the UI hides the section entirely rather than greying it
+// out — a disabled row still reads as "nearly working", and the honest answer here is either "this
+// machine cannot" or "you have not switched it on".
+app.MapGet("/gpu", (GpuProfileService svc, AdlxInterop interop, IVramReader vram) =>
+{
+    var status = svc.Status(vram.Read().AdapterName);
+    if (!status.Available)
+        return Results.Json(new { available = false, status = status.Status, detail = status.Detail, adapter = status.AdapterName });
+
+    // Read live rather than from a cache: Adrenalin is a second writer to these settings and the user
+    // may have changed them there since we last looked. Reporting our last write as the current state
+    // would be exactly the kind of stale claim this project keeps removing.
+    var settings = new AdlxSettings(interop.System);
+    var snap = settings.Read();
+    static object? Feature(GpuFeatureState? f) => f is null
+        ? null   // null = could not be queried. NOT the same as unsupported, and not the same as off.
+        : new { supported = f.Supported, enabled = f.Enabled, value = f.Value };
+
+    return Results.Json(new
+    {
+        available = true,
+        status = status.Status,
+        adlxVersion = status.AdlxVersion,
+        adapter = status.AdapterName,
+        detail = status.Detail,
+        settings = new
+        {
+            antiLag = Feature(snap.AntiLag),
+            chill = Feature(snap.Chill),
+            boost = Feature(snap.Boost),
+            imageSharpening = Feature(snap.ImageSharpening),
+            frameRateCap = Feature(snap.FrameRateTargetControl),
+        },
+        // What each mode will do to the GPU, so the panel can say what is about to happen rather than
+        // only what happened.
+        modeProfiles = GpuModeProfiles.Modes.ToDictionary(m => m, m =>
+        {
+            var p = GpuModeProfiles.For(m)!;
+            return new { name = p.Name, antiLag = p.AntiLag, chill = p.Chill, boost = p.Boost };
+        }),
+    });
 });
 
 // VRAM/UMA is a BIOS setting (GOP/_DSM at boot) — GPD Forge reads it live but never writes it

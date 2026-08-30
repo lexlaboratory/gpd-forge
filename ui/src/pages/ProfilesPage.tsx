@@ -1,9 +1,9 @@
 // GPD Forge UI — Profiles page (per-app rules + MotionAssistant import). GPL-3.0-or-later.
 import { useCallback, useEffect, useState } from 'react'
-import type { AppRule, AppRulesInfo, ImportResult, ModeId } from '../types'
+import type { AppRule, AppRulesInfo, GpuFeature, GpuInfo, ImportResult, ModeId } from '../types'
 import {
   importMotionAssistant,
-  getAppRules, addAppRule, updateAppRule, deleteAppRule, moveAppRule,
+  getAppRules, addAppRule, updateAppRule, deleteAppRule, moveAppRule, getGpu,
 } from '../api'
 import { Frame, Badge, Button, Chip, Segmented, Unavailable } from '../components'
 import { useToast } from '../Toast'
@@ -235,6 +235,78 @@ export function ProfilesPage() {
     <>
       <MotionAssistantImportCard />
       <PerAppRulesCard />
+      <GpuProfileCard />
     </>
+  )
+}
+
+// The Radeon settings each mode applies, and what the driver reports right now.
+//
+// It lives on this page because this is where "what happens for which app" is decided: the per-app
+// rules above pick the mode, and the mode carries the GPU profile. There is no second matching
+// system to configure — that was the point of attaching the profile to the mode.
+//
+// When ADLX is unavailable this renders NOTHING. That was a deliberate call: a greyed-out row still
+// reads as "nearly working", and the honest answer is either "this machine cannot" or "you have not
+// switched it on". This project has spent real time deleting controls that looked live and did not
+// work; adding one back disabled would undo that.
+export function GpuProfileCard() {
+  const [info, setInfo] = useState<GpuInfo | null>(null)
+
+  useEffect(() => {
+    const load = () => getGpu().then(setInfo).catch(() => setInfo(null))
+    load()
+    const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!info || !info.available) return null
+
+  // null = the driver did not answer for this feature. Deliberately distinct from "unsupported" and
+  // from "off": collapsing the three is how a panel starts lying about hardware.
+  const describe = (f: GpuFeature | null | undefined) =>
+    f === null || f === undefined ? 'not readable'
+      : !f.supported ? 'not supported by this GPU'
+      : f.value !== null ? `${f.enabled ? 'on' : 'off'} · ${f.value}`
+      : f.enabled ? 'on' : 'off'
+
+  const s = info.settings
+  const rows: [string, string][] = s ? [
+    ['Anti-Lag', describe(s.antiLag)],
+    ['Chill', describe(s.chill)],
+    ['Boost', describe(s.boost)],
+    ['Image sharpening', describe(s.imageSharpening)],
+    ['Frame rate cap', describe(s.frameRateCap)],
+  ] : []
+
+  return (
+    <Frame title="AMD Radeon profile" hint="Applied automatically when the mode changes">
+      <p className="muted" data-testid="gpu-adapter">
+        {info.adapter ?? 'Radeon'} · ADLX {info.adlxVersion ?? 'unknown'}
+      </p>
+
+      <div data-testid="gpu-current">
+        {rows.map(([label, value]) => (
+          <p className="muted" key={label}>{label}: {value}</p>
+        ))}
+      </div>
+
+      {info.modeProfiles && (
+        <>
+          <p className="muted">What each mode applies:</p>
+          <ul className="muted" data-testid="gpu-mode-profiles">
+            {Object.entries(info.modeProfiles).map(([mode, p]) => {
+              const on = [p.antiLag && 'Anti-Lag', p.chill && 'Chill', p.boost && 'Boost'].filter(Boolean)
+              return <li key={mode}>{mode}: {on.length > 0 ? on.join(' + ') : 'leaves the GPU as configured'}</li>
+            })}
+          </ul>
+        </>
+      )}
+
+      <p className="muted">
+        AMD refuses Chill together with Boost or Anti-Lag, so a profile never sets both — the
+        conflicting feature is turned off first rather than the pair being sent and half-applied.
+      </p>
+    </Frame>
   )
 }

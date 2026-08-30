@@ -164,6 +164,19 @@ const state = {
     inferenceEnforcing: false, inferenceWorkers: [], inferenceHoldingSince: null, inferenceLastTickAt: null,
     inferenceUnmeasured: [],
   },
+  // Mirrors core/Gpu/. `available:false` is the default on purpose — see the /gpu route. The values
+  // below are the ones actually read from this device's Radeon 890M on 2026-08-29, so when a test
+  // flips availability on it exercises a real shape rather than an invented one.
+  gpu: {
+    available: false,
+    settings: {
+      antiLag: { supported: true, enabled: false, value: null },
+      chill: { supported: true, enabled: true, value: 60 },
+      boost: { supported: true, enabled: false, value: 84 },
+      imageSharpening: { supported: true, enabled: false, value: 80 },
+      frameRateCap: { supported: true, enabled: false, value: 60 },
+    },
+  },
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
@@ -849,6 +862,29 @@ const server = http.createServer(async (req, res) => {
   // Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.
   if (method === 'GET' && path === '/ai') return send(res, 200, aiInfo())
   if (method === 'GET' && path === '/ai/inference-hold') return send(res, 200, inferenceHold())
+  // AMD GPU profiles. The mock reports UNAVAILABLE by default, which is the shipped default (the gate
+  // is closed) and, more importantly, the case the UI must handle by rendering nothing at all. A mock
+  // that served the interesting case would leave the hide-entirely path untested — which is exactly
+  // how this repo once shipped alert severities that only worked against their own maquette.
+  if (method === 'GET' && path === '/gpu') {
+    if (!state.gpu.available) {
+      return send(res, 200, {
+        available: false, status: 'Disabled', adapter: state.ai.adapterName,
+        detail: 'GPU profile control is off. Set GPDFORGE_ENABLE_GPU_PROFILES=1 on the service to enable it.',
+      })
+    }
+    return send(res, 200, {
+      available: true, status: 'Ready', adlxVersion: '1.5.0.124', adapter: state.ai.adapterName,
+      detail: 'Verified against TotalSystemRAM = 28280 MB.',
+      settings: state.gpu.settings,
+      modeProfiles: {
+        gaming: { name: 'Gaming', antiLag: true, chill: false, boost: false },
+        battery: { name: 'Battery', antiLag: false, chill: true, boost: false },
+        ai: { name: 'Agents / AI', antiLag: false, chill: false, boost: false },
+        windows: { name: 'Windows', antiLag: false, chill: false, boost: false },
+      },
+    })
+  }
   if (method === 'POST' && path === '/ai/anti-standby') {
     const body = await readBody(req)
     state.ai.manualAntiStandby = !!body?.enable

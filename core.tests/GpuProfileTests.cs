@@ -126,3 +126,81 @@ public class GpuProfileServiceTests
         Assert.NotSame(first, svc.Status());
     }
 }
+
+public class GpuModeProfileTests
+{
+    [Fact]
+    public void Every_shipped_mode_profile_is_a_combination_the_driver_will_accept()
+    {
+        // The guard that matters. AMD refuses Chill alongside Boost or Anti-Lag rather than merging
+        // them, so a default that trips the rule would half-apply on every mode switch, forever, and
+        // look like a flaky driver rather than a bad default.
+        foreach (var mode in GpuModeProfiles.Modes)
+            Assert.Null(GpuModeProfiles.For(mode)!.Conflict);
+    }
+
+    [Fact]
+    public void Battery_uses_chill_because_it_is_the_one_feature_that_trades_frames_for_power()
+    {
+        var p = GpuModeProfiles.For("battery")!;
+        Assert.True(p.Chill);
+        // And therefore cannot use these two — not a preference, a driver rule.
+        Assert.False(p.AntiLag);
+        Assert.False(p.Boost);
+    }
+
+    [Fact]
+    public void Gaming_uses_anti_lag_and_leaves_the_image_alone()
+    {
+        var p = GpuModeProfiles.For("gaming")!;
+        Assert.True(p.AntiLag);
+        // Boost lowers resolution during motion. Turning that on for someone silently changes how
+        // their games look, which is their call and not a power tool's.
+        Assert.False(p.Boost);
+        Assert.False(p.Chill);
+    }
+
+    [Fact]
+    public void Ai_mode_leaves_the_frame_pipeline_alone()
+    {
+        // Inference is compute. Anti-Lag and Chill act on presentation and would only add a variable.
+        var p = GpuModeProfiles.For("ai")!;
+        Assert.False(p.AntiLag);
+        Assert.False(p.Chill);
+        Assert.False(p.Boost);
+    }
+
+    [Fact]
+    public void An_unknown_mode_has_no_opinion_rather_than_a_default_one()
+    {
+        // null means "leave the GPU as the user configured it". Returning an all-off profile here
+        // would silently undo someone's Adrenalin settings the first time an unmapped mode was used.
+        Assert.Null(GpuModeProfiles.For("standby"));
+        Assert.Null(GpuModeProfiles.For("nonsense"));
+    }
+}
+
+public class GpuProfileApplierTests
+{
+    private sealed class FakeMemory : ISystemMemoryProbe { public uint TotalRamMb() => 28280; }
+
+    private static GpuProfileApplier WithGateClosed()
+        => new(new GpuProfileService(new FakeMemory(), null, _ => null), () => null);
+
+    [Fact]
+    public void A_mode_without_a_gpu_profile_is_skipped_with_a_reason()
+    {
+        var outcome = WithGateClosed().ApplyForMode("standby");
+        Assert.False(outcome.Attempted);
+        Assert.Contains("no GPU profile", outcome.Reason);
+    }
+
+    [Fact]
+    public void With_the_gate_closed_nothing_is_attempted_and_the_reason_says_so()
+    {
+        var outcome = WithGateClosed().ApplyForMode("gaming");
+        Assert.False(outcome.Attempted);
+        Assert.Empty(outcome.Applied);
+        Assert.Contains("unavailable", outcome.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+}

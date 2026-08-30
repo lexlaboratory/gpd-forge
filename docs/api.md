@@ -435,6 +435,45 @@ issue list colored by severity otherwise.
   requiresBiosReboot: true, advisory }` — always `applied:false`: GPD Forge does not perform a blind UMA
   write (see `vram` above). Honest by construction rather than faking success.
 
+### `GET /gpu`  (AMD Radeon profiles via ADLX)
+`200 → { available: false, status, detail, adapter }`
+`200 → { available: true, status, adlxVersion, adapter, detail, settings, modeProfiles }`
+
+Anti-Lag, Chill, Boost, Image Sharpening and the driver's own frame-rate cap (FRTC), read live on
+every call — Adrenalin is a second writer to these settings, so reporting our last write as the
+current state would be a stale claim dressed up as a reading.
+
+- **`available: false` means the client renders NOTHING**, not a disabled row. A greyed-out control
+  still reads as "nearly working" when the honest answer is "this machine cannot" or "you have not
+  switched it on". `detail` says which.
+- `settings.<feature>` is `{ supported, enabled, value }` **or `null`**. The three not-on states are
+  different facts and must not be collapsed: `null` = the driver did not answer, `supported:false` =
+  this GPU cannot do it, `enabled:false` = it can and it is off.
+- `modeProfiles` is what each mode will apply when it becomes active, so the panel can say what is
+  about to happen rather than only what happened.
+
+**How the automatic part works.** The GPU profile hangs off the **mode**, not off each per-app rule.
+The rules in `GET /app-rules` already map a foreground process to a mode, so attaching the GPU there
+would mean a second matching system to keep in step with the first. Every path that sets a mode — the
+focus worker, a manual switch, the AC/battery rule, the standby restore — applies the GPU profile
+through `ProfileApplier`, without knowing ADLX exists.
+
+⚠️ **AMD refuses Radeon Chill together with Boost or Anti-Lag**; it does not merge them. Profiles are
+applied in an order that turns the conflicting feature off first, and a profile that requests the
+forbidden pair is rejected with a reason rather than sent and silently half-applied.
+
+**Gated** behind `GPDFORGE_ENABLE_GPU_PROFILES=1` (installer: `-EnableGpuProfiles`). Its own gate, not
+the hardware one: ADLX is a user-mode driver API with nothing to do with the MSR/EC paths, and a fault
+here must not be able to take down power control that has been validated on the metal.
+
+**Implementation note.** ADLX is reached through its C interface with hand-written vtable offsets,
+because AMD's documented C# route needs SWIG plus a C++ compiler and produces an unsigned native DLL —
+which is exactly what Smart App Control blocks on this hardware. A wrong slot index calls an arbitrary
+driver function, so the layout is transcribed from the SDK headers and **verified at startup**: the
+daemon calls `TotalSystemRAM` and checks it against the machine's RAM read over WMI. Disagreement
+means the library is marked unusable and nothing else is called through it. `--probe-gpu` reproduces
+that check and writes nothing.
+
 ### `GET /settings/export`  ·  `POST /settings/import`  (settings backup / restore)
 - `GET /settings/export → { modePresets: Record<ModeId, Preset>, guardian: Guardian-config,
   fanMode: string, brightness: number | null, powerSource: PowerSource-config, autoFps: AutoFps }`
