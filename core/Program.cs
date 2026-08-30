@@ -461,6 +461,7 @@ builder.Services.AddSingleton<AiState>();
 // user-session agent (where it must be anyway, session 0 cannot reach ADLX) and the daemon merely
 // stores what the agent reports.
 builder.Services.AddSingleton<GpuAgentState>();
+builder.Services.AddSingleton<GpuDesiredState>();
 
 // P3.3 — the UMA split stays BIOS-only, but the reading is persisted so a change can be CONFIRMED
 // across a reboot instead of assumed. A read plus a small local file, so not behind the hardware gate.
@@ -831,7 +832,10 @@ app.MapGet("/gpu", (GpuAgentState agent, IVramReader vram) =>
 
     static object? Feature(GpuFeatureState? f) => f is null
         ? null   // null = the driver did not answer. NOT "unsupported", NOT "off".
-        : new { supported = f.Supported, enabled = f.Enabled, value = f.Value };
+        // min/max are the DRIVER's supported range, null when it did not report one. They are what
+        // lets a rejected value be explained ("the lowest supported cap is 30 FPS") instead of the
+        // user watching a setting silently not take.
+        : new { supported = f.Supported, enabled = f.Enabled, value = f.Value, min = f.Min, max = f.Max };
 
     var s = report.Settings;
     return Results.Json(new
@@ -857,6 +861,51 @@ app.MapGet("/gpu", (GpuAgentState agent, IVramReader vram) =>
         }),
     });
 });
+
+// The driver's own frame-rate cap (FRTC). This is a REAL cap — the driver holds each frame back —
+// which is a different thing from the Power page's auto-FPS, that steers TDP toward a target and does
+// not stop the GPU exceeding it.
+//
+// The daemon cannot apply it (session 0 cannot reach ADLX), so this records an INTENT and answers
+// `applied:false` with `pending:true`. It deliberately does not claim success: the agent reconciles
+// within a few seconds and GET /gpu then shows what the driver actually reports. An endpoint that
+// answered "applied" here would be describing work that had not happened yet.
+app.MapPost("/gpu/frame-cap", (FrameCapRequest r, GpuDesiredState desired, GpuAgentState agent) =>
+{
+    var (report, usable, explanation) = agent.Current(DateTimeOffset.UtcNow);
+    if (!usable)
+        return Results.Json(new { applied = false, pending = false, reason = explanation }, statusCode: 409);
+
+    // Validate against the range the DRIVER reported, so an out-of-range value is explained rather
+    // than silently dropped by ADLX later, where the user would only see nothing happening.
+    var frtc = report?.Settings?.FrameRateTargetControl;
+    if (frtc is { Supported: false })
+        return Results.Json(new { applied = false, pending = false, reason = "This GPU does not support a driver frame-rate cap." }, statusCode: 409);
+
+    if (GpuDesiredState.Reject(r.Fps, frtc?.Min, frtc?.Max) is string why)
+        return Results.Json(new { applied = false, pending = false, reason = why }, statusCode: 400);
+
+    desired.RequestFrameCap(r.Fps, DateTimeOffset.UtcNow);
+    return Results.Json(new
+    {
+        applied = false,
+        pending = true,
+        requested = r.Fps,
+        reason = r.Fps is null
+            ? "Frame cap will be turned off by the GPU agent within a few seconds."
+            : $"Frame cap of {r.Fps} FPS handed to the GPU agent; GET /gpu will show what the driver applied.",
+    });
+});
+
+// What the agent should reconcile towards. Only the agent reads this.
+app.MapGet("/gpu/desired", (GpuDesiredState desired) => Results.Json(new
+{
+    // `requested:false` means nobody has asked for anything, and the agent must then leave the GPU
+    // alone. Starting the daemon is not a reason to change someone's Adrenalin settings.
+    requested = desired.Requested,
+    frameCapFps = desired.FrameCapFps,
+    requestedAtUtc = desired.RequestedAtUtc,
+}));
 
 // Where the agent checks in. Localhost-only like the rest of this API.
 app.MapPost("/gpu/state", (GpuAgentReportRequest r, GpuAgentState agent) =>
@@ -1412,6 +1461,9 @@ namespace GpdForge.Api
     /// <summary>What the user-session GPU agent posts to /gpu/state. No timestamp: the daemon stamps
     /// arrival itself, because freshness is exactly what this endpoint exists to establish and a
     /// clock we do not control is not evidence about it.</summary>
+    /// <summary>POST /gpu/frame-cap. Null Fps disables the cap, which is an intent, not an omission.</summary>
+    public sealed record FrameCapRequest(int? Fps);
+
     public sealed record GpuAgentReportRequest(
         bool Available,
         string? Status,

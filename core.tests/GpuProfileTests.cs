@@ -258,3 +258,68 @@ public class GpuAgentStateTests
         Assert.True(state.IsFresh(Now));
     }
 }
+
+public class GpuDesiredStateTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 8, 30, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Nothing_is_requested_until_someone_asks()
+    {
+        // The agent must leave the GPU alone until then. Starting the daemon is not a reason to
+        // change someone's Adrenalin settings.
+        var s = new GpuDesiredState();
+        Assert.False(s.Requested);
+        Assert.Null(s.FrameCapFps);
+    }
+
+    [Fact]
+    public void Disabling_the_cap_is_an_intent_not_an_absence()
+    {
+        // null FrameCapFps with Requested true means "turn it off", which is a different thing from
+        // "nobody has said anything". Collapsing them would make the off switch unreachable.
+        var s = new GpuDesiredState();
+        s.RequestFrameCap(null, Now);
+        Assert.True(s.Requested);
+        Assert.Null(s.FrameCapFps);
+    }
+
+    [Fact]
+    public void A_cap_below_the_drivers_range_is_rejected_with_the_actual_limit()
+    {
+        // 15..1000 is what this device's driver reported on 2026-08-30. The message quotes the real
+        // limit, so the user learns what WOULD work instead of just being refused.
+        var why = GpuDesiredState.Reject(5, 15, 1000);
+        Assert.NotNull(why);
+        Assert.Contains("15", why);
+    }
+
+    [Fact]
+    public void A_cap_above_the_drivers_range_is_rejected_with_the_actual_limit()
+        => Assert.Contains("1000", GpuDesiredState.Reject(2000, 15, 1000)!);
+
+    [Fact]
+    public void A_cap_inside_the_range_is_accepted()
+        => Assert.Null(GpuDesiredState.Reject(45, 15, 1000));
+
+    [Fact]
+    public void Disabling_is_always_legal_even_outside_any_range()
+        => Assert.Null(GpuDesiredState.Reject(null, 15, 1000));
+
+    [Fact]
+    public void Zero_and_negative_are_rejected_as_not_being_frame_rates()
+    {
+        Assert.NotNull(GpuDesiredState.Reject(0, 15, 1000));
+        Assert.NotNull(GpuDesiredState.Reject(-30, 15, 1000));
+    }
+
+    [Fact]
+    public void Without_a_reported_range_only_implausible_values_are_refused()
+    {
+        // A limit we did not read is not a limit we can enforce, so an unknown range must not become
+        // an invented one. Only what cannot be a frame rate at all is refused.
+        Assert.Null(GpuDesiredState.Reject(45, null, null));
+        Assert.Null(GpuDesiredState.Reject(240, null, null));
+        Assert.NotNull(GpuDesiredState.Reject(50_000, null, null));
+    }
+}

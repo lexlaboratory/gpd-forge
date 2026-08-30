@@ -58,6 +58,8 @@ public static class GpuAgentLoop
         AdlxSettings? settings = probe.Status == AdlxStatus.Ready ? new AdlxSettings(adlx.System, logger) : null;
 
         string? lastAppliedMode = null;
+        int? lastAppliedCap = null;
+        var capEverApplied = false;
 
         while (!ct.IsCancellationRequested)
         {
@@ -90,6 +92,23 @@ public static class GpuAgentLoop
                         // make every subsequent tick retry the same nothing.
                         lastAppliedMode = mode;
                     }
+
+                    // Reconcile the frame cap towards what the daemon wants. Desired state, not
+                    // commands: an agent that missed ten ticks or restarted converges on the same
+                    // result instead of replaying a queue.
+                    var desired = await ReadDesiredAsync(http, ct);
+                    if (desired is { Requested: true } && (!capEverApplied || desired.FrameCapFps != lastAppliedCap))
+                    {
+                        var (ok, detail) = settings.SetFrameRateCapDetailed(desired.FrameCapFps);
+                        Console.WriteLine(desired.FrameCapFps is int fps
+                            ? $"  frame cap {fps} FPS -> {(ok ? "applied" : "NOT applied")}: {detail}"
+                            : $"  frame cap off -> {(ok ? "applied" : "NOT applied")}: {detail}");
+
+                        // Recorded even on failure, so a cap the driver refuses is not retried every
+                        // three seconds forever. GET /gpu still shows the truth, read from the driver.
+                        lastAppliedCap = desired.FrameCapFps;
+                        capEverApplied = true;
+                    }
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -108,6 +127,31 @@ public static class GpuAgentLoop
 
         return 0;
     }
+
+    /// <summary>What the daemon wants. Null when it could not be read — which must NOT be treated as
+    /// "no cap wanted", or a momentary hiccup would undo the user's setting.</summary>
+    private static async Task<DesiredGpuState?> ReadDesiredAsync(HttpClient http, CancellationToken ct)
+    {
+        using var res = await http.GetAsync("/gpu/desired", ct);
+        if (!res.IsSuccessStatusCode) return null;
+
+        var body = await res.Content.ReadAsStringAsync(ct);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("requested", out var requested)) return null;
+
+            int? cap = null;
+            if (root.TryGetProperty("frameCapFps", out var f) && f.ValueKind == JsonValueKind.Number)
+                cap = f.GetInt32();
+
+            return new DesiredGpuState(requested.GetBoolean(), cap);
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private sealed record DesiredGpuState(bool Requested, int? FrameCapFps);
 
     private static async Task<string?> ReadActiveModeAsync(HttpClient http, CancellationToken ct)
     {

@@ -475,6 +475,27 @@ through `ProfileApplier`, without knowing ADLX exists.
 applied in an order that turns the conflicting feature off first, and a profile that requests the
 forbidden pair is rejected with a reason rather than sent and silently half-applied.
 
+#### `POST /gpu/frame-cap`  ·  `GET /gpu/desired`  (the driver's real frame cap, FRTC)
+`POST { fps: number | null } → { applied: false, pending: boolean, requested?, reason }`
+
+A **real** cap: the driver holds each frame back. Distinct from the Power page's auto-FPS, which
+steers TDP toward a target and does not stop the GPU exceeding it. `fps: null` disables it.
+
+- **Never answers `applied: true`.** The daemon cannot reach ADLX, so it records an intent and the
+  agent reconciles within a few seconds; `GET /gpu` then reports what the driver actually did. An
+  endpoint claiming success for work that has not happened is the thing this project keeps deleting.
+- `400` with the driver's real limit when the value is out of range (this device reports **15–1000**),
+  so a refused value teaches what would work. `409` when no agent is reporting or the GPU has no FRTC.
+- `GET /gpu/desired` is what the agent reconciles towards; only it reads this. `requested: false`
+  means nobody has asked for anything and the GPU must be left alone — starting the daemon is not a
+  reason to change someone's Adrenalin settings. Desired state rather than a command queue, so an
+  agent that restarts or misses ticks converges instead of replaying.
+
+⚠️ **Order is forced by the driver:** FRTC must be ENABLED before its FPS can be written. The
+intuitive order (value first, so enabling never briefly applies a stale cap) returns `ADLX_FAIL`
+(rc=3) — measured on device. The accepted cost is that enabling re-applies the previous cap for an
+instant before the new one lands.
+
 **Gated** behind `GPDFORGE_ENABLE_GPU_PROFILES=1` (installer: `-EnableGpuProfiles`). Its own gate, not
 the hardware one: ADLX is a user-mode driver API with nothing to do with the MSR/EC paths, and a fault
 here must not be able to take down power control that has been validated on the metal.

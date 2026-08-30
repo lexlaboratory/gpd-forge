@@ -19,7 +19,18 @@ namespace GpdForge.Gpu;
 
 /// <summary>One Radeon feature as the driver currently reports it. `Supported` false means this GPU
 /// cannot do it at all; the value fields are null when they were not readable, never a stand-in.</summary>
-public sealed record GpuFeatureState(bool Supported, bool Enabled, int? Value = null);
+public sealed record GpuFeatureState(bool Supported, bool Enabled, int? Value = null, int? Min = null, int? Max = null);
+
+/// <summary>ADLX_IntRange, transcribed from ADLXStructures.h: three adlx_int (int32) fields in this
+/// order. Marshalled explicitly rather than relying on default layout, because a wrong size here
+/// would silently read the wrong bytes rather than fail.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct AdlxIntRange
+{
+    public int MinValue;
+    public int MaxValue;
+    public int Step;
+}
 
 /// <summary>Everything read in one pass. A null entry means the feature could not be queried.</summary>
 public sealed record GpuSettingsSnapshot(
@@ -80,6 +91,7 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
     private const int SlotSharpGetSharpness = 6;
     private const int SlotSharpSetEnabled = 7;
     // IADLX3DFrameRateTargetControlVtbl 5 GetFPSRange, 6 GetFPS, 7 SetEnabled, 8 SetFPS
+    private const int SlotFrtcGetFpsRange = 5;
     private const int SlotFrtcGetFps = 6;
     private const int SlotFrtcSetEnabled = 7;
     private const int SlotFrtcSetFps = 8;
@@ -92,6 +104,8 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
     private delegate int OutByteFn(IntPtr pThis, out byte value);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int OutIntFn(IntPtr pThis, out int value);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int OutRangeFn(IntPtr pThis, out AdlxIntRange range);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int SetByteFn(IntPtr pThis, byte value);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -173,7 +187,7 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
     }
 
     /// <summary>Reads support/enabled, plus the feature's own value when it has one.</summary>
-    private GpuFeatureState? ReadFeature(int servicesSlot, int? valueSlot)
+    private GpuFeatureState? ReadFeature(int servicesSlot, int? valueSlot, int? rangeSlot = null)
         => WithFeature(servicesSlot, p =>
         {
             if (Fn<OutByteFn>(p, SlotIsSupported)(p, out var supported) != ADLX_OK) return null;
@@ -184,7 +198,16 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
             int? value = null;
             if (valueSlot is int vs && Fn<OutIntFn>(p, vs)(p, out var v) == ADLX_OK) value = v;
 
-            return new GpuFeatureState(true, enabled, value);
+            // The range is what makes a rejected value explainable. Without it we could only say "the
+            // driver refused", which tells the user nothing about what WOULD work.
+            int? min = null, max = null;
+            if (rangeSlot is int rs && Fn<OutRangeFn>(p, rs)(p, out var range) == ADLX_OK)
+            {
+                min = range.MinValue;
+                max = range.MaxValue;
+            }
+
+            return new GpuFeatureState(true, enabled, value, min, max);
         });
 
     public GpuSettingsSnapshot Read() => new(
@@ -192,7 +215,7 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
         Chill: ReadFeature(SlotGetChill, SlotChillGetMinFps),
         Boost: ReadFeature(SlotGetBoost, SlotBoostGetResolution),
         ImageSharpening: ReadFeature(SlotGetImageSharpening, SlotSharpGetSharpness),
-        FrameRateTargetControl: ReadFeature(SlotGetFrameRateTargetControl, SlotFrtcGetFps));
+        FrameRateTargetControl: ReadFeature(SlotGetFrameRateTargetControl, SlotFrtcGetFps, SlotFrtcGetFpsRange));
 
     /// <summary>Sets one feature's enabled flag. False when unsupported or the write did not succeed —
     /// never optimistic, because "we asked" is not "it applied".</summary>
@@ -284,18 +307,39 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
 
     /// <summary>A real frame-rate cap, from the driver (FRTC) — distinct from the auto-TDP FPS target
     /// the Power page steers. `fps` of null disables it.</summary>
-    public bool SetFrameRateCap(int? fps)
+    public bool SetFrameRateCap(int? fps) => SetFrameRateCapDetailed(fps).Ok;
+
+    /// <summary>
+    /// Applies the cap and reports WHICH call failed and with what ADLX_RESULT.
+    ///
+    /// The boolean-only version told us "NOT applied" and nothing else, which is a dead end: SetFPS
+    /// and SetEnabled fail for entirely different reasons, and the result code is the difference
+    /// between a next step and a shrug. Same reasoning as Diagnose() above.
+    /// </summary>
+    public (bool Ok, string Detail) SetFrameRateCapDetailed(int? fps)
         => WithFeature(SlotGetFrameRateTargetControl, p =>
         {
             if (Fn<OutByteFn>(p, SlotIsSupported)(p, out var supported) != ADLX_OK || supported == 0)
-                return false;
+                return (false, "FrameRateTargetControl reports unsupported on this GPU.");
 
             if (fps is not int target)
-                return Fn<SetByteFn>(p, SlotFrtcSetEnabled)(p, 0) == ADLX_OK;
+            {
+                var offRc = Fn<SetByteFn>(p, SlotFrtcSetEnabled)(p, 0);
+                return (offRc == ADLX_OK, offRc == ADLX_OK ? "Cap disabled." : $"SetEnabled(false) -> rc={offRc}.");
+            }
 
-            // Set the value before enabling: enabling first would briefly apply whatever cap was left
-            // over from last time, which on a handheld is a visible frame-rate lurch.
-            return Fn<SetIntFn>(p, SlotFrtcSetFps)(p, target) == ADLX_OK
-                   && Fn<SetByteFn>(p, SlotFrtcSetEnabled)(p, 1) == ADLX_OK;
+            // Enable BEFORE setting the value. The intuitive order — value first, so enabling never
+            // briefly applies a stale cap — is what the driver refuses: measured on this device,
+            // SetFPS on a disabled FRTC returns ADLX_FAIL (rc=3). The feature has to be on before its
+            // value can be written.
+            //
+            // The cost is real and accepted: enabling applies whatever cap was there previously for
+            // the moment before the new one lands. On a handheld that can be a visible frame-rate
+            // lurch, and it is the price of the only order the driver accepts.
+            var enRc = Fn<SetByteFn>(p, SlotFrtcSetEnabled)(p, 1);
+            if (enRc != ADLX_OK) return (false, $"SetEnabled(true) -> rc={enRc}.");
+
+            var setRc = Fn<SetIntFn>(p, SlotFrtcSetFps)(p, target);
+            return (setRc == ADLX_OK, setRc == ADLX_OK ? $"Cap set to {target} FPS." : $"Enabled ok, SetFPS({target}) -> rc={setRc}.");
         });
 }
