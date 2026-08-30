@@ -324,9 +324,16 @@ npm --prefix "$RepoDir\ui" run tauri build
 #
 # The out-of-tree build is a FALLBACK rather than the default because it forfeits the incremental
 # cache in the normal location, which costs about six minutes from cold.
-if (-not (Test-Path $tauriExe)) {
+# Stale counts as failed. The in-tree build can be blocked by SAC and leave a PREVIOUS exe sitting
+# there; without this check the fallback never fires, the old binary is correctly refused as stale,
+# and the user ends up with a current daemon behind a window from an earlier build - the exact
+# mismatch the version card exists to expose. Retry out-of-tree when it is missing OR out of date.
+$bundleStamp = (Get-Item "$RepoDir\ui\dist\index.html").LastWriteTime
+$shellIsStale = (Test-Path $tauriExe) -and ((Get-Item $tauriExe).LastWriteTime -lt $bundleStamp)
+if ((-not (Test-Path $tauriExe)) -or $shellIsStale) {
     $altTarget = Join-Path $env:TEMP "gpd-forge-tauri-target"
-    Write-Host "  shell build failed - retrying with CARGO_TARGET_DIR outside the repo (SAC workaround)" -ForegroundColor Yellow
+    $why = if ($shellIsStale) { "shell is older than the UI bundle" } else { "shell build produced nothing" }
+    Write-Host "  $why - retrying with CARGO_TARGET_DIR outside the repo (SAC workaround)" -ForegroundColor Yellow
     Write-Host "  target: $altTarget" -ForegroundColor DarkGray
     $prevTarget = $env:CARGO_TARGET_DIR
     try {
@@ -338,7 +345,7 @@ if (-not (Test-Path $tauriExe)) {
         else { $env:CARGO_TARGET_DIR = $prevTarget }
     }
     $altExe = Join-Path $altTarget "release\gpd-forge.exe"
-    if (Test-Path $altExe) {
+    if ((Test-Path $altExe) -and ((Get-Item $altExe).LastWriteTime -ge $bundleStamp)) {
         New-Item -ItemType Directory -Force -Path (Split-Path $tauriExe) | Out-Null
         Copy-Item $altExe $tauriExe -Force
         Write-Host "  recovered: shell built out-of-tree and staged for install" -ForegroundColor Green
