@@ -42,7 +42,12 @@ if (args.Contains("--gpu-agent"))
     // retype Main as Task<int> and force every other early exit to return one too.
     using var agentCts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; agentCts.Cancel(); };
-    await GpuAgentLoop.RunAsync("http://127.0.0.1:8787", null, agentCts.Token);
+    // Same override as the daemon, so an agent can be pointed at a throwaway instance for testing
+    // without touching the installed service.
+    var agentPort = Environment.GetEnvironmentVariable("GPDFORGE_PORT") is string ap && int.TryParse(ap, out var parsedAgentPort)
+        ? parsedAgentPort
+        : 8787;
+    await GpuAgentLoop.RunAsync($"http://127.0.0.1:{agentPort}", null, agentCts.Token);
     return;
 }
 
@@ -594,7 +599,14 @@ if (autoProfiles)
 }
 
 // Bind the local API to loopback only (see docs/api.md — remote access is opt-in).
-builder.WebHost.UseUrls("http://127.0.0.1:8787");
+// Localhost only, port overridable. The port was hard-coded, which meant a second daemon could never
+// be run beside the installed service — so an end-to-end check of a change required replacing the
+// running one, elevation and all. Verifying against a throwaway instance is exactly the thing that
+// should be easy. Still 127.0.0.1: this override is about which port, never about exposure.
+var forgePort = Environment.GetEnvironmentVariable("GPDFORGE_PORT") is string p && int.TryParse(p, out var parsedPort)
+    ? parsedPort
+    : 8787;
+builder.WebHost.UseUrls($"http://127.0.0.1:{forgePort}");
 
 var app = builder.Build();
 app.UseCors();
