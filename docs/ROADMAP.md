@@ -44,11 +44,20 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       (backup → patch → verify → restore) is unit-tested but the byte offsets are still placeholders.
       Device identity is now **confirmed on hardware**: VID_2F24 & PID_0135, presenting as 7 PnP
       nodes (USB composite parent + MI_00/01/02, each also appearing as a HID node).
-- [ ] `Rtss/` single-owner arbitration
-- [ ] `Api/` HTTP+WebSocket + named pipe
+- [~] `Rtss/` single-owner arbitration — **mostly obsoleted 2026-08-30.** The reason this existed was
+      the frame cap, and AMD's own FRTC now provides a real one through ADLX (`POST /gpu/frame-cap`),
+      with no third-party dependency and nothing to arbitrate. What remains of the item is only the
+      **OSD overlay**: if GPD Forge ever draws stats over a game, RTSS is the incumbent owner of that
+      hook. Re-scoped rather than done.
+- [~] `Api/` HTTP + WebSocket + named pipe — **HTTP is done and is what every client uses.** WebSocket
+      and the named pipe have no code and, on measurement, no demand: `docs/api.md` records that the
+      daemon polls and that no client consumes a stream. Kept open honestly rather than ticked, but it
+      is a "not needed yet", not a gap.
 - [x] `Profiles/` focus-process profiles with anti-flapping hysteresis (engine unit-tested;
       `--probe-focus` live; opt-in worker via GPDFORGE_AUTO_PROFILES)
-- [ ] Importer: migrate `C:\Program Files\Motion Assistant\Profiles\*.ini` → native profiles
+- [x] Importer: migrate `C:\Program Files\Motion Assistant\Profiles\*.ini` → native profiles —
+      `core/Import/MotionAssistantImporter.cs`, `POST /import/motionassistant`, a card on the Profiles
+      page and 34 test assertions. Was still listed as pending on 2026-08-30; audited and corrected.
 - [~] UI: dashboard + per-mode panels shipped — 9 pages (Dashboard/Power/Fan/Controller/Display/Profiles/
       Monitor/System/Settings), light+dark themes, live SVG sparklines, toasts. Browser-QA'd at the Win 4's
       native 1280×800 (both themes).
@@ -201,6 +210,60 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       and consumed by the update checker (which previously compared releases against a literal default
       that nobody would ever bump). `CHANGELOG.md` is maintained. What remains is the release act
       itself: tag, release notes, and a published artefact.
+
+## Phase 5 — Finish what is nearly done  *(low risk, no blockers)*
+
+Everything here is reachable today; none of it waits on a driver or a decision.
+
+- [ ] **Wire the overlay's "FPS cap" to the real cap.** It currently calls auto-FPS, which steers TDP
+      toward a target — a control whose label promises something it does not do. Point it at
+      `POST /gpu/frame-cap` and rename the auto-FPS control to what it is.
+- [ ] **Frame-cap control in the UI**, with the driver's reported range (15–1000 here) as the bounds.
+- [ ] ⚠️ **Decide what happens when auto-FPS and FRTC are both on.** One steers watts to reach a frame
+      rate while the other refuses to exceed one; together they can chase each other. This needs a
+      rule, not a discovery in the field.
+- [ ] **Resident overlay hotkey + topmost over exclusive fullscreen** — `scripts/overlay-hotkey.ps1`
+      and `forge-hotkeys.ps1` exist; the binding to a WinControls Home button does not.
+- [ ] **First public OSS release.** The versioning half landed 2026-08-29 (one declared version,
+      `/version`, drift enforced by tests). What remains is the release act: tag, notes, artefact.
+
+## Phase 6 — The broker  *(unblocks the fan, and is the single biggest blocker in the project)*
+
+`core/Broker/` is still `IBroker` + `NullBroker`. Everything fan-related waits on it, and it is worth
+doing as one piece precisely because four separate items unblock together.
+
+- [ ] **PawnIO integration + audit log** — directly, or via a PawnIO-capable LibreHardwareMonitor if
+      one ships stable. Never WinRing0.
+- [ ] Then, in order: `Fan/` runtime EC read → boot/resume re-init + hysteresis curves → the AI mode's
+      sustained fan curve → the `fan` step of the resume restore, which today honestly reports that no
+      EC backend is wired.
+- ⚠️ This is the phase where a mistake spins a fan wrong. The existing double gate
+      (`GPDFORGE_ENABLE_HARDWARE` **and** `GPDFORGE_ENABLE_FAN_CONTROL`) and the probe-with-auto-restore
+      pattern already established for PWM stay mandatory.
+
+## Phase 7 — The controller  *(needs hardware work, no external blocker)*
+
+- [ ] **Real HID byte offsets.** The safe-write layer (backup → patch → verify → restore) is written
+      and unit-tested, and the device identity is confirmed on hardware (VID_2F24 & PID_0135, seven PnP
+      nodes). The offsets are still placeholders, so nothing may be written until they are established
+      against the real report descriptor.
+
+## Phase 8 — Standby and firmware  *(each needs a decision before code)*
+
+- [ ] **Hibernate helper.** There is no S0↔S3 toggle on this board — firmware reports S1/S2/S3
+      unsupported — so the only useful control is "hibernate instead of Modern Standby".
+- [ ] **Firmware-update assistant with preconditions.** Not started. This device is on BIOS 0.10
+      (Nov 2024), and the intermittent hibernate-resume failure leaves no crash dump, placing it before
+      Windows takes control. Any assistant must treat a BIOS update as the irreversible,
+      explicitly-authorised step it is.
+
+### Sequencing, and why
+
+Phase 5 first because it is the only phase with no blockers and it closes controls that currently
+mislead — a mislabelled switch costs trust every time someone uses it. Phase 6 next because it is the
+largest single unblocking, and four parked items move together the day it lands. Phase 7 and 8 are
+independent of both and can be reordered freely; 8 in particular is gated on decisions rather than on
+work.
 
 ## Non-goals (for now)
 - Non-GPD handhelds (design leaves room, but not a target).
