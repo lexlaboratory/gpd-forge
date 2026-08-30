@@ -1,5 +1,10 @@
 # Phase 3 plan — Agents / AI (local) mode
 
+> **Status: closed 2026-08-29.** P3.1 landed in `b26228d`. P3.2, P3.3 and P3.4 landed the same day.
+> Outcome notes are inline below; the one thing still unverified is stated at the end. What the plan
+> got right is worth keeping: two of the three open items needed *rewriting*, not building, and the
+> most valuable defect found was in code that already shipped.
+
 Drafted 2026-08-29, after auditing what is actually in the tree. The roadmap's Phase 3 lists three
 open items; all three already have code, and none of them means what the checkbox implies. This plan
 starts from the corrected state, because two of the three items need rewriting rather than building.
@@ -98,3 +103,50 @@ without anyone building anything:
   whether that mitigation worked.
 
 Read those before starting P3.2 — they are evidence about the same subsystem, for free.
+
+## Outcome (2026-08-29)
+
+**The free verification was read first, and it changed the framing.** `STANDBYIDLE` is confirmed at
+300 s on DC, so the policy change is applied — but `lastDrainPctPerHour` is still `null`,
+`powercfg /lastwake` reports 0 wakes, and the sleep study's 117 sessions still contain no `Sleep`
+session. **The machine has not suspended since the change**, so the mitigation is applied and *not yet
+confirmed*. It follows that P3.2 shipped without a single field observation of the failure it prevents
+— which is the argument for its observe-only default, not against it.
+
+**P3.2** — `InferenceHoldWorker` earns a hold from sustained CPU work, never from presence. Ships
+observe-only (`GPDFORGE_INFERENCE_HOLD=1` to enforce) so the feature gathers the evidence for its own
+enforcement. Failing to *measure* biases toward letting the machine sleep, and unreadable processes are
+reported (`unmeasured`) rather than silently counted as idle.
+
+**P3.3** — rewritten, not built, exactly as planned. No write path. The reading is now persisted so a
+BIOS edit is *confirmed* across a reboot. The BIOS menu path for the G1618-04 was **not** established
+from a credible source, so it was left generic rather than invented — an invented firmware path sends
+the user hunting inside firmware.
+
+**P3.4** — moved under the Phase 1 driver decision with no checkbox.
+
+### The most valuable finding was not in this work
+
+Three adversarial reviewers independently flagged `Win32ExecutionStateSink`: it P/Invoked
+`SetThreadExecutionState` from whichever thread-pool thread called it, while its comment asserted the
+state was "per-process". It is **per-thread** — the API is named *SetThread*ExecutionState. Engage on
+pool thread A, release on B, and A's request stands forever: `holders` reads 0, the panel says
+released, and the machine never sleeps again. That is the 14.4 W overnight drain of 2026-08-28 with a
+counter vouching for it, and it was **already shipped** — reachable from the manual toggle and from
+every completed job. The sink now owns one dedicated thread and drops the request on Dispose.
+
+Two lessons this repo keeps re-learning, both re-confirmed:
+- **A guard that cannot fail is not a guard.** The thread-affinity tests drove the *pump* with a fake
+  and nothing bound the shipping sink to it — reverting to a direct P/Invoke left all 786 tests green.
+  `Win32ExecutionStateSinkBindingTests` closes that, and was falsified on purpose (reverted the sink,
+  watched it fail, restored) rather than merely observed passing.
+- **Correct logic with no caller is not a feature.** Both new subsystems were fully unit-tested while
+  unreachable from `Program.cs` — the same shape as `ProfileShaper` in `b26228d`, one commit earlier.
+
+### Still unverified, and it should stay written down
+
+The endpoints were exercised against the mock daemon and the C# build, **not against the running
+daemon**: the service binds a fixed `127.0.0.1:8787`, which the installed service holds, and it was not
+stopped to test. Given this repo shipped alert severities as ints in production while the mock emitted
+strings, that gap is the one worth closing first, by installing and re-reading `/ai/inference-hold`
+from the live service.

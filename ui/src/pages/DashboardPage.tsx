@@ -1,6 +1,6 @@
 // GPD Forge UI — Dashboard page (telemetry, modes, TDP, AI card, auto-tuner). GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
-import type { AiInfo, TuneGoal, TunerInfo } from '../types'
+import type { AiInfo, InferenceHold, TuneGoal, TunerInfo } from '../types'
 import {
   setTdp as apiSetTdp, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
 } from '../api'
@@ -114,7 +114,50 @@ export function AiCard() {
         <Readout testid="ai-vram" label="iGPU VRAM/UMA" value={vram.available ? `${vram.reportedMb}` : '--'} unit={vram.available ? ' MB' : ''} />
       </div>
       <p className="muted" data-testid="ai-vram-advisory">{vram.advisory}</p>
+      {vram.history && (
+        <p className="muted" data-testid="ai-vram-history">{vram.history.summary}</p>
+      )}
+      <InferenceHoldReadout hold={info.inferenceHold} />
     </Frame>
+  )
+}
+
+// Attribution for the keep-awake we take on behalf of inference GPD Forge did not start. A machine
+// that will not sleep and will not say why is the complaint this feature otherwise creates, so the
+// holding process and its start time are shown, not just a boolean.
+//
+// `cpuFraction: null` renders as "—", never as 0%: null means the last tick produced no usable
+// measurement (new PID, recycled PID, stepped clock, or CPU time we were refused), and showing that
+// as 0% would read as "idle" when the truth is "unknown".
+export function InferenceHoldReadout({ hold }: { hold: InferenceHold | undefined }) {
+  if (!hold) return null
+  const pct = (f: number | null) => (f === null || f === undefined ? '—' : `${Math.round(f * 100)}%`)
+  return (
+    <div data-testid="ai-inference-hold">
+      <p className="muted">
+        {hold.holding
+          ? `Held awake for inference since ${new Date(hold.holdingSince!).toLocaleTimeString()}.`
+          : hold.enforcing
+            ? 'No inference work detected — Windows may sleep normally.'
+            : 'Observing only. Detected inference work is reported here but does not hold the machine awake (set GPDFORGE_INFERENCE_HOLD=1 to enforce).'}
+      </p>
+      {hold.unmeasured && hold.unmeasured.length > 0 && (
+        <p className="muted" data-testid="ai-inference-unmeasured">
+          Could not read {hold.unmeasured.map((u) => `${u.name} (${u.why})`).join(', ')} — this is not the
+          same as "not working", and no hold is taken on a guess.
+        </p>
+      )}
+      {hold.workers.length > 0 && (
+        <ul className="muted" data-testid="ai-inference-workers">
+          {hold.workers.map((w) => (
+            <li key={w.pid}>
+              {w.name} (pid {w.pid}) — {pct(w.cpuFraction)} of total CPU, busy since{' '}
+              {new Date(w.busySince).toLocaleTimeString()}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 

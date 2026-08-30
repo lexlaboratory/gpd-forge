@@ -42,8 +42,44 @@ export interface Guardian {
 }
 
 export interface AntiStandby { active: boolean; holders: number; manual: boolean }
-export interface VramInfo { reportedMb: number; adapterName: string | null; available: boolean; advisory: string }
-export interface AiInfo { antiStandby: AntiStandby; sustainedProfile: Preset; vram: VramInfo }
+
+// The confirmation half of P3.3. `rebootConfirmed: false` means we could not ESTABLISH that a reboot
+// happened between the two readings — not that none did. Render the summary, never re-derive a verdict
+// from the numbers here: the reported MB saturates at the uint32 4095/4096 MB ceiling, so a delta
+// involving that value is not a measurement of the split.
+export interface VramHistoryInfo {
+  kind: string; summary: string
+  previousMb: number | null; sinceUtc: string | null; bootUtc: string | null
+  rebootConfirmed: boolean
+}
+export interface VramInfo {
+  reportedMb: number; adapterName: string | null; available: boolean; advisory: string
+  history?: VramHistoryInfo
+}
+
+// One process currently earning the inference keep-awake hold. `cpuFraction` is a fraction of the
+// WHOLE machine's CPU capacity (not one core) and is null when the last tick produced no usable
+// measurement — show "—" for null, never 0, which would read as "idle" when the truth is "unknown".
+export interface InferenceWorker { pid: number; name: string; cpuFraction: number | null; busySince: string }
+
+// A watched process we could NOT read — not one that is idle. An unelevated daemon cannot read an
+// elevated ollama's CPU time, and without this the panel would confidently report "no inference work".
+export interface UnmeasuredProcess { name: string; pid: number | null; why: string }
+
+// `enforcing` false is the shipped default: the worker observes and publishes what it WOULD hold for
+// without actually holding, until GPDFORGE_INFERENCE_HOLD=1.
+export interface InferenceHold {
+  enforcing: boolean; holding: boolean; holdingSince: string | null
+  lastTickAt?: string | null; reason?: string | null
+  watchedNames?: string[]; busyCpuFraction?: number
+  workers: InferenceWorker[]
+  unmeasured?: UnmeasuredProcess[]
+}
+
+export interface AiInfo {
+  antiStandby: AntiStandby; sustainedProfile: Preset; vram: VramInfo
+  inferenceHold: InferenceHold
+}
 
 // One profile recovered from a MotionAssistant .ini file (mirror of core/Import/ImportedProfile).
 export interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: number; tctlC: number }

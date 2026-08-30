@@ -382,6 +382,32 @@ builder.Services.AddSingleton<AntiStandbyService>();
 builder.Services.AddSingleton<IVramReader, WmiVramReader>();
 builder.Services.AddSingleton<AiState>();
 
+// P3.3 — the UMA split stays BIOS-only (there is still no safe user-mode write; see VramAdvisor), but
+// the reading is now persisted so a change can be CONFIRMED across a reboot instead of assumed. This
+// is a read plus a small local file, so it is not gated behind GPDFORGE_ENABLE_HARDWARE.
+builder.Services.AddSingleton<IBootClock, WmiBootClock>();
+builder.Services.AddSingleton<IVramHistoryStore>(sp => new FileVramHistoryStore());
+builder.Services.AddSingleton<VramHistory>();
+
+// P3.2 — keep the machine awake for inference GPD Forge did NOT start (ollama, LM Studio,
+// llama-server, a training script in a terminal). Like AntiStandbyService itself this performs no
+// hardware write — SetThreadExecutionState is an unprivileged, self-cleaning power request — so it is
+// deliberately NOT behind GPDFORGE_ENABLE_HARDWARE.
+//
+// It ships OBSERVE-ONLY: the worker always samples and always publishes what it WOULD hold for, and
+// only takes a real hold when GPDFORGE_INFERENCE_HOLD=1. That default is the point. Until 2026-08-29
+// this machine never entered Modern Standby, so there is no field evidence about which processes
+// deserve a hold; enforcing first and gathering evidence afterwards is how the 14.4 W overnight drain
+// happened. The feature collects its own justification before it is allowed to act.
+//
+// The worker is registered unconditionally rather than gated out of existence, so that the endpoint
+// below always answers with something real instead of a shape that only exists in one configuration.
+var inferenceHold = InferenceHoldOptions.FromEnvironment();
+builder.Services.AddSingleton(inferenceHold);
+builder.Services.AddSingleton(new InferenceHoldState(inferenceHold));
+builder.Services.AddSingleton<IProcessCpuSampler, SystemProcessCpuSampler>();
+builder.Services.AddHostedService<InferenceHoldWorker>();
+
 builder.Services.AddSingleton<JobsState>();   // holds an anti-standby lock while a job is "running"
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
 builder.Services.AddSingleton<ProfileApplier>();
@@ -573,17 +599,86 @@ app.MapPost("/jobs", async (JobRequest req, JobsState j, ITelemetryService t, Ca
 });
 
 // Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.
-app.MapGet("/ai", (AntiStandbyService anti, IVramReader vram, AiState ai) =>
+app.MapGet("/ai", (AntiStandbyService anti, IVramReader vram, AiState ai, VramHistory vramHistory, InferenceHoldState inference) =>
 {
     // One source of truth: ModeProfiles.For already shapes the sustained mode, so this reports the
     // profile that actually gets applied rather than recomputing a parallel one for display.
     var shaped = ModeProfiles.For(ModeProfiles.SustainedMode) ?? ProfileShaper.Shape(25, 90);
     var v = vram.Read();
+
+    // Observing here — on the read path — is deliberate. The split only changes across a reboot, so
+    // there is no event to hook; the first /ai call after a boot is the earliest honest chance to
+    // notice. VramHistory throttles its own writes, so this does not turn a GET into a write storm.
+    var history = vramHistory.Observe(v);
+
+    var held = inference.Current;
     return Results.Json(new
     {
         antiStandby = new { active = anti.Active, holders = anti.HolderCount, manual = ai.ManualAntiStandby },
         sustainedProfile = new { stapmW = shaped.StapmW, fastW = shaped.FastW, slowW = shaped.SlowW, tctlC = shaped.TctlC },
-        vram = new { reportedMb = v.ReportedMb, adapterName = v.AdapterName, available = v.Available, advisory = v.Advisory },
+        vram = new
+        {
+            reportedMb = v.ReportedMb,
+            adapterName = v.AdapterName,
+            available = v.Available,
+            advisory = v.Advisory,
+            // The confirmation half of P3.3. `rebootConfirmed` is the honest bit: false means we could
+            // not establish that a reboot happened between the two readings, NOT that none did.
+            history = new
+            {
+                kind = history.Kind.ToString(),
+                summary = history.Summary,
+                previousMb = history.PreviousMb,
+                sinceUtc = history.SinceUtc,
+                bootUtc = history.BootUtc,
+                rebootConfirmed = history.RebootConfirmed,
+            },
+        },
+        inferenceHold = new
+        {
+            enforcing = held.Enforcing,
+            holding = held.Holding,
+            holdingSince = held.HoldingSince,
+            workers = held.Workers.Select(w => new { pid = w.Pid, name = w.Name, cpuFraction = w.CpuFraction, busySince = w.BusySince }),
+            // See /ai/inference-hold: a watched process we could not read is NOT a process that is idle.
+            unmeasured = held.Unmeasured.Select(u => new { name = u.Name, pid = u.Pid, why = u.Why }),
+        },
+    });
+});
+
+// Which third-party inference process, if any, is keeping the machine awake — and since when. A
+// machine that will not sleep and will not say why is the complaint this feature otherwise creates.
+//
+// The nulls here are load-bearing, not placeholders: `lastTickAt` is null until the worker has
+// actually ticked, `holdingSince` is null when nothing is held, and a worker's `cpuFraction` is null
+// when that tick produced no usable measurement (a new PID with no baseline, a recycled PID, a stepped
+// clock, or a process whose CPU time we were refused). None of them is ever filled with a plausible
+// number — render null as "—", never as 0. `cpuFraction` is a fraction of the WHOLE machine's CPU
+// capacity, not of one core.
+app.MapGet("/ai/inference-hold", (InferenceHoldState state) =>
+{
+    var s = state.Current;
+    return Results.Json(new
+    {
+        enforcing = s.Enforcing,
+        holding = s.Holding,
+        holdingSince = s.HoldingSince,
+        lastTickAt = s.LastTickAt,
+        reason = s.LastReason,
+        watchedNames = s.WatchedNames,
+        busyCpuFraction = s.BusyCpuFraction,
+        workers = s.Workers.Select(w => new
+        {
+            pid = w.Pid,
+            name = w.Name,
+            cpuFraction = w.CpuFraction,
+            busySince = w.BusySince,
+        }),
+        // "We could not see it" is a different fact from "it is not working", and the difference is the
+        // whole reason this endpoint is trustworthy. An unelevated daemon cannot read an elevated
+        // ollama's CPU time; without this list the panel would report "no sustained inference work" —
+        // confidently, and wrongly. Empty is the normal case.
+        unmeasured = s.Unmeasured.Select(u => new { name = u.Name, pid = u.Pid, why = u.Why }),
     });
 });
 

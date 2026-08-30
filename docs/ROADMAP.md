@@ -25,6 +25,19 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
   Honest caveat: the optional richer telemetry (package watts / temps) currently goes through
   LibreHardwareMonitor 0.9.4, which loads a **Ring0 (WinRing0-family)** driver when hardware access is
   enabled. The **default** telemetry path is driverless WMI. Moving both to PawnIO is the target.
+
+  **Work blocked by this decision** — listed here rather than in the phase it nominally belongs to,
+  because a checkbox in a phase list reads as something someone could pick up, and none of these are
+  independently actionable. They unblock together, the day a PawnIO-capable LibreHardwareMonitor ships
+  stable (or PawnIO is integrated directly):
+  - `Fan/` runtime EC read (Phase 1) — DeviceDb and indexed access are done and unit-tested; only the
+    driver is missing.
+  - `Fan/` boot/resume re-init + hysteresis curves (Phase 1).
+  - "Sustained" fan curve for AI mode (Phase 3) — the power half of sustained shaping shipped on
+    2026-08-29; the thermal half cannot, because it is a fan **write**.
+  - The `fan` step of the resume restore, which today honestly reports
+    `"No EC fan backend is wired"` rather than claiming a restore it did not perform
+    (confirmed against the live daemon 2026-08-29).
 - [x] `Telemetry/` read-only via WMI (battery/AC/discharge/clock/thermal-zone) — verified on device
 - [x] `Telemetry/` package power + fan RPM (broker) + FPS (Intel PresentMon, `GPDFORGE_ENABLE_FPS=1`)
 - [~] `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify — the safe-write layer
@@ -79,7 +92,16 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       readings separated by an observed suspend, never extrapolated.
 
 ## Phase 3 — Agents / AI (local) mode
-- [ ] VRAM/UMA reassignment preset
+- [x] **VRAM/UMA — the item was wrong, so it was rewritten rather than built.** "Reassignment preset"
+      cannot be delivered honestly on this board: the UMA split is applied by the BIOS at boot
+      (GOP/`_DSM`), there is no verified reversible user-mode write, and poking a vendor ACPI/registry
+      value risks a black screen on a device nobody can roll back remotely. Same correction as the
+      S0↔S3 helper in Phase 2 — the item was written before anyone checked whether the hardware
+      permits it. What shipped instead is **confirmation**: the reading is persisted across runs
+      (`VramHistory`), so a BIOS edit is detected across the reboot and reported as *confirmed*
+      instead of assumed. ⚠️ `Win32_VideoController.AdapterRAM` is a uint32 that **saturates at
+      4095/4096 MB**, so a reading at the ceiling is the ceiling and not a measurement of the split —
+      no confirmed delta is ever emitted from one. Still **no write path, by design.**
 - [x] **Sustained-CPU power shaping — now enforced, not just computed.** `ProfileShaper` had existed
       and been unit-tested while being called from exactly one place (`GET /ai`), where its result was
       displayed and discarded; the applied profile came straight from the preset map. The default AI
@@ -89,9 +111,24 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
       the mode switch, the auto-profile worker, the standby restore and the resume worker alike.
       The Power page drops the fast/slow sliders for this mode rather than offering two controls that
       change nothing.
-- [ ] "Sustained" fan curve — **blocked** by the Phase 1 driver decision (2026-08-25): no fan writes
-      until a PawnIO-capable LibreHardwareMonitor ships stable. Not independently actionable.
-- [ ] Anti-Modern-Standby during inference (SetThreadExecutionState / power request)
+- ⛔ "Sustained" fan curve — **not an item here.** It is a fan *write*, so it lives under the Phase 1
+      driver decision with everything else that decision blocks, and carries no checkbox: there is no
+      work to pick up until the driver question is answered. See *Driver decision log* above.
+- [x] **Anti-Modern-Standby during inference — now covers inference we did not start.** The hold
+      existed but only `JobsState` (GPD Forge's own queue) and the manual toggle ever took one, so a
+      hand-started `ollama serve`, LM Studio or training script got nothing. Newly urgent: until
+      2026-08-29 `STANDBYIDLE` was *never*, so no unheld run could be suspended; it is now 300 s on
+      battery. `InferenceHoldWorker` earns the hold from **sustained CPU work** attributable to a
+      watched process — never from mere presence, because an idle `ollama serve` is resident 24/7 and
+      holding for it recreates the exact all-night drain removed on 2026-08-29. Ships **observe-only**
+      (`GPDFORGE_INFERENCE_HOLD=1` to enforce): the feature gathers the evidence for its own
+      enforcement before it is allowed to act. The holding process and its start time are surfaced —
+      a machine that will not sleep and will not say why is the complaint this otherwise creates.
+      🔴 Fixed on the way: `Win32ExecutionStateSink` called `SetThreadExecutionState` from whichever
+      thread-pool thread happened to invoke it. That request is **per-thread** (the API is named
+      *SetThread*ExecutionState) and the header claimed "per-process", so engaging on one thread and
+      releasing on another left the request standing forever — `holders` reading 0 while the machine
+      never slept again. Pre-existing and already shipped; the sink now owns one dedicated thread.
 - [x] Job queue + local API endpoints for external agents (`/jobs` with requireAC/maxTempC/window)
 - [x] **MCP server exposing telemetry/control** — `mcp/server.mjs`, zero-dep stdio MCP with 15 tools
       (read + closed-loop writes + constraint-gated `submit_job`). Verified end-to-end against the live

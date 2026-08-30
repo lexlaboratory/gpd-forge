@@ -147,7 +147,14 @@ const state = {
     { name: 'Gaming', stapmW: 25, fastW: 33, slowW: 28, tctlC: 95 },
     { name: 'Silent', stapmW: 10, fastW: 15, slowW: 12, tctlC: 85 },
   ],
-  ai: { manualAntiStandby: false, vramMb: 512, adapterName: 'AMD Radeon 890M' },
+  ai: {
+    manualAntiStandby: false, vramMb: 512, adapterName: 'AMD Radeon 890M',
+    // Inference keep-awake: shipped default is observe-only with nothing working. `holdingSince` and
+    // `lastTickAt` stay null until there is something real to report — a mock that invents a plausible
+    // timestamp trains the UI to never handle the null it will actually get on a fresh boot.
+    inferenceEnforcing: false, inferenceWorkers: [], inferenceHoldingSince: null, inferenceLastTickAt: null,
+    inferenceUnmeasured: [],
+  },
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
@@ -307,7 +314,17 @@ const VRAM_ADVISORY =
   'setup, or wait for a verified, reversible write path for this board.'
 
 function vramInfo() {
-  return { reportedMb: state.ai.vramMb, adapterName: state.ai.adapterName, available: true, advisory: VRAM_ADVISORY }
+  return {
+    reportedMb: state.ai.vramMb, adapterName: state.ai.adapterName, available: true, advisory: VRAM_ADVISORY,
+    // First observation is the honest default for a fresh install: there is no prior reading to
+    // compare against, so previousMb is null and rebootConfirmed is false — false meaning "not
+    // established", not "no reboot happened". Mirrors core/Ai/VramHistory.cs.
+    history: {
+      kind: 'FirstObservation',
+      summary: `Baseline recorded: ${state.ai.vramMb} MB. A later change to the UMA split will be detected and reported here.`,
+      previousMb: null, sinceUtc: null, bootUtc: null, rebootConfirmed: false,
+    },
+  }
 }
 
 // --- Display domain extensions: tablet mode (advisory/gated) + keyboard backlight (advisory) ---
@@ -432,12 +449,38 @@ function perGame(sessions) {
     .sort((a, b) => b.totalSeconds - a.totalSeconds || (a.lastPlayedUtc < b.lastPlayedUtc ? 1 : -1))
 }
 
+// The inference keep-awake, as the daemon reports it. Mirrors core/Ai/InferenceHoldStatus.
+//
+// This mock deliberately defaults to the SHIPPED default — enforcing:false, holding:false, no workers
+// — rather than to a populated happy path. A mock that always returns the interesting case is how this
+// repo shipped an app whose alert severities were numbers in production and strings in the mock: the
+// contract was only ever tested against its own maquette. The null-carrying case is the common one, so
+// it is the one the UI gets tested against.
+function inferenceHold() {
+  return {
+    enforcing: state.ai.inferenceEnforcing,
+    holding: state.ai.inferenceWorkers.length > 0,
+    holdingSince: state.ai.inferenceWorkers.length > 0 ? state.ai.inferenceHoldingSince : null,
+    lastTickAt: state.ai.inferenceLastTickAt,
+    reason: state.ai.inferenceWorkers.length > 0
+      ? `${state.ai.inferenceWorkers[0].name} (pid ${state.ai.inferenceWorkers[0].pid}) sustained CPU work`
+      : 'no sustained inference work',
+    watchedNames: ['ollama', 'ollama app', 'llama-server', 'llama-cli', 'LM Studio', 'koboldcpp', 'python', 'pythonw'],
+    busyCpuFraction: 0.15,
+    workers: state.ai.inferenceWorkers,
+    // Watched processes we could not read. Distinct from "idle" on purpose — see core/Ai/InferenceActivity.cs.
+    unmeasured: state.ai.inferenceUnmeasured,
+  }
+}
+
 function aiInfo() {
   const holders = aiHolders()
+  const h = inferenceHold()
   return {
     antiStandby: { active: holders > 0, holders, manual: state.ai.manualAntiStandby },
     sustainedProfile: shapeSustained(state.presets.ai),
     vram: vramInfo(),
+    inferenceHold: { enforcing: h.enforcing, holding: h.holding, holdingSince: h.holdingSince, workers: h.workers, unmeasured: h.unmeasured },
   }
 }
 
@@ -787,6 +830,7 @@ const server = http.createServer(async (req, res) => {
 
   // Agents / AI — anti-Modern-Standby, sustained power shaping, VRAM/UMA advisory.
   if (method === 'GET' && path === '/ai') return send(res, 200, aiInfo())
+  if (method === 'GET' && path === '/ai/inference-hold') return send(res, 200, inferenceHold())
   if (method === 'POST' && path === '/ai/anti-standby') {
     const body = await readBody(req)
     state.ai.manualAntiStandby = !!body?.enable

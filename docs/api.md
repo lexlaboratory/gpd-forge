@@ -355,7 +355,7 @@ issue list colored by severity otherwise.
 - `GET /jobs/:id → { id, status, cmd, startedAt?, finishedAt?, log: string[] }`
 - `GET /jobs → Array<...>`
 
-### `GET /ai`  ·  `POST /ai/anti-standby`  ·  `POST /ai/vram`  (Agents / AI mode — anti-standby, sustained profile, VRAM/UMA)
+### `GET /ai`  ·  `GET /ai/inference-hold`  ·  `POST /ai/anti-standby`  ·  `POST /ai/vram`  (Agents / AI mode — anti-standby, sustained profile, VRAM/UMA)
 - `GET /ai → { antiStandby: { active: boolean, holders: number, manual: boolean }, sustainedProfile:
   { stapmW, fastW, slowW, tctlC }, vram: { reportedMb: number, adapterName: string | null,
   available: boolean, advisory: string } }`
@@ -371,6 +371,38 @@ issue list colored by severity otherwise.
     (`Win32_VideoController.AdapterRAM`, driverless, no elevation). **READ-ONLY**: the frame-buffer
     split is a BIOS/GOP setting applied at boot, not something Windows lets user-mode reassign; `advisory`
     always explains that changing it needs BIOS setup or a reboot.
+  - `vram.history: { kind, summary, previousMb: number | null, sinceUtc, bootUtc, rebootConfirmed:
+    boolean }` — the reading persisted across runs so a BIOS edit can be **confirmed** instead of
+    assumed. `rebootConfirmed: false` means a reboot between the two readings could not be
+    *established*, **not** that none happened. ⚠️ `Win32_VideoController.AdapterRAM` is a uint32 that
+    **saturates at 4095/4096 MB**, so a value at that ceiling is the ceiling, not a measurement of the
+    split — a delta involving it is never reported as a confirmed change. Render `summary`; do not
+    re-derive a verdict from the numbers.
+  - `inferenceHold: { enforcing, holding, holdingSince: string | null, workers: [...] }` — a summary of
+    `GET /ai/inference-hold` below, so the panel needs only one request.
+- `GET /ai/inference-hold → { enforcing: boolean, holding: boolean, holdingSince: string | null,
+  lastTickAt: string | null, reason: string | null, watchedNames: string[], busyCpuFraction: number,
+  workers: [{ pid, name, cpuFraction: number | null, busySince }],
+  unmeasured: [{ name, pid: number | null, why }] }` — the keep-awake for inference GPD
+  Forge did **not** start (`ollama`, LM Studio, `llama-server`, a training script in a terminal).
+  - `unmeasured` — watched processes we could **not read**, which is a different fact from "not
+    working". An unelevated daemon cannot read an elevated `ollama`'s CPU time; without this list the
+    endpoint would report *"no sustained inference work"* confidently and wrongly. Failing to measure
+    biases toward letting the machine **sleep** (never toward holding), so an unmeasurable process is
+    reported, not held for.
+  - The hold is earned by sustained CPU work attributable to a watched process, never by the process
+    merely being resident: an idle `ollama serve` sits there 24/7, and holding for it recreates the
+    all-night drain this project removed on 2026-08-29.
+  - `enforcing` is **false by default**. The worker always samples and always reports what it *would*
+    hold for; it only takes a real hold when `GPDFORGE_INFERENCE_HOLD=1`. The feature collects the
+    evidence for its own enforcement before it is allowed to act.
+  - The nulls are load-bearing. `lastTickAt` is null until the worker has ticked, `holdingSince` is null
+    when nothing is held, and `cpuFraction` is null when a tick produced no usable measurement (new PID,
+    recycled PID, stepped clock, or CPU time we were refused). **Render null as "—", never as 0** — 0
+    reads as "idle" when the truth is "unknown". `cpuFraction` is a fraction of the *whole machine's*
+    CPU capacity, not of one core.
+  - **REAL**, not gated behind `GPDFORGE_ENABLE_HARDWARE` — same unprivileged power request as
+    `antiStandby` above.
 - `POST /ai/anti-standby { enable: boolean } → { active, holders, manual }` — manual override. Only the
   `false→true` / `true→false` edge touches the ref count, so re-posting the same value is a no-op (never
   double-acquires or double-releases the hold).

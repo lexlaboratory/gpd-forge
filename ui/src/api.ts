@@ -7,6 +7,7 @@
 
 import type {
   Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
+  InferenceHold,
   HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
   TuneGoal, TunerInfo, UpdateCheck,
@@ -101,6 +102,9 @@ export const getAi = () => json<AiInfo>('/ai')
 export const setAntiStandby = (enable: boolean) => json<AntiStandby>('/ai/anti-standby', post({ enable }))
 export const requestVram = (requestedMb?: number) =>
   json<VramInfo & { applied: boolean; requiresBiosReboot: boolean }>('/ai/vram', post({ requestedMb }))
+// Attribution for the inference keep-awake: which process is holding, and since when. /ai carries a
+// summary of the same state, so most callers do not need this — it exists for the detail view.
+export const getInferenceHold = () => json<InferenceHold>('/ai/inference-hold')
 
 // --- telemetry history + CSV export ---
 export const getHistory = (minutes?: number) => json<HistoryResponse>(`/history${minutes ? `?minutes=${minutes}` : ''}`)
