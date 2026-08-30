@@ -266,15 +266,14 @@ Everything here is reachable today; none of it waits on a driver or a decision.
       someone's target or cap applies a setting they did not choose and hides which one changed.
 - [ ] **Resident overlay hotkey + topmost over exclusive fullscreen** — `scripts/overlay-hotkey.ps1`
       and `forge-hotkeys.ps1` exist; the binding to a WinControls Home button does not.
-- [~] **First public OSS release — prepared, not published.** Version bumped to **0.2.0** in the one
-      declared place (tests enforce the copies), changelog written, commit `354dea3` and tag `v0.2.0`
-      pushed, and the artefact built: `GPD Forge_0.2.0_x64-setup.exe`.
-      **Remaining, and both are decisions rather than work:**
-      1. `gh release create v0.2.0 ... --draft` — publishing is an outward action and was left for a
-         human to run.
-      2. The tag currently sits on `tacodececina/kronos-gpd-forge-vault`, ~26 commits ahead of `main`.
-         A first public release should almost certainly ship from `main`, which means merging first
-         and re-tagging.
+- [x] **First public OSS release — v0.2.0 is published.**
+      https://github.com/lexlaboratory/gpd-forge/releases/tag/v0.2.0
+      `main` fast-forwarded to `b384a73` (27 commits, no divergence, so the tag was already an
+      ancestor and did not need moving). Two artefacts: the NSIS installer and the portable zip.
+      ⚠️ Worth knowing for the next one: `release.yml` fires on the tag push and had ALREADY created
+      and published the release before anyone ran `gh release create` — with the **entire CHANGELOG**
+      as its body, header and `[Unreleased]` section included. The notes were replaced by hand. If
+      that workflow is going to own releases, it should take one version's section, not the file.
 
 ## Phase 6 — The broker  *(unblocks the fan, and is the single biggest blocker in the project)*
 
