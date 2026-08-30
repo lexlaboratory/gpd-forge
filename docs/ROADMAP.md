@@ -10,15 +10,28 @@ Living roadmap. Phases are sequential; each ends with a green verification gate
 - [x] CI workflow (dotnet build/test + web build/Playwright)
 
 ## Phase 1 — Core + parity (MVP) — *required before we can replace MA/GPDT*
-- [ ] `Broker/` PawnIO integration + audit log
+- [x] `Broker/` PawnIO integration + audit log — **audited 2026-08-30 and mostly already done.**
+      PawnIO is integrated (`core/Fan/PawnIoEcPort.cs`, `PawnIoFanRpm.cs`), the board matches, and the
+      device reads real RPM. `IBroker`/`NullBroker` were never used by any of it; the fan path talks
+      to PawnIO directly. What was genuinely missing was the **audit log**, which existed only as a
+      sentence in a comment — now `core/Broker/HardwareAuditLog.cs` plus decorators over the fan and
+      TDP controllers, and `GET /audit`. Decorators rather than per-call-site logging, so a seventh
+      caller cannot forget. `verified` is three-valued: true, false, and **null for a call that cannot
+      report failure** (`SetAuto` returns void) — collapsing null into true would make the record
+      confidently wrong, which is worse than not keeping one.
 - [x] `Tdp/` closed-loop controller + RyzenAdj backend (unit-tested; **gated** behind
       `GPDFORGE_ENABLE_HARDWARE=1` + elevation — no hardware write until approved & EC/SMU verified on device)
-- [~] `Fan/` EC read: DeviceDb + indexed-access code done and unit-tested; on-device board detection
-      confirmed (G1618-04/"Ver.1.0" -> WinMax2, RpmRead 0x0218). **PARKED (decision 2026-08-25, option 1):**
-      the runtime EC read needs a PawnIO-capable LibreHardwareMonitor; the stable NuGet (0.9.4) is Ring0/
-      WinRing0-only and the PawnIO builds are prereleases pulling .NET 10-preview deps. Revisit when
-      LHM-PawnIO ships stable (or integrate PawnIO directly). No fan writes until then.
-- [ ] `Fan/` boot/resume re-init + hysteresis curves (WRITES — gated; blocked by the same driver decision)
+- [x] `Fan/` EC read — **the "PARKED" note was stale.** PawnIO was integrated directly rather than
+      waiting for LHM-PawnIO, and the daemon reads real RPM on this device (4608 measured
+      2026-08-30). Board detection confirmed: G1618-04/"Ver.1.0" -> WinMax2, RpmRead 0x0218.
+- [x] `Fan/` boot/resume re-init + hysteresis curves — curves with hysteresis are implemented
+      (`core/Fan/FanCurve.cs`) and driven every tick from `ForgeWorker`. The **resume re-init was
+      broken and silently so**: `StandbyService` was built against the phase-0 `IFanController`, which
+      is registered as `StubFanController` and always will be, so every restore reported "no EC fan
+      backend is wired (GPDFORGE_ENABLE_HARDWARE is off)" — while the gate was on, the board matched
+      and the rest of the daemon was reading 4608 RPM. Two interfaces for one fan, and the restore
+      held the dead one. It now uses `IGpdFanController`, hands the EC back to AUTOMATIC after a
+      resume, and **reads the duty back** rather than trusting a void call.
 
 ### Driver decision log
 - 2026-08-25: chose to **defer live fan RPM** rather than reintroduce WinRing0 or adopt .NET 10-preview.

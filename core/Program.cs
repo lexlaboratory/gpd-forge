@@ -383,26 +383,39 @@ if (Environment.GetEnvironmentVariable("GPDFORGE_ENABLE_FPS") == "1")
 // board falls back to the honest no-op (never guesses at a register map). See
 // core/Fan/GpdFanController.cs for the write sequence + safety floor.
 bool enableFanControl = FanControlPolicy.IsEnvironmentGateOpen();
+// Every hardware write this daemon performs is recorded here. Specified with the broker in Phase 1
+// and never built until 2026-08-30; when a handheld runs hot or wakes up odd, "GPD Forge did nothing"
+// should be a fact rather than a claim — especially on a machine where MotionAssistant, GPD Tool and
+// Adrenalin all write to the same hardware.
+builder.Services.AddSingleton<HardwareAuditLog>();
+
 if (enableFanControl)
 {
     var (fcVendor, fcProduct, fcVersion) = GpdForge.Fan.GpdFanReader.DetectBoard();
     var fcDevice = GpdForge.Fan.GpdDeviceDb.MatchBoard(fcVendor, fcProduct, fcVersion);
     if (fcDevice is not null)
     {
-        builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController>(sp =>
-            new GpdForge.Fan.GpdFanController(fcDevice, logger: sp.GetService<ILogger<GpdForge.Fan.GpdFanController>>()));
+        builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController>(sp => new AuditingGpdFanController(
+            new GpdForge.Fan.GpdFanController(fcDevice, logger: sp.GetService<ILogger<GpdForge.Fan.GpdFanController>>()),
+            sp.GetRequiredService<HardwareAuditLog>()));
     }
     else
     {
-        builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController, GpdForge.Fan.NoOpGpdFanController>();
+        // Decorated even when it is a no-op: a refused write is exactly the thing worth having a
+        // record of, and an audit log with holes in it is not one.
+        builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController>(sp => new AuditingGpdFanController(
+            new GpdForge.Fan.NoOpGpdFanController(), sp.GetRequiredService<HardwareAuditLog>()));
     }
 }
 else
 {
-    builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController, GpdForge.Fan.NoOpGpdFanController>();
+    builder.Services.AddSingleton<GpdForge.Fan.IGpdFanController>(sp => new AuditingGpdFanController(
+        new GpdForge.Fan.NoOpGpdFanController(), sp.GetRequiredService<HardwareAuditLog>()));
 }
 
-builder.Services.AddSingleton<ITdpController, ClosedLoopTdpController>();
+builder.Services.AddSingleton<ITdpController>(sp => new AuditingTdpController(
+    ActivatorUtilities.CreateInstance<ClosedLoopTdpController>(sp),
+    sp.GetRequiredService<HardwareAuditLog>()));
 builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 // Standby Doctor: powercfg diagnostics plus a MEASURED overnight drain. The sampler runs
@@ -650,6 +663,39 @@ app.MapGet("/update/check", async (UpdateService updates, CancellationToken ct) 
 {
     var r = await updates.CheckAsync(ct);
     return Results.Json(new { current = r.Current, latest = r.Latest, updateAvailable = r.UpdateAvailable, url = r.Url });
+});
+
+// Every hardware write this daemon made, newest first. Read-only.
+//
+// The question this answers is "what touched this machine, and did it take?" — on a handheld where
+// MotionAssistant, GPD Tool and Adrenalin write to the same silicon, being able to say GPD Forge
+// wrote nothing in the last hour is worth more than any amount of reasoning about it.
+//
+// `verified` is deliberately three-valued. true = written and read back; false = the write was
+// rejected or reverted; **null = we could not confirm either way**, which is the honest answer for a
+// call that returns void and cannot report failure. Collapsing null into true would turn this log
+// into the kind of confident record that is worse than none.
+app.MapGet("/audit", (HardwareAuditLog audit, int? limit) =>
+{
+    var (total, failed, unconfirmed) = audit.Tally();
+    return Results.Json(new
+    {
+        // Held in memory and capped: a write log that fills the disk of a one-SSD handheld would be a
+        // worse bug than the one it helps diagnose. Anything a user must see after a reboot lives in
+        // the alert store instead.
+        capacity = HardwareAuditLog.Capacity,
+        total,
+        failed,
+        unconfirmed,
+        writes = audit.Recent(limit ?? 100).Select(w => new
+        {
+            atUtc = w.AtUtc,
+            subsystem = w.Subsystem,
+            operation = w.Operation,
+            detail = w.Detail,
+            verified = w.Verified,
+        }),
+    });
 });
 
 app.MapGet("/telemetry", async (ITelemetryService t, CancellationToken ct) => Results.Json(await t.ReadAsync(ct)));

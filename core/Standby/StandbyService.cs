@@ -53,6 +53,12 @@ public sealed class StandbyService : IStandbyService
 {
     private readonly ITdpController _tdp;
     private readonly IFanController _fan;
+    // The REAL write path. StandbyService was built against the phase-0 IFanController, which is
+    // registered as a stub and always will be — so the fan step of every resume restore reported
+    // "no EC fan backend is wired" while the rest of the daemon was reading 4608 RPM and reporting
+    // controllable:true through IGpdFanController. Two interfaces for one fan, and the restore held
+    // the dead one. Optional so the type stays constructible in tests that do not care.
+    private readonly IGpdFanController? _gpdFan;
     private readonly ITelemetryService _telemetry;
     private readonly ILogger<StandbyService>? _logger;
     private readonly StandbyDoctor _doctor;
@@ -82,7 +88,8 @@ public sealed class StandbyService : IStandbyService
         Func<DateTimeOffset>? now = null,
         StandbyDrainTracker? tracker = null,
         SleepStudyCache? sleepStudy = null,
-        HidReenumerator? hid = null)
+        HidReenumerator? hid = null,
+        IGpdFanController? gpdFan = null)
     {
         _sleepStudy = sleepStudy;
         _hid = hid;
@@ -97,6 +104,7 @@ public sealed class StandbyService : IStandbyService
         _clock = clock ?? new Win32UnbiasedClock();
         _now = now ?? (() => DateTimeOffset.UtcNow);
         _fanBackendReal = fan is not StubFanController;
+        _gpdFan = gpdFan;
         _tdpBackendReal = tdpBackend is not StubTdpBackend;
     }
 
@@ -161,8 +169,44 @@ public sealed class StandbyService : IStandbyService
 
     private async Task<StandbyRestoreStep> RestoreFanAsync(CancellationToken ct)
     {
+        // Prefer the real EC controller. The old path is kept only for callers constructed without
+        // one, and its message no longer blames the hardware gate for a wiring problem: saying
+        // "GPDFORGE_ENABLE_HARDWARE is off" while it is demonstrably on sent a whole investigation
+        // toward the wrong cause.
+        if (_gpdFan is { Available: true })
+        {
+            try
+            {
+                // Hand the EC back to firmware control. After a suspend the EC comes back
+                // uninitialised, and AUTOMATIC is the safe state to land in: it is what the board
+                // does on its own, and it cannot leave the fan pinned at a duty nobody chose.
+                // ForgeWorker's curve takes over again on its next tick if a manual mode is selected.
+                _gpdFan.SetAuto();
+
+                // Read the duty back rather than trusting a void call. SetAuto cannot report failure
+                // by contract, so the only evidence that the EC is listening is that it answers at
+                // all — and "the EC answered" is a weaker claim than "the write verified", which is
+                // why the wording below says exactly that and no more.
+                var duty = _gpdFan.ReadDuty();
+                return duty is not null
+                    ? new("fan", true, $"EC fan handed back to AUTOMATIC after resume; the EC responded (duty reads {duty}). The mode's curve resumes on the next tick.")
+                    : new("fan", false, "AUTOMATIC was commanded but the EC did not answer a read-back, so it cannot be confirmed. The fan is on the firmware curve.");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning("Standby restore: EC fan re-init failed: {Error}", ex.Message);
+                return new("fan", false, $"EC fan re-init failed: {ex.Message}");
+            }
+        }
+
+        if (_gpdFan is not null)
+            return new("fan", false,
+                "The EC fan controller is present but not available — the board did not match, or the "
+                + "EC port could not be opened. Fan control is left to the firmware.");
+
         if (!_fanBackendReal)
-            return new("fan", false, "No EC fan backend is wired (GPDFORGE_ENABLE_HARDWARE is off or the board is unmatched).");
+            return new("fan", false, "No EC fan backend is wired into this daemon build.");
+
         try
         {
             await _fan.InitializeAsync(ct);
