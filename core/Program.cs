@@ -26,8 +26,35 @@ using GpdForge.Undervolt;
 using GpdForge.Health;
 using GpdForge.Onboarding;
 using GpdForge.Alerts;
+using GpdForge.Gpu;
 using GpdForge.Sessions;
 using Microsoft.Extensions.Logging;
+
+// AMD GPU profile probe: `dotnet run -- --probe-gpu`. Initialises ADLX and verifies the hand-written
+// vtable layout against a fact read independently over WMI, then terminates. Reads only — it does not
+// change a single Radeon setting. This is the check that has to pass before anything is allowed to
+// WRITE through those function pointers, because a wrong slot index calls an arbitrary function
+// inside the graphics driver.
+if (args.Contains("--probe-gpu"))
+{
+    var mem = new WmiSystemMemoryProbe();
+    var ramMb = mem.TotalRamMb();
+    Console.WriteLine("GPD Forge AMD GPU probe (read-only):");
+    Console.WriteLine($"  amdadlx64.dll present : {AdlxInterop.LibraryPresent()}");
+    Console.WriteLine($"  system RAM (WMI)      : {(ramMb == 0 ? "unknown" : ramMb + " MB")}");
+
+    using var adlx = new AdlxInterop();
+    var result = adlx.Initialise(ramMb);
+    Console.WriteLine($"  status                : {result.Status}");
+    Console.WriteLine($"  ADLX version          : {result.Version ?? "unknown"}");
+    Console.WriteLine($"  detail                : {result.Detail}");
+    if (result.Status == AdlxStatus.Ready)
+    {
+        var services = adlx.Get3DSettingsServices();
+        Console.WriteLine($"  3D settings services  : {(services == IntPtr.Zero ? "NOT reachable" : "reachable")}");
+    }
+    return;
+}
 
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
 if (args.Contains("--probe"))
@@ -95,18 +122,10 @@ if (args.Contains("--probe-ec"))
 // LibreHardwareMonitorLib expose. Used to bind the EC port to the right API.
 if (args.Contains("--probe-ec-types"))
 {
-    var asm = typeof(LibreHardwareMonitor.Hardware.Computer).Assembly;
-    Console.WriteLine($"LHM assembly: {asm.GetName().Name} {asm.GetName().Version}  ({asm.Location})");
-    Type?[] types;
-    try { types = asm.GetTypes(); }
-    catch (System.Reflection.ReflectionTypeLoadException ex) { types = ex.Types; }
-    Console.WriteLine("Types matching Pawn/Lpc/Ring0/Kernel/Ec:");
-    foreach (var t in types.Where(t => t?.FullName is string f &&
-        (f.Contains("Pawn") || f.Contains("Lpc") || f.Contains("Ring0") || f.Contains("Kernel") || f.Contains(".EmbeddedController") || f.Contains(".Ec"))))
-        Console.WriteLine($"  {t!.FullName}");
-    Console.WriteLine("Resources matching Pawn/Lpc/.bin:");
-    foreach (var r in asm.GetManifestResourceNames().Where(r => r.Contains("Pawn") || r.Contains("Lpc") || r.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)))
-        Console.WriteLine($"  {r}");
+    // Body lives in core/System/EcTypeProbe.cs so that Main does not reference the LHM assembly.
+    // Inline, the JIT resolved it while compiling Main and a Smart-App-Control block on that DLL
+    // killed EVERY entry point at startup, including the driverless ones. See that file.
+    EcTypeProbe.Run();
     return;
 }
 
