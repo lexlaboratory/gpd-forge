@@ -57,6 +57,15 @@ tests/manual/shots/
 # a source repo, and a downloaded-and-verified copy is easier to audit than a checked-in one.
 vendor/
 
+# --- Python (tests/desktop, UI Automation) ---
+# Added with the desktop suite rather than after it: a virtualenv created inside the tree before its
+# ignore rule exists gets committed by the next `git add`, and this repository has watched exactly
+# that happen elsewhere (308 MB of venv and media into a vault's history).
+.venv-desktop/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # --- Secrets ---
 .env
 .env.*

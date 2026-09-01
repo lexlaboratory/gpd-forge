@@ -1,0 +1,5 @@
+# GPD Forge — desktop (UI Automation) test dependencies. GPL-3.0-or-later.
+# Pinned: pywinauto reads the UIA tree through comtypes, and an unpinned upgrade changing how
+# control types are reported would break these tests for reasons unrelated to the app.
+pywinauto==0.6.9
+pytest==9.1.1

@@ -359,8 +359,8 @@ The sequenced plan for what comes next is
 |---|---|---|
 | Sustained fan curve for AI mode | Phase 3 | Unblocked 2026-08-30. The double gate and probe-with-auto-restore are mandatory. |
 | Resident overlay hotkey bound to a Home button | Phase 5 | The listener scripts exist and are installable; the WinControls binding does not. |
-| Packaged-shell E2E | *(new)* | Nothing exercises the Tauri shell. Every incident of the past week lived there. |
-| Mock↔daemon contract parity | *(new)* | The `AlertSeverity` ordinal passed every test against a mock that never emitted it. |
+| ~~Packaged-shell E2E~~ | done 2026-08-31 | `tests/desktop/` — pywinauto/UIA over the installed binary. Scope is the window layer only: UIA cannot see the WebView2 DOM. **Skips on CI** (no installation there), so it is a post-install check, not a CI gate. |
+| ~~Mock↔daemon contract parity~~ | done 2026-08-31 | `tests/contract/api-contract.json` is the arbiter; the real daemon and the mock are each validated against it, never against each other. |
 
 ## Blocked — and by what, precisely
 
