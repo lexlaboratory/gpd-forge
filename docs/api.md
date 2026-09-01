@@ -335,6 +335,47 @@ success.
 Runtime estimate from the current discharge rate, plus what-if runtimes at a spread of power levels.
 `minutesRemaining` is `null` on AC (nothing to project).
 
+### `GET /battery/charge-guard`  ·  `POST /battery/charge-guard`
+
+`GET → { enabled, highSocPct, alertAfterHours, coolWhileCharging, coolToW, totalHoursAtHighSoc,
+  episodes, episodeStartedUtc, episodeHours, canStopCharging, advisory }`
+
+**`canStopCharging` is always `false`, and it is in the contract rather than omitted.** Anything
+called a charge guard invites the assumption "it stops at 80 %"; without the field a client could
+reasonably build that switch. This board has no path to it — the threshold is an EC/BIOS value with
+no verified driverless read or write on the G1618-04, `docs/hardware/ec-registers.md` maps fan
+registers only, and the `ecoChargeMode` WMI class that looks like the answer is Windows' own schema
+with **no instances** here. Guessing an EC register for a charge controller on hardware with no
+vendor recovery path is not a risk worth taking.
+
+So the guard attacks the half of the problem that is reachable. Lithium-ion ages from **time at a
+high state of charge multiplied by temperature**; the daemon cannot stop the current, but it can:
+
+- **Count** the hours the pack spends plugged in at or above `highSocPct` (default 95), across
+  episodes, persisted. `episodeHours` is `null` when none is running — never `0`, which would read
+  as one that just began.
+- **Warn once per episode** past `alertAfterHours` (default 4), naming the hours. Once per episode,
+  not once per tick: republishing every second and relying on the alert store to coalesce is a guard
+  hiding its own noise.
+- **Hold a cooler ceiling** while an episode runs, if `coolWhileCharging` is on. **Off by default** —
+  silently capping someone's performance because their machine is plugged in is not a decision to
+  make on their behalf.
+
+⚠️ The cooling value is a **ceiling, never a target**. In battery mode (8 W) a 15 W "cooling" setting
+must not raise the limit, so it applies only when it is genuinely lower than the active mode. And it
+is released when the episode ends — on unplug, on falling below the threshold, or on the guard being
+disabled mid-episode. A guard that lowers TDP and forgets to restore it is worse than no guard.
+
+`POST` accepts any subset of the five settings; omitted fields keep their current value rather than
+reverting to defaults. Values are clamped, not rejected: `highSocPct` to 50–100, `alertAfterHours` to
+0.25–72, and `coolToW` to 8–30 — never below the thermal guardian's own floor, since a "cooling"
+ceiling that starved the machine harder than the safety net is a stall, not cooling.
+
+**If you want a real charge threshold**, the cheapest next step is not code: check whether BIOS setup
+on this board exposes one (hold `DEL` during boot). Several GPD handhelds do. If it is there, the
+right shape for GPD Forge is the one `GET /firmware` already uses — report it and say where it is,
+and write nothing.
+
 ### `GET /battery/health`  (how much of the pack's factory capacity survives)
 `200 → { designedMwh, fullChargeMwh, healthPercent, cycleCount, cycleCountUnavailable,
   cellTemperatureC, cellTemperatureUnavailable, chemistry, unavailable, degradationPoints,

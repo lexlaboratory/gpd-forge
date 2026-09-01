@@ -1,8 +1,8 @@
 // GPD Forge UI — System page plus battery budget, power source, backup/restore, guardian, update note. GPL-3.0-or-later.
 import { useEffect, useState, type ChangeEvent } from 'react'
-import type { Telemetry, BatteryBudget, BatteryHealth, Guardian, PowerSourceConfig, UpdateCheck } from '../types'
+import type { Telemetry, BatteryBudget, BatteryHealth, ChargeGuard, Guardian, PowerSourceConfig, UpdateCheck } from '../types'
 import {
-  getBudget, getBatteryHealth, getGuardian, setGuardian, getPowerSource, setPowerSource,
+  getBudget, getBatteryHealth, getChargeGuard, setChargeGuard, getGuardian, setGuardian, getPowerSource, setPowerSource,
   settingsExportUrl, importSettings, checkUpdate,
 } from '../api'
 import { Frame, Readout, Toggle, Button, Segmented, Badge } from '../components'
@@ -21,6 +21,7 @@ export function SystemPage({ tele }: { tele: Telemetry | null }) {
           after two years", which changes over months. Putting a figure that barely moves in a live
           panel teaches people to stop reading the panel. */}
       <BatteryHealthCard />
+      <ChargeGuardCard />
       <Frame title="Power controller" hint={<Badge tone={tele?.tdpVerified ? 'ok' : 'muted'}>{tele?.tdpVerified ? 'TDP verified' : 'TDP unverified'}</Badge>}>
         <p className="muted">GPD Forge yields while another controller runs: it takes over TDP only when it is the sole owner. Use the installer's <code>-Substitute</code> to stop + disable MotionAssistant / GPD Tool.</p>
       </Frame>
@@ -112,6 +113,67 @@ export function BatteryHealthCard() {
       {h.cycleCount != null && (
         <p className="muted" data-testid="battery-health-cycles">Cycle count: {h.cycleCount}</p>
       )}
+    </Frame>
+  )
+}
+
+/**
+ * The charge guard.
+ *
+ * The card leads with what it CANNOT do, because the obvious expectation of anything called a charge
+ * guard is "stop at 80 %", and this board has no path to that. Burying the refusal under a row of
+ * toggles would let someone assume the feature is doing something it is not — which is worse than
+ * not shipping it, since they would stop worrying about a pack that is still ageing.
+ */
+export function ChargeGuardCard() {
+  const toast = useToast()
+  const [g, setG] = useState<ChargeGuard | null>(null)
+  useEffect(() => { getChargeGuard().then(setG).catch(() => {}) }, [])
+
+  const patch = async (p: Parameters<typeof setChargeGuard>[0]) => {
+    const next = await setChargeGuard(p).catch(() => null)
+    if (!next) return
+    // The POST returns only the settings, so merge rather than replace: assigning the response
+    // wholesale would blank the counters until the next mount.
+    setG((prev) => (prev ? { ...prev, ...next } : prev))
+    toast.push({ kind: 'info', message: 'Charge guard updated' })
+  }
+
+  if (!g) return null
+
+  return (
+    <Frame
+      title="Charge guard"
+      hint={<Badge tone={g.enabled ? 'ok' : 'muted'}>{g.enabled ? 'Watching' : 'Off'}</Badge>}
+    >
+      <div className="battery-budget" data-testid="charge-guard">
+        <div className="bb-main" data-testid="charge-guard-hours">
+          {g.totalHoursAtHighSoc.toFixed(1)}<span className="tile-unit"> h at high charge</span>
+        </div>
+        <div className="bb-proj">
+          <span className="bb-chip">{g.episodes} episode{g.episodes === 1 ? '' : 's'}</span>
+          {g.episodeHours != null && (
+            <span className="bb-chip" data-testid="charge-guard-episode">
+              plugged in {g.episodeHours.toFixed(1)} h now
+            </span>
+          )}
+        </div>
+      </div>
+
+      <p className="muted" data-testid="charge-guard-advisory">{g.advisory}</p>
+
+      <Toggle
+        on={g.enabled}
+        onClick={() => patch({ enabled: !g.enabled })}
+        label="Count hours spent plugged in and full"
+        testid="charge-guard-enabled"
+      />
+      <Toggle
+        on={g.coolWhileCharging}
+        onClick={() => patch({ coolWhileCharging: !g.coolWhileCharging })}
+        label={`Hold ${g.coolToW} W while the pack sits above ${g.highSocPct}%`}
+        testid="charge-guard-cool"
+      />
     </Frame>
   )
 }

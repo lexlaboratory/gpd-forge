@@ -574,6 +574,13 @@ builder.Services.AddSingleton<IBatteryHealthStore>(_ => new FileBatteryHealthSto
 builder.Services.AddSingleton<BatteryHealthHistory>();
 builder.Services.AddHostedService<BatteryHealthSampler>();
 
+// Charge guard — counts hours spent plugged in at a high state of charge, and optionally holds a
+// cooler ceiling while that happens. It cannot stop the charge: the threshold is an EC/BIOS value
+// with no verified path on this board (see GET /battery/charge-limit), so this attacks the half of
+// lithium ageing that IS reachable, which is the temperature. Evaluated by ForgeWorker.
+builder.Services.AddSingleton<IChargeGuardStore>(_ => new FileChargeGuardStore(DataRoot.Current));
+builder.Services.AddSingleton<ChargeGuardService>();
+
 // P3.3 — the UMA split stays BIOS-only, but the reading is persisted so a change can be CONFIRMED
 // across a reboot instead of assumed. A read plus a small local file, so not behind the hardware gate.
 //
@@ -1420,6 +1427,59 @@ app.MapPost("/undervolt", (UndervoltRequest req, CurveOptimizerService uv) =>
 // Battery budget (minutes left + projections at other TDPs).
 app.MapGet("/battery/budget", (BatteryService b) => Results.Json(b.GetBudget()));
 
+// The charge guard. It does NOT stop charging and cannot: see the advisory below and
+// GET /battery/charge-limit. What it does is count the hours the pack spends plugged in and full —
+// the pattern that ages lithium — and, opt-in, hold a cooler ceiling while that is happening,
+// because temperature is the multiplier this daemon can actually influence.
+app.MapGet("/battery/charge-guard", (ChargeGuardService guard) =>
+{
+    var now = DateTimeOffset.UtcNow;
+    var s = guard.State;
+    return Results.Json(new
+    {
+        enabled = guard.Config.Enabled,
+        highSocPct = guard.Config.HighSocPct,
+        alertAfterHours = guard.Config.AlertAfterHours,
+        coolWhileCharging = guard.Config.CoolWhileCharging,
+        coolToW = guard.Config.CoolToW,
+        totalHoursAtHighSoc = guard.TotalHoursAtHighSoc(now),
+        episodes = s.Episodes,
+        episodeStartedUtc = s.EpisodeStartedUtc,
+        // Null when no episode is running — not 0, which would read as "an episode that just began".
+        episodeHours = s.EpisodeStartedUtc is { } started && now > started
+            ? Math.Round((now - started).TotalHours, 2)
+            : (double?)null,
+        canStopCharging = false,
+        advisory =
+            "GPD Forge cannot stop charging on this board: the threshold is an EC/BIOS value with no " +
+            "verified driverless path on the G1618-04, and guessing an EC register for a charge " +
+            "controller on hardware with no vendor recovery is not a risk worth taking. What this " +
+            "does instead is measure the ageing pattern and, if you enable it, keep the machine " +
+            "cooler while the pack sits full — lithium ages from time at high charge multiplied by " +
+            "temperature, and temperature is the half that is reachable from here.",
+    });
+});
+
+app.MapPost("/battery/charge-guard", (ChargeGuardRequest req, ChargeGuardService guard) =>
+{
+    var current = guard.Config;
+    var applied = guard.Configure(new ChargeGuardConfig(
+        Enabled: req.Enabled ?? current.Enabled,
+        HighSocPct: req.HighSocPct ?? current.HighSocPct,
+        AlertAfterHours: req.AlertAfterHours ?? current.AlertAfterHours,
+        CoolWhileCharging: req.CoolWhileCharging ?? current.CoolWhileCharging,
+        CoolToW: req.CoolToW ?? current.CoolToW));
+
+    return Results.Json(new
+    {
+        enabled = applied.Enabled,
+        highSocPct = applied.HighSocPct,
+        alertAfterHours = applied.AlertAfterHours,
+        coolWhileCharging = applied.CoolWhileCharging,
+        coolToW = applied.CoolToW,
+    });
+});
+
 // What the pack can still hold, against what it left the factory with. The values that this board
 // does not expose are null with a stated reason — never a plausible substitute:
 //   cycleCount     the EC returns 0 for a pack that has demonstrably lost capacity, so 0 means
@@ -1753,6 +1813,15 @@ namespace GpdForge.Api
     /// <summary>POST /standby/hibernate. Seconds of idle before hibernating; 0 means never. Null for
     /// a field leaves that power source untouched.</summary>
     public sealed record HibernateIdleRequest(int? OnBatterySeconds, int? OnAcSeconds);
+
+    /// <summary>Every field nullable so a caller can change one setting without restating the rest —
+    /// a partial POST that silently reset the others to their defaults would be a trap.</summary>
+    public sealed record ChargeGuardRequest(
+        bool? Enabled,
+        int? HighSocPct,
+        double? AlertAfterHours,
+        bool? CoolWhileCharging,
+        int? CoolToW);
 
     public sealed record GpuAgentReportRequest(
         bool Available,

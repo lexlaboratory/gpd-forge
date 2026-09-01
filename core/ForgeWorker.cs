@@ -11,6 +11,7 @@ using GpdForge.Tdp;
 using GpdForge.Telemetry;
 using GpdForge.Tuner;
 using GpdForge.Alerts;
+using GpdForge.Battery;
 using GpdForge.Sessions;
 
 namespace GpdForge;
@@ -38,6 +39,7 @@ public sealed class ForgeWorker(
     FanState fanState,
     IGpdFanController fanControl,
     AlertService alerts,
+    ChargeGuardService chargeGuard,
     SessionRecorder sessions) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
@@ -94,7 +96,32 @@ public sealed class ForgeWorker(
                 }
                 else
                 {
-                    if (g.ClearThrottle)
+                    // Charge guard — evaluated only when the THERMAL guardian is not throttling.
+                    // Safety outranks battery longevity: the thermal ceiling is always the lower and
+                    // more urgent of the two, and letting a charge-health ceiling contend with it
+                    // would mean two features writing STAPM in the same tick.
+                    var cg = chargeGuard.Observe(snapshot, DateTimeOffset.UtcNow);
+                    if (cg.Alert is not null)
+                    {
+                        // One dedupe key for the whole feature, not one per hour count: the alert
+                        // already fires once per episode, and keying on the text would open a new
+                        // alert every time the number changed.
+                        alerts.Publish(AlertCategory.System, AlertSeverity.Info,
+                            "Battery charge guard", cg.Alert,
+                            $"batteryPct={snapshot.BatteryPct}; hours={cg.EpisodeHours:F1}",
+                            "charge-guard:high-soc");
+                    }
+
+                    var coolTo = ChargeGuardPolicy.EffectiveCeiling(
+                        cg.CoolToW, ModeProfiles.For(mode.Active)?.StapmW ?? int.MaxValue);
+
+                    if (coolTo is int coolW)
+                    {
+                        // A ceiling, held flat. EffectiveCeiling has already refused to raise power,
+                        // so reaching here means this is genuinely lower than the mode would run.
+                        await tdp.ApplyAsync(new TdpProfile(coolW, coolW, coolW, 90), stoppingToken);
+                    }
+                    else if (g.ClearThrottle || cg.ClearCool)
                     {
                         var restore = ModeProfiles.For(mode.Active);
                         if (restore is not null) await tdp.ApplyAsync(restore.Value, stoppingToken);

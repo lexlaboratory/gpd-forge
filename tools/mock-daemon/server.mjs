@@ -235,6 +235,14 @@ const state = {
     },
     sleepStudyError: null,
   },
+  // Charge guard. Seeded with an episode IN PROGRESS so the UI has the interesting case to render —
+  // a fresh install shows nulls, which exercises only the empty state.
+  chargeGuard: {
+    config: { enabled: true, highSocPct: 95, alertAfterHours: 4, coolWhileCharging: false, coolToW: 15 },
+    totalHoursAtHighSoc: 37.5,
+    episodes: 9,
+    episodeStartedUtc: new Date(Date.now() - 5 * 3_600_000).toISOString(),
+  },
   // Battery health — the reference device's real numbers (2026-09-01): a 43,890 mWh pack that now
   // holds 40,009, i.e. 91.2 %. Two samples eight months apart so the UI has a trend to render;
   // a single sample would exercise only the "not enough data" path.
@@ -1119,6 +1127,44 @@ const server = http.createServer(async (req, res) => {
     // Read back rather than echo the request: the real endpoint re-reads the registry after writing,
     // because powercfg can accept a value and leave the active scheme unchanged.
     return send(res, 200, state.hibernate)
+  }
+
+  // Charge guard — mirrors core/Battery/ChargeGuard.cs. It does NOT stop charging, and the mock is
+  // as blunt about that as the daemon: `canStopCharging` is false here too, because a mock that left
+  // it out (or true) would let a UI grow a "stop at 80 %" switch for a capability this board does
+  // not have.
+  if (method === 'GET' && path === '/battery/charge-guard') {
+    const g = state.chargeGuard
+    const started = g.episodeStartedUtc ? new Date(g.episodeStartedUtc) : null
+    return send(res, 200, {
+      ...g.config,
+      totalHoursAtHighSoc: g.totalHoursAtHighSoc,
+      episodes: g.episodes,
+      episodeStartedUtc: g.episodeStartedUtc,
+      // Null with no episode, never 0 — zero reads as "an episode that just began".
+      episodeHours: started ? Math.round(((Date.now() - started.getTime()) / 3_600_000) * 100) / 100 : null,
+      canStopCharging: false,
+      advisory:
+        'GPD Forge cannot stop charging on this board: the threshold is an EC/BIOS value with no ' +
+        'verified driverless path on the G1618-04, and guessing an EC register for a charge ' +
+        'controller on hardware with no vendor recovery is not a risk worth taking. What this does ' +
+        'instead is measure the ageing pattern and, if you enable it, keep the machine cooler while ' +
+        'the pack sits full — lithium ages from time at high charge multiplied by temperature, and ' +
+        'temperature is the half that is reachable from here.',
+    })
+  }
+  if (method === 'POST' && path === '/battery/charge-guard') {
+    const body = (await readBody(req)) ?? {}
+    const c = state.chargeGuard.config
+    const clamp = (v, lo, hi, fallback) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback)
+    state.chargeGuard.config = {
+      enabled: typeof body.enabled === 'boolean' ? body.enabled : c.enabled,
+      highSocPct: clamp(body.highSocPct, 50, 100, c.highSocPct),
+      alertAfterHours: clamp(body.alertAfterHours, 0.25, 72, c.alertAfterHours),
+      coolWhileCharging: typeof body.coolWhileCharging === 'boolean' ? body.coolWhileCharging : c.coolWhileCharging,
+      coolToW: clamp(body.coolToW, 8, 30, c.coolToW),
+    }
+    return send(res, 200, state.chargeGuard.config)
   }
 
   // Battery health — how much of the factory capacity survives. Mirrors core/Battery/BatteryHealth.cs.

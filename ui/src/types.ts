@@ -36,6 +36,26 @@ export interface Preset { stapmW: number; fastW: number; slowW: number; tctlC: n
 export interface BatteryBudget { minutesRemaining: number | null; remainingWh: number; dischargeW: number; projections: { watts: number; minutes: number }[] }
 
 /**
+ * The charge guard. `canStopCharging` is always false and is part of the contract rather than an
+ * omission: without it a client could reasonably build a "stop at 80 %" switch for a capability this
+ * board does not expose.
+ */
+export interface ChargeGuard {
+  enabled: boolean
+  highSocPct: number
+  alertAfterHours: number
+  coolWhileCharging: boolean
+  coolToW: number
+  totalHoursAtHighSoc: number
+  episodes: number
+  episodeStartedUtc: string | null
+  /** Null when no episode is running — never 0, which would read as one that just began. */
+  episodeHours: number | null
+  canStopCharging: boolean
+  advisory: string
+}
+
+/**
  * Battery health. Nearly every field is nullable and that is the design, not laxness: on this board
  * the EC does not report cycle count (it returns 0, which would read as an unused pack next to a
  * health figure of 91 %) and exposes no cell temperature at all. Each null carries its own reason

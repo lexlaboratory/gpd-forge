@@ -294,6 +294,24 @@
     },
     {
       "method": "GET",
+      "path": "/battery/charge-guard",
+      "shape": {
+        "enabled": "boolean",
+        "highSocPct": "number",
+        "alertAfterHours": "number",
+        "coolWhileCharging": "boolean",
+        "coolToW": "number",
+        "totalHoursAtHighSoc": "number",
+        "episodes": "number",
+        "episodeStartedUtc": "string|null",
+        "episodeHours": "number|null",
+        "canStopCharging": "boolean",
+        "advisory": "string"
+      },
+      "$comment": "canStopCharging is declared and is always false. A client that only saw the other fields could reasonably build a 'stop at 80%' switch; the field exists so the refusal is part of the contract rather than an omission. episodeHours is null with no episode running, never 0 — zero would read as an episode that just began."
+    },
+    {
+      "method": "GET",
       "path": "/battery/health",
       "shape": {
         "designedMwh": "number|null",
@@ -489,6 +507,7 @@
     { "method": "POST", "path": "/display/tablet" },
     { "method": "POST", "path": "/display/keyboard-backlight" },
     { "method": "POST", "path": "/battery/charge-limit" },
+    { "method": "POST", "path": "/battery/charge-guard" },
     { "method": "POST", "path": "/led" },
     { "method": "POST", "path": "/undervolt" },
     { "method": "POST", "path": "/freezer/freeze" },
