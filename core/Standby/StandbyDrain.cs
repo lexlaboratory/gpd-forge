@@ -71,15 +71,22 @@ public sealed class StandbyDrainTracker
     /// <summary>
     /// Records a sample and returns a measurement when this sample closes an observed suspend.
     /// Returns null — never a plausible-looking number — in every other case.
+    ///
+    /// Nullable <paramref name="batteryPct"/> since 2026-09-01. A drain figure is the difference
+    /// between two charge readings, so a sample with no reading is not a sample — and the old
+    /// fallback of 0 would have computed a spectacular overnight drain from a failed WMI query,
+    /// exactly the kind of confident wrong number the Standby Doctor was rewritten to stop emitting.
     /// </summary>
-    public DrainMeasurement? Observe(DateTimeOffset at, TimeSpan unbiased, int batteryPct, bool acConnected)
+    public DrainMeasurement? Observe(DateTimeOffset at, TimeSpan unbiased, int? batteryPct, bool acConnected)
     {
-        // 0 is what the WMI battery read reports when it fails, so it cannot be trusted as a level;
-        // an unusable reading is discarded outright rather than becoming a false baseline.
-        if (batteryPct is <= 0 or > 100) return null;
+        // Null is what a failed battery read reports since 2026-09-01; 0 was what it reported before,
+        // and both are refused. Note that `null` does NOT match `<= 0 or > 100` — a lifted pattern
+        // quietly says false — so the null case is spelled out rather than left to the range check.
+        // An unusable reading is discarded outright rather than becoming a false baseline.
+        if (batteryPct is not int pct || pct is <= 0 or > 100) return null;
 
         var previous = _previous;
-        _previous = new StandbySample(at, unbiased, batteryPct, acConnected);
+        _previous = new StandbySample(at, unbiased, pct, acConnected);
         if (previous is null) return null;
 
         var wall = at - previous.At;
@@ -92,14 +99,14 @@ public sealed class StandbyDrainTracker
         // A charger anywhere in the window makes the delta say nothing about standby drain.
         if (acConnected || previous.AcConnected) return null;
 
-        int drop = previous.BatteryPct - batteryPct;
+        int drop = previous.BatteryPct - pct;
         if (drop < 0) return null;   // it gained charge: not a drain
 
         var measurement = new DrainMeasurement(
             Math.Round(drop / slept.TotalHours, 2),
             Math.Round(slept.TotalHours, 2),
             previous.BatteryPct,
-            batteryPct,
+            pct,
             at);
         Last = measurement;
         return measurement;

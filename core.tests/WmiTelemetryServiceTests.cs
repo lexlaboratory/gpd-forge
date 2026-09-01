@@ -18,12 +18,15 @@ public class WmiTelemetryServiceTests
     [Fact]
     public async Task ReadAsync_returns_a_snapshot_without_throwing()
     {
-        // Read-only; on machines lacking a sensor/class the field degrades to 0 rather than throwing.
+        // Read-only; on machines lacking a sensor/class the field degrades to NULL rather than
+        // throwing — and rather than to 0, which is what it used to do until 2026-09-01. A battery
+        // reported at 0 % is an emergency; a CPU at 0 °C is impossible. Both were being emitted by a
+        // failed WMI query.
         var svc = new WmiTelemetryService();
         var snap = await svc.ReadAsync(CancellationToken.None);
 
-        Assert.InRange(snap.BatteryPct, 0, 100);
-        Assert.True(snap.CpuTempC >= 0);
+        if (snap.BatteryPct is int pct) Assert.InRange(pct, 1, 100);
+        if (snap.CpuTempC is double temp) Assert.True(temp > 0, "A reported temperature must be a real one.");
     }
 
     /// <summary>Same shape as FakeFanRpm in FanRpmTests: an optional sensor that may say "nothing".</summary>
@@ -40,25 +43,40 @@ public class WmiTelemetryServiceTests
             frameRateProbe: new FakeFrameRateProbe(new FpsSample(58.5, 41.2, "game.exe")));
         var snap = await svc.ReadAsync(CancellationToken.None);
 
-        Assert.Equal(58.5, snap.Fps, 1);
-        Assert.Equal(41.2, snap.Fps1PctLow, 1);
+        Assert.Equal(58.5, snap.Fps!.Value, 1);
+        Assert.Equal(41.2, snap.Fps1PctLow!.Value, 1);
     }
 
     [Fact]
-    public async Task Falls_back_to_zero_when_the_probe_has_no_reading()
+    public async Task Reports_null_when_the_probe_has_no_reading()
     {
-        // Nothing is rendering. That must read as "no FPS" (0), never as a stale or invented value.
+        // Changed from "falls back to 0" on 2026-09-01, and the distinction is the point: a probe
+        // with no sample does not distinguish "nothing is presenting frames" from "PresentMon has not
+        // produced a window of data yet". Reporting 0 asserts the first when only the second is
+        // known, and never as a stale or invented value either.
         var svc = new WmiTelemetryService(frameRateProbe: new FakeFrameRateProbe(null));
         var snap = await svc.ReadAsync(CancellationToken.None);
 
-        Assert.Equal(0, snap.Fps);
-        Assert.Equal(0, snap.Fps1PctLow);
+        Assert.Null(snap.Fps);
+        Assert.Null(snap.Fps1PctLow);
     }
 
     [Fact]
-    public async Task Reports_zero_fps_when_no_probe_is_registered_at_all()
+    public async Task A_measured_zero_is_reported_as_zero_not_as_null()
+    {
+        // The other half, and why this is not just "null everywhere": when the probe DOES measure and
+        // the answer is zero frames, that is a fact worth reporting. Collapsing it into null would
+        // lose as much information as the bug this change fixed.
+        var svc = new WmiTelemetryService(frameRateProbe: new FakeFrameRateProbe(new FpsSample(0, 0, "idle.exe")));
+        var snap = await svc.ReadAsync(CancellationToken.None);
+
+        Assert.Equal(0, snap.Fps);
+    }
+
+    [Fact]
+    public async Task Reports_null_fps_when_no_probe_is_registered_at_all()
     {
         var snap = await new WmiTelemetryService().ReadAsync(CancellationToken.None);
-        Assert.Equal(0, snap.Fps);
+        Assert.Null(snap.Fps);
     }
 }

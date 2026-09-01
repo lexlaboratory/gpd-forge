@@ -30,23 +30,41 @@ public static class HealthCheck
     {
         var issues = new List<HealthIssue>();
 
-        // This literally catches this unit's parked-fan state: 0 rpm while the CPU is already warm
-        // means the fan isn't spinning up, not that it's simply idle at a cool temp.
-        if (t.FanRpm == 0 && t.CpuTempC > ctx.FanStuckTempC)
-            issues.Add(new HealthIssue("warn", "fan_not_spinning",
-                $"Fan not spinning while warm — 0 rpm at {t.CpuTempC:0}°C CPU."));
+        // Since telemetry went nullable (2026-09-01) every rule below is written against an unwrapped
+        // value rather than a lifted comparison. That is not style: `null == 0` and `null >= 96` are
+        // both false, so an unreadable sensor would make each rule quietly decline to fire and this
+        // check would report "ok" for a machine it cannot see at all. A health check that cannot
+        // measure and says "healthy" is worse than one that says nothing.
+        if (t.CpuTempC is not double temp)
+        {
+            issues.Add(new HealthIssue("warn", "telemetry_unavailable",
+                "CPU temperature is unreadable, so the thermal and fan checks below cannot run. " +
+                "Enable hardware access (GPDFORGE_ENABLE_HARDWARE=1, elevated) to restore them."));
+        }
+        else
+        {
+            // This literally catches this unit's parked-fan state: 0 rpm while the CPU is already
+            // warm means the fan isn't spinning up, not that it's simply idle at a cool temp.
+            //
+            // `is int rpm` matters here more than anywhere: 0 rpm is a genuine and alarming reading,
+            // and before this change "no EC fan source is wired" ALSO produced 0 — so an
+            // unconfigured machine looked exactly like one with a dead fan.
+            if (t.FanRpm is int rpm && rpm == 0 && temp > ctx.FanStuckTempC)
+                issues.Add(new HealthIssue("warn", "fan_not_spinning",
+                    $"Fan not spinning while warm — 0 rpm at {temp:0}°C CPU."));
 
-        if (t.CpuTempC >= ctx.CriticalTempC)
-            issues.Add(new HealthIssue("critical", "thermal_critical",
-                $"CPU at {t.CpuTempC:0}°C — critical thermal."));
+            if (temp >= ctx.CriticalTempC)
+                issues.Add(new HealthIssue("critical", "thermal_critical",
+                    $"CPU at {temp:0}°C — critical thermal."));
+        }
 
         if (!t.TdpVerified)
             issues.Add(new HealthIssue("warn", "tdp_not_holding",
                 "TDP not holding (firmware reverting)."));
 
-        if (!t.AcConnected && t.DischargeW > ctx.HighDischargeW)
+        if (!t.AcConnected && t.DischargeW is double watts && watts > ctx.HighDischargeW)
             issues.Add(new HealthIssue("warn", "high_discharge",
-                $"High discharge on battery — {t.DischargeW:0.#} W."));
+                $"High discharge on battery — {watts:0.#} W."));
 
         string status = "ok";
         foreach (var issue in issues)

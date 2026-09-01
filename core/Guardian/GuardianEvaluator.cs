@@ -31,28 +31,57 @@ public static class GuardianEvaluator
         if (!c.Enabled)
             return new GuardianDecision(null, currentThrottleW is not null, null, "ok");
 
-        // --- thermal takes priority over battery ---
-        if (t.CpuTempC >= c.TempCriticalC)
-            return new GuardianDecision(c.ThrottleFloorW, false,
-                $"CPU {t.CpuTempC:0}°C — critical, holding {c.ThrottleFloorW} W", "critical");
-
-        if (t.CpuTempC >= c.TempThrottleC)
+        // --- no temperature reading -------------------------------------------------------------
+        //
+        // Handled FIRST and explicitly, because the alternative is silent and dangerous. Since
+        // CpuTempC became nullable, every comparison below would still compile: in C# `null >= 90`
+        // is false. So an unreadable sensor would flow through as "not hot", the guardian would
+        // never throttle, and — worse — `currentThrottleW is not null && null <= 86` is also false,
+        // so a throttle already applied would NEVER be released. The machine would sit at 12 W
+        // forever with nothing on screen explaining why.
+        //
+        // The choice when the sensor is lost is between holding an existing throttle (slow, safe) and
+        // releasing it (fast, unprotected). It holds: the last evidence said the part was hot, and
+        // nothing since has contradicted it. But it holds LOUDLY — a guardian that cannot see and
+        // does not say so is the failure this codebase keeps removing.
+        if (t.CpuTempC is not double temp)
         {
-            int w = RampWatts(t.CpuTempC, c);
-            return new GuardianDecision(w, false, $"CPU {t.CpuTempC:0}°C — easing to {w} W", "warn");
+            return new GuardianDecision(
+                currentThrottleW,
+                ClearThrottle: false,
+                currentThrottleW is int held
+                    ? $"CPU temperature is unreadable — holding {held} W rather than releasing a throttle we cannot verify"
+                    : "CPU temperature is unreadable — the thermal guardian cannot protect this device",
+                "warn");
+        }
+
+        // --- thermal takes priority over battery ---
+        if (temp >= c.TempCriticalC)
+            return new GuardianDecision(c.ThrottleFloorW, false,
+                $"CPU {temp:0}°C — critical, holding {c.ThrottleFloorW} W", "critical");
+
+        if (temp >= c.TempThrottleC)
+        {
+            int w = RampWatts(temp, c);
+            return new GuardianDecision(w, false, $"CPU {temp:0}°C — easing to {w} W", "warn");
         }
 
         // cooled down enough → release any throttle we were holding
-        if (currentThrottleW is not null && t.CpuTempC <= c.TempThrottleC - c.ClearHysteresisC)
+        if (currentThrottleW is not null && temp <= c.TempThrottleC - c.ClearHysteresisC)
             return new GuardianDecision(null, true, "Temps recovered — throttle cleared", "info");
 
-        // --- battery (only meaningful on battery) ---
-        if (!t.AcConnected)
+        // --- battery (only meaningful on battery, and only with a reading) -----------------------
+        //
+        // `pct` is unwrapped rather than compared through the lifted operator for the same reason as
+        // the temperature: `null <= 8` is false, so a failed battery query would silently mean "not
+        // low". That direction is at least safe — it under-reports rather than crying wolf — but it
+        // is still a guard passing on a value it never had.
+        if (!t.AcConnected && t.BatteryPct is int pct)
         {
-            if (t.BatteryPct <= c.BatteryCriticalPct)
-                return new GuardianDecision(currentThrottleW, false, $"Battery {t.BatteryPct}% — critical", "critical");
-            if (t.BatteryPct <= c.BatteryLowPct)
-                return new GuardianDecision(currentThrottleW, false, $"Battery {t.BatteryPct}% — low", "warn");
+            if (pct <= c.BatteryCriticalPct)
+                return new GuardianDecision(currentThrottleW, false, $"Battery {pct}% — critical", "critical");
+            if (pct <= c.BatteryLowPct)
+                return new GuardianDecision(currentThrottleW, false, $"Battery {pct}% — low", "warn");
         }
 
         return new GuardianDecision(currentThrottleW, false, null, "ok");

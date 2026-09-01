@@ -58,6 +58,34 @@ compares the **shell** build against the **daemon** build and says plainly when 
 ### `GET /telemetry`
 `200 → Telemetry` — the latest snapshot.
 
+⚠️ **Every sensor field is nullable, and null means "no reading" — never zero.** Changed
+2026-09-01. Before that an unreadable sensor came back as `0`, so with the hardware gate closed the
+daemon reported `cpuTempC: 0, packageW: 0, fanRpm: 0`: a CPU at zero degrees, which no client could
+distinguish from a cold machine. Measured on device with the gate closed, the response is now
+
+```json
+{ "cpuTempC": null, "packageW": null, "fanRpm": null, "fps": null,
+  "cpuClockMhz": 2000, "batteryPct": 100, "dischargeW": 0, "acConnected": true }
+```
+
+Note what is **not** null there, because the distinction is per-field rather than blanket:
+`cpuClockMhz` and `batteryPct` come from plain WMI and are genuine readings, and `dischargeW: 0` is
+true — the machine is on AC and nothing is discharging. A **measured zero is still a zero**;
+collapsing it into null would lose as much information as the bug this fixed.
+
+`fps` is null both with no probe and with a probe that has produced no sample: those do not
+distinguish "nothing is presenting frames" from "PresentMon has no window of data yet", and
+reporting `0` would assert the first when only the second is known. A probe that measures zero
+frames reports `0`.
+
+`acConnected` and `tdpVerified` are not nullable — they are answers the daemon always has.
+
+**Two consequences worth knowing**, because the alternative was silent: `GET /health/check` now
+returns `warn` with `telemetry_unavailable` instead of `ok` when it cannot see the CPU, and the
+thermal guardian reports *"CPU temperature is unreadable — the thermal guardian cannot protect this
+device"*. Both used to pass quietly, because in C# `null >= 90` is false and every threshold simply
+declined to fire.
+
 ### `GET /telemetry/stream` (mock only)
 SSE stream of `Telemetry` JSON events. **Not implemented by the daemon** and not used by any client —
 kept in the mock for manual experimentation. Poll `GET /telemetry` instead.

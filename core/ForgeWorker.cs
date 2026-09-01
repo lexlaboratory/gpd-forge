@@ -140,7 +140,11 @@ public sealed class ForgeWorker(
                         tuner.Tick(snapshot.Fps, snapshot.CpuTempC);
                     }
                     // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
-                    // Without a real FPS source Fps is 0, so this stays inert instead of ramping TDP to max.
+                    // `is double fps && fps > 0` rather than a lifted comparison: since telemetry went
+                    // nullable, no probe means null and a probe watching an idle desktop means 0.0.
+                    // Both must leave the governor inert, but they are different facts and the pattern
+                    // match says which one is being handled instead of relying on `null > 0` quietly
+                    // being false.
                     // ModeCatalogue.AutoFpsEligible, not `== "gaming"`. The literal meant that any
                     // second gaming-shaped mode either inherited the governor or did not depending on
                     // its spelling, with nothing anywhere stating which was intended. It matters now:
@@ -148,10 +152,11 @@ public sealed class ForgeWorker(
                     // a driver-level frame CAP, and a cap below an active target is the one
                     // pathological pairing — the governor climbs forever chasing frames the driver is
                     // withholding, hot and loud, with no error raised anywhere.
-                    else if (autoFps.Enabled && ModeCatalogue.AutoFpsEligible(mode.Active) && snapshot.Fps > 0)
+                    else if (autoFps.Enabled && ModeCatalogue.AutoFpsEligible(mode.Active)
+                             && snapshot.Fps is double measuredFps && measuredFps > 0)
                     {
                         var gaming = ModeProfiles.For(mode.Active) ?? new TdpProfile(25, 33, 28, 95);
-                        int next = fpsController.NextStapm(autoFps.TargetFps, snapshot.Fps, autoFps.CurrentStapm, minW: 8, maxW: 30);
+                        int next = fpsController.NextStapm(autoFps.TargetFps, measuredFps, autoFps.CurrentStapm, minW: 8, maxW: 30);
                         autoFps.CurrentStapm = next;
                         await tdp.ApplyAsync(gaming with { StapmW = next }, stoppingToken);
                     }
@@ -184,7 +189,10 @@ public sealed class ForgeWorker(
                             break;
                         }
                         var curve = FanCurve.ForMode(fanState.Mode) ?? FanCurve.Balanced;
-                        _lastFanDuty = FanCurve.DutyForTemp(snapshot.CpuTempC, curve, FanCurve.DefaultHysteresisC, _lastFanDuty);
+                        // `.Value` is safe and deliberate: IsUsableTemperature above already refused
+                        // null and handed the fan back to firmware. Unwrapping here rather than
+                        // defaulting keeps the guard as the single place that decides.
+                        _lastFanDuty = FanCurve.DutyForTemp(snapshot.CpuTempC!.Value, curve, FanCurve.DefaultHysteresisC, _lastFanDuty);
                         _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
                         _lastFanMode = fanState.Mode;
                         break;

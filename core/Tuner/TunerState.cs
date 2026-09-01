@@ -101,7 +101,12 @@ public sealed class TunerState
     /// with <see cref="Note"/> explaining why — never a faked reading.
     /// </para>
     /// </summary>
-    public int? Tick(double fps, double tempC)
+    /// <summary>
+    /// Feeds one sample into the running sweep. Nullable since 2026-09-01: telemetry reports null for
+    /// a sensor it cannot read, and a sweep point recorded against an invented zero would make the
+    /// tuner "learn" that every wattage produces no frames and pick the lowest.
+    /// </summary>
+    public int? Tick(double? fps, double? tempC)
     {
         lock (_lock)
         {
@@ -110,7 +115,11 @@ public sealed class TunerState
             _dwellRemaining--;
             if (_dwellRemaining > 0) return CurrentStapmW;
 
-            if (fps > 0) _points.Add(new TunePoint(CurrentStapmW, fps, tempC));
+            // Both readings required, not just the frame rate. PickBest filters points against a
+            // thermal cap, so a point with no temperature cannot be judged against it — recording one
+            // would put a candidate in the running that the cap was never able to exclude.
+            if (fps is double f && f > 0 && tempC is double tc)
+                _points.Add(new TunePoint(CurrentStapmW, f, tc));
 
             int? next = TunerSweepPlanner.NextStapmW(CurrentStapmW, MinW, MaxW, StepW);
             if (next is null)

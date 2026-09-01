@@ -16,6 +16,9 @@ import { Segmented, Stepper } from './components'
 import { useToast } from './Toast'
 import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
+// Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
+// nullable on 2026-09-01 because an unreadable sensor used to arrive as a confident zero.
+import { reading } from './pages/shared'
 
 const QMODES: { id: ModeId; icon: string; label: string }[] = [
   { id: 'gaming', icon: '🎮', label: 'Gaming' },
@@ -143,15 +146,15 @@ export function OverlayApp() {
             panel and its own bracketed frame. */}
         <div className="qam-live">
           <div className="qam-stat">
-            <span className="qam-stat-v">{tele ? Math.round(tele.cpuTempC) : '--'}<i>°C</i></span>
+            <span className="qam-stat-v">{reading(tele?.cpuTempC)}<i>°C</i></span>
             <span className="qam-stat-k">CPU</span>
           </div>
           <div className="qam-stat">
-            <span className="qam-stat-v">{tele ? Math.round(tele.packageW) : '--'}<i>W</i></span>
+            <span className="qam-stat-v">{reading(tele?.packageW)}<i>W</i></span>
             <span className="qam-stat-k">Pkg</span>
           </div>
           <div className="qam-stat">
-            <span className="qam-stat-v">{tele ? Math.round(tele.fps) : '--'}<i>fps</i></span>
+            <span className="qam-stat-v">{reading(tele?.fps)}<i>fps</i></span>
             <span className="qam-stat-k">Frame</span>
           </div>
         </div>

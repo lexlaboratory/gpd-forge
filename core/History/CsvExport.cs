@@ -38,17 +38,29 @@ public static class CsvExport
 
         sb.Append(sample.UnixMs).Append(',')
           .Append(iso).Append(',')
-          .Append(t.CpuTempC.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.GpuTempC.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.PackageW.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.CpuClockMhz.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.FanRpm.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.Fps.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.Fps1PctLow.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.BatteryPct.ToString(CultureInfo.InvariantCulture)).Append(',')
-          .Append(t.DischargeW.ToString(CultureInfo.InvariantCulture)).Append(',')
+          .Append(Cell(t.CpuTempC)).Append(',')
+          .Append(Cell(t.GpuTempC)).Append(',')
+          .Append(Cell(t.PackageW)).Append(',')
+          .Append(Cell(t.CpuClockMhz)).Append(',')
+          .Append(Cell(t.FanRpm)).Append(',')
+          .Append(Cell(t.Fps)).Append(',')
+          .Append(Cell(t.Fps1PctLow)).Append(',')
+          .Append(Cell(t.BatteryPct)).Append(',')
+          .Append(Cell(t.DischargeW)).Append(',')
           .Append(t.AcConnected ? "true" : "false").Append(',')
           .Append(t.TdpVerified ? "true" : "false")
           .Append('\n');
     }
+
+    /// <summary>
+    /// An unmeasured value becomes an EMPTY cell, not a zero.
+    ///
+    /// This is the export people load into a spreadsheet to plot temperature against power, and a
+    /// column of zeros for a sensor the machine could not read produces a chart that says the CPU
+    /// was at 0 °C — the same lie the API used to tell, preserved in a file that outlives the
+    /// session that produced it. Every CSV convention reads an empty field as "no data", and both
+    /// Excel and pandas skip it rather than plotting it.
+    /// </summary>
+    private static string Cell<T>(T? value) where T : struct, IFormattable
+        => value?.ToString(null, CultureInfo.InvariantCulture) ?? string.Empty;
 }

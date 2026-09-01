@@ -16,6 +16,24 @@ export const PRESET_LABEL: Record<string, string> = {
   ai: 'AI', standby: 'Standby',
 }
 
+/**
+ * Render a reading that may not exist.
+ *
+ * The placeholder is the whole point. Telemetry went nullable on 2026-09-01 because an unreadable
+ * sensor used to arrive as 0, and the panel showed a CPU at 0 °C — a confident, wrong number nobody
+ * could distinguish from "cold". Every tile that shows a sensor goes through here so that decision
+ * is made in one place rather than re-derived per tile, which is how one of them ends up printing
+ * the zero again.
+ *
+ * A real zero still renders as 0: nothing presenting frames, nothing discharging on AC.
+ */
+export const reading = (v: number | null | undefined, digits = 0): string =>
+  v == null ? '--' : v.toFixed(digits)
+
+/** A progress fraction only when there is something to scale — never a bar drawn from nothing. */
+export const fractionOf = (v: number | null | undefined, max: number): number | undefined =>
+  v == null ? undefined : v / max
+
 export interface Shared {
   tele: Telemetry | null
   active: ModeId

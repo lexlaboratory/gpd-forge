@@ -25,10 +25,15 @@ public class FanRpmTests
     }
 
     [Fact]
-    public async Task Telemetry_fan_rpm_stays_zero_when_source_returns_null_or_absent()
+    public async Task Telemetry_fan_rpm_is_null_when_the_source_returns_nothing_or_is_absent()
     {
-        Assert.Equal(0, (await new WmiTelemetryService().ReadAsync(CancellationToken.None)).FanRpm);
+        // Was "stays zero" until 2026-09-01. Zero RPM is a real and alarming reading — it is what the
+        // health check watches for to detect a fan that has stopped while the CPU is warm — so
+        // emitting it for "no EC fan source is wired" meant an unconfigured machine looked exactly
+        // like one with a dead fan.
+        Assert.Null((await new WmiTelemetryService().ReadAsync(CancellationToken.None)).FanRpm);
+
         var withNull = new WmiTelemetryService(sensors: null, fanRpmSource: new FakeFanRpm(null));
-        Assert.Equal(0, (await withNull.ReadAsync(CancellationToken.None)).FanRpm);
+        Assert.Null((await withNull.ReadAsync(CancellationToken.None)).FanRpm);
     }
 }

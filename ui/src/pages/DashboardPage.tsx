@@ -8,7 +8,7 @@ import { Badge, Button, Frame, Readout, Segmented, Slider, Toggle, type Tone } f
 import { useToast } from '../Toast'
 import { JobsPanel } from '../JobsPanel'
 import { StandbyPanel } from '../StandbyPanel'
-import { MODES, type Shared } from './shared'
+import { MODES, reading, fractionOf, type Shared } from './shared'
 import { BatteryBudgetCard } from './SystemPage'
 
 // Ceilings the fill bars are read against. The TDP one is the slider's own maximum, so the bar and
@@ -16,8 +16,12 @@ import { BatteryBudgetCard } from './SystemPage'
 const MAX_TDP_W = 35
 const MAX_CPU_C = 100
 
-const tempTone = (c: number): Tone => (c > 85 ? 'danger' : c > 75 ? 'warn' : 'ok')
-const battTone = (p: number): Tone => (p < 15 ? 'danger' : p < 30 ? 'warn' : 'ok')
+// Undefined tone for an absent reading: a tile with no data must not be coloured as if it were
+// healthy. 'ok' green on a sensor nobody read is the same lie as printing 0.
+const tempTone = (c: number | null): Tone | undefined =>
+  c == null ? undefined : c > 85 ? 'danger' : c > 75 ? 'warn' : 'ok'
+const battTone = (p: number | null): Tone | undefined =>
+  p == null ? undefined : p < 15 ? 'danger' : p < 30 ? 'warn' : 'ok'
 
 // --- Dashboard -----------------------------------------------------------------
 export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
@@ -36,14 +40,14 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
     <>
       <section className="stats" aria-label="Live telemetry">
         {/* Fan rpm and FPS get no bar: neither has a ceiling this app can state honestly. */}
-        <Readout testid="stat-cpu"  label="CPU"     value={tele ? `${Math.round(tele.cpuTempC)}` : '--'} unit="°C"
-          fraction={tele ? tele.cpuTempC / MAX_CPU_C : undefined} tone={tele ? tempTone(tele.cpuTempC) : undefined} />
-        <Readout testid="stat-pkg"  label="Power"   value={tele ? `${Math.round(tele.packageW)}` : '--'} unit="W"
-          fraction={tele ? tele.packageW / MAX_TDP_W : undefined} tone="info" />
-        <Readout testid="stat-fan"  label="Fan"     value={tele ? `${tele.fanRpm}` : '--'} unit="rpm" />
-        <Readout testid="stat-fps"  label="FPS"     value={tele ? `${Math.round(tele.fps)}` : '--'} />
-        <Readout testid="stat-batt" label="Battery" value={tele ? `${tele.batteryPct}` : '--'} unit="%"
-          fraction={tele ? tele.batteryPct / 100 : undefined} tone={tele ? battTone(tele.batteryPct) : undefined} />
+        <Readout testid="stat-cpu"  label="CPU"     value={reading(tele?.cpuTempC)} unit="°C"
+          fraction={fractionOf(tele?.cpuTempC, MAX_CPU_C)} tone={tempTone(tele?.cpuTempC ?? null)} />
+        <Readout testid="stat-pkg"  label="Power"   value={reading(tele?.packageW)} unit="W"
+          fraction={fractionOf(tele?.packageW, MAX_TDP_W)} tone={tele?.packageW == null ? undefined : 'info'} />
+        <Readout testid="stat-fan"  label="Fan"     value={reading(tele?.fanRpm)} unit="rpm" />
+        <Readout testid="stat-fps"  label="FPS"     value={reading(tele?.fps)} />
+        <Readout testid="stat-batt" label="Battery" value={reading(tele?.batteryPct)} unit="%"
+          fraction={fractionOf(tele?.batteryPct, 100)} tone={battTone(tele?.batteryPct ?? null)} />
       </section>
 
       <Frame title="Modes" hint={<span data-testid="modes-hint">{auto ? 'Auto — optimizing for the app in focus' : 'Manual — you chose the mode'}</span>}>

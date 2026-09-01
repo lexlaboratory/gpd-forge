@@ -11,18 +11,27 @@ export interface Mode {
   blurb: string
 }
 
+/**
+ * A telemetry reading. Every sensor is nullable as of 2026-09-01.
+ *
+ * Before that, an unreadable sensor arrived as 0, and with the hardware gate closed the daemon
+ * reported a CPU at 0 °C and a fan at 0 rpm. The UI had no way to tell "cold" from "unmeasured", so
+ * it rendered a confident, wrong number. Null means "no reading" and must render as `--`; a real
+ * zero (nothing presenting frames, nothing discharging on AC) still arrives as 0 and is worth
+ * showing.
+ */
 export interface Telemetry {
-  cpuTempC: number
-  gpuTempC: number
-  packageW: number
-  cpuClockMhz: number
-  fanRpm: number
-  fanDutyPct: number
-  fps: number
+  cpuTempC: number | null
+  gpuTempC: number | null
+  packageW: number | null
+  cpuClockMhz: number | null
+  fanRpm: number | null
+  fanDutyPct: number | null
+  fps: number | null
   /** 1% low: the mean of the slowest 1% of frames, as FPS. The number that tracks stutter. */
-  fps1PctLow: number
-  batteryPct: number
-  dischargeW: number
+  fps1PctLow: number | null
+  batteryPct: number | null
+  dischargeW: number | null
   acConnected: boolean
   tdpVerified: boolean
 }

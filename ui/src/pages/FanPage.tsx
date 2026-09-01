@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import type { Telemetry, FanInfo } from '../types'
 import { setFan, getFanInfo, setFanManualDuty } from '../api'
+import { reading, fractionOf } from './shared'
 import { Frame, Readout, Segmented, Slider, type Tone } from '../components'
 
 // --- Fan ----------------------------------------------------------------------
@@ -9,7 +10,10 @@ export const FAN_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive', 'Manual']
 export const FAN_GATE_CLOSED_ADVISORY =
   'Curve editor with hysteresis + EC re-init on boot/resume lands with the fan driver (EC access pending PawnIO-stable).'
 const MAX_CPU_C = 100
-const tempTone = (c: number): Tone => (c > 85 ? 'danger' : c > 75 ? 'warn' : 'ok')
+// Undefined tone for an absent reading: a tile with no data must not be coloured as if it were
+// healthy. 'ok' green on a sensor nobody read is the same lie as printing 0.
+const tempTone = (c: number | null): Tone | undefined =>
+  c == null ? undefined : c > 85 ? 'danger' : c > 75 ? 'warn' : 'ok'
 
 export function FanPage({ tele }: { tele: Telemetry | null }) {
   const [fan, setFanInfo] = useState<FanInfo>({ mode: 'Auto', manualDuty: 128, controllable: false })
@@ -21,11 +25,11 @@ export function FanPage({ tele }: { tele: Telemetry | null }) {
       <Frame title="Fan" hint={fan.controllable ? 'Live — writes the EC.' : 'Preference saved now; curve applied when the fan-control gate is open.'}>
         <div className="stats">
           {/* Rpm has no honest ceiling here, so only the two temperatures carry a bar. */}
-          <Readout label="Fan" value={tele ? `${tele.fanRpm}` : '--'} unit="rpm" />
-          <Readout label="CPU" value={tele ? `${Math.round(tele.cpuTempC)}` : '--'} unit="°C"
-            fraction={tele ? tele.cpuTempC / MAX_CPU_C : undefined} tone={tele ? tempTone(tele.cpuTempC) : undefined} />
-          <Readout label="GPU" value={tele ? `${Math.round(tele.gpuTempC)}` : '--'} unit="°C"
-            fraction={tele ? tele.gpuTempC / MAX_CPU_C : undefined} tone={tele ? tempTone(tele.gpuTempC) : undefined} />
+          <Readout label="Fan" value={reading(tele?.fanRpm)} unit="rpm" />
+          <Readout label="CPU" value={reading(tele?.cpuTempC)} unit="°C"
+            fraction={fractionOf(tele?.cpuTempC, MAX_CPU_C)} tone={tempTone(tele?.cpuTempC ?? null)} />
+          <Readout label="GPU" value={reading(tele?.gpuTempC)} unit="°C"
+            fraction={fractionOf(tele?.gpuTempC, MAX_CPU_C)} tone={tempTone(tele?.gpuTempC ?? null)} />
         </div>
         <Segmented
           label="Fan mode"

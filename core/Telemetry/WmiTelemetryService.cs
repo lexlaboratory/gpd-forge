@@ -18,17 +18,24 @@ public sealed class WmiTelemetryService(
 {
     public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct)
     {
-        double cpuTempC = ReadThermalZoneC() ?? 0;
-        int cpuClockMhz = ReadCpuClockMhz() ?? 0;
+        // `?? 0` on every one of these until 2026-09-01. A failed read became a confident zero, and
+        // a CPU reported at 0 °C is worse than no reading at all: the panel cannot tell it from cold,
+        // and the guardian cannot tell it from safe.
+        double? cpuTempC = ReadThermalZoneC();
+        int? cpuClockMhz = ReadCpuClockMhz();
         var (batteryPct, acConnected) = ReadBattery();
-        double dischargeW = ReadDischargeW() ?? 0;
+        double? dischargeW = ReadDischargeW();
 
-        // Package power / GPU temp / fan RPM need a driver. Filled by the optional read-only
-        // LHM sensors when hardware access is enabled; otherwise 0 (WMI can't provide them).
-        double gpuTempC = 0, packageW = 0;
-        int fanRpm = 0;
-        double fps = 0, fps1PctLow = 0;
-        const int fanDutyPct = 0;
+        // Package power / GPU temp / fan RPM need a driver. Filled by the optional read-only LHM
+        // sensors when hardware access is enabled; NULL otherwise, because WMI genuinely cannot
+        // provide them and saying "0 W" would be inventing a measurement.
+        double? gpuTempC = null, packageW = null;
+        int? fanRpm = null;
+        double? fps = null, fps1PctLow = null;
+
+        // Fan duty is not measured anywhere yet — it was a `const int fanDutyPct = 0` presented as a
+        // reading. Null until something actually reads the EC's duty register back.
+        int? fanDutyPct = null;
 
         if (sensors is not null && sensors.TryRead(out var hw))
         {
@@ -42,8 +49,11 @@ public sealed class WmiTelemetryService(
         // when hardware access is enabled. Wins over LHM's fan reading (which is 0 on these boards).
         if (fanRpmSource?.ReadRpm() is int rpm && rpm > 0) fanRpm = rpm;
 
-        // Frame rate via the optional PresentMon probe. Nothing rendering means no sample at all,
-        // which stays 0 — the honest reading for "nothing is presenting frames right now".
+        // Frame rate via the optional PresentMon probe. Null in BOTH the no-probe and the
+        // probe-with-no-sample cases, and that is the honest reading rather than a shortcut: a probe
+        // returning no sample does not distinguish "nothing is presenting frames" from "PresentMon
+        // has not produced a window of data yet". Reporting 0.0 would assert the first when only the
+        // second is known. A genuine 0.0 still arrives when the probe measures one.
         if (frameRateProbe is not null && frameRateProbe.TryRead(out var frames))
         {
             fps = frames.Fps;
@@ -94,7 +104,18 @@ public sealed class WmiTelemetryService(
         return null;
     }
 
-    private (int pct, bool ac) ReadBattery()
+    /// <summary>
+    /// Charge percentage and whether we are on mains.
+    ///
+    /// The percentage is nullable because the old fallback of <c>0</c> was the most dangerous zero in
+    /// this file: the guardian raises a CRITICAL battery alert below 8 %, so a failed WMI query
+    /// announced an emergency on a machine that might be at 90 %.
+    ///
+    /// <c>acConnected</c> stays a plain bool and falls back to <c>false</c>. That is a deliberate
+    /// asymmetry rather than an oversight: every consumer treats "on battery" as the more
+    /// conservative state, so an unknown power source behaves cautiously instead of assuming mains.
+    /// </summary>
+    private (int? pct, bool ac) ReadBattery()
     {
         try
         {
@@ -112,7 +133,7 @@ public sealed class WmiTelemetryService(
             }
         }
         catch (Exception ex) { logger?.LogDebug(ex, "battery unavailable"); }
-        return (0, false);
+        return (null, false);
     }
 
     private double? ReadDischargeW()
