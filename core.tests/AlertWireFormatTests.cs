@@ -4,6 +4,17 @@
 // NAMES, while the real daemon emitted ORDINALS. Every test stayed green and the shipped app
 // crashed on the Alerts page: `severity.toLowerCase()` on the number 1 throws, React unmounted the
 // tree, and the window went blank. A green suite that never sees the real serializer is not proof.
+//
+// ⚠️ AND NEITHER IS THIS FILE, ON ITS OWN. Read the next method: it builds its own
+// JsonSerializerOptions that *mirror* the ones Program.cs installs. Mirroring is copying, so this
+// tests a replica of the configuration rather than the configuration — the very mistake that caused
+// the outage, repeated one level up. Measured on 2026-08-31: with the JsonStringEnumConverter
+// deleted from Program.cs, every test in this file still passed.
+//
+// What these tests do prove is worth keeping: that AlertEvent has no field which resists string
+// serialisation, and that each enum member's name is what the UI expects. The guarantee that the
+// RUNNING DAEMON applies the converter belongs to core.tests/ApiContractTests.cs, which asks the
+// real process over HTTP. That one goes red. Do not let this file's coverage be mistaken for it.
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GpdForge.Alerts;

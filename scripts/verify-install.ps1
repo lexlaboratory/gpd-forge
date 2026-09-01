@@ -63,6 +63,36 @@ Test-Check 'installed shell binary is current' {
     "built $((Get-Item $exe).LastWriteTime)"
 }
 
+# 3b) the INSTALLED daemon serialises enums as names, not ordinals.
+#
+#     Deliberately not a second copy of the contract validator (that lives in
+#     core.tests/ApiContractTests.cs and tests/e2e/contract.spec.ts, both reading
+#     tests/contract/api-contract.json). A third implementation in PowerShell would be one more thing
+#     to drift. This checks the single failure that has actually shipped: on 2026-08-28 severity came
+#     off the wire as 1 instead of "Aviso", the UI called .toLowerCase() on a number, React unmounted
+#     and the window went black — with the daemon healthy and every test green the whole time.
+#
+#     It runs here because the two contract guards test a daemon built from the tree. This one tests
+#     the binary in Program Files, which is a different artefact and the one the user runs.
+Test-Check 'installed daemon emits enum names, not ordinals' {
+    $a = Invoke-RestMethod "$Url/alerts" -TimeoutSec 8
+    if ($null -eq $a.alerts) { throw '/alerts response has no alerts array' }
+    if ($a.alerts.Count -eq 0) { return 'no alerts recorded yet - nothing to check' }
+
+    $first = $a.alerts[0]
+    foreach ($field in 'severity', 'category') {
+        $value = $first.$field
+        if ($null -eq $value) { throw "alert has no $field field" }
+        # PowerShell deserialises a JSON number to Int64/Double and a string to String. Anything
+        # numeric here means JsonStringEnumConverter is missing from Program.cs.
+        if ($value -isnot [string]) {
+            throw ("alert.$field is $($value.GetType().Name) '$value', not a string - the " +
+                   'JsonStringEnumConverter is missing and the Alerts page will unmount React')
+        }
+    }
+    "severity=$($first.severity) category=$($first.category) over $($a.alerts.Count) alert(s)"
+}
+
 # 4) the served dashboard points at assets that actually exist.
 #    wwwroot used to accumulate every past build, so a dangling <script src> was easy to miss.
 Test-Check 'wwwroot index references assets that exist' {

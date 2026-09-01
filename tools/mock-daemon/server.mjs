@@ -222,6 +222,44 @@ const state = {
     },
     sleepStudyError: null,
   },
+  // Hibernate policy — mirrors core/Standby/HibernatePolicy.cs. The numbers are the ones measured on
+  // the reference Win 4 on 2026-08-30: on battery, five minutes to Modern Standby and two full hours
+  // of S0 drain before it finally hibernates. `hibernateAvailable` is true and `unavailable` null
+  // because this board CAN hibernate; what it cannot do is S1/S2/S3, which is a different question
+  // and not one this endpoint answers.
+  hibernate: {
+    hibernateAvailable: true,
+    unavailable: null,
+    onAc: { standbyIdleSeconds: 0, hibernateIdleSeconds: 1800 },
+    onBattery: { standbyIdleSeconds: 300, hibernateIdleSeconds: 7200 },
+  },
+  // Hardware audit log — mirrors core/Broker/HardwareAuditLog.cs. Seeded with all THREE values of
+  // `verified` on purpose: true, false, and null. Null means the call cannot report failure (SetAuto
+  // returns void), and a mock that only ever produced `true` would let a client treat null as a
+  // failure — or as success — with nothing to catch either reading.
+  audit: [
+    {
+      atUtc: new Date(Date.now() - 60_000).toISOString(),
+      subsystem: 'tdp',
+      operation: 'Apply',
+      detail: 'stapm=15W fast=20W slow=17W tctl=92C -> observed TdpReadout { StapmW = 15, PptW = 20 } after 1 attempt(s)',
+      verified: true,
+    },
+    {
+      atUtc: new Date(Date.now() - 120_000).toISOString(),
+      subsystem: 'fan',
+      operation: 'SetAuto',
+      detail: 'handed fan control back to firmware',
+      verified: null,
+    },
+    {
+      atUtc: new Date(Date.now() - 180_000).toISOString(),
+      subsystem: 'tdp',
+      operation: 'Apply',
+      detail: 'stapm=45W refused by the firmware — read back 30W after 3 attempt(s)',
+      verified: false,
+    },
+  ],
   // Auto-tuner: mirrors core/Tuner/TunerState.cs's shape. Unlike the real daemon (whose telemetry
   // has no FPS source yet — see the honesty note in docs/api.md), the mock simulates a small FPS
   // curve so POST /tuner/start can return a populated, usable sweep for the UI/E2E to exercise.
@@ -1031,6 +1069,64 @@ const server = http.createServer(async (req, res) => {
     state.tdpVerified = true
     state.standby = { ...state.standby, lastRestore: outcome }
     return send(res, 200, outcome)
+  }
+
+  // --- Routes the daemon shipped in v0.2.0 with no mock behind them -----------------------------
+  //
+  // /audit, /firmware and GET+POST /standby/hibernate reached a published release without the mock
+  // ever knowing they existed, so no E2E test could reach them and nothing checked their shape.
+  // Found on 2026-08-31 by tests/contract/api-contract.json, which is now the arbiter both this
+  // file and the real daemon are measured against. Shapes below mirror the contract exactly.
+
+  // Hibernate policy. The real board reports S1/S2/S3 unsupported, so `hibernateAvailable` is true
+  // and `unavailable` is null; the interesting control is the idle timeout, not a sleep-state toggle.
+  if (method === 'GET' && path === '/standby/hibernate') return send(res, 200, state.hibernate)
+  if (method === 'POST' && path === '/standby/hibernate') {
+    const body = await readBody(req)
+    const clamp = (v, fallback) => (Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback)
+    const target = body?.onBattery ? 'onBattery' : 'onAc'
+    state.hibernate = {
+      ...state.hibernate,
+      [target]: {
+        standbyIdleSeconds: clamp(body?.standbyIdleSeconds, state.hibernate[target].standbyIdleSeconds),
+        hibernateIdleSeconds: clamp(body?.hibernateIdleSeconds, state.hibernate[target].hibernateIdleSeconds),
+      },
+    }
+    // Read back rather than echo the request: the real endpoint re-reads the registry after writing,
+    // because powercfg can accept a value and leave the active scheme unchanged.
+    return send(res, 200, state.hibernate)
+  }
+
+  // Firmware — reports, never flashes. `canAttempt` is false here for the same reason it is false in
+  // production (see docs/adr/0003): a mock that could be coaxed into true would let a UI grow a
+  // button for a route that does not exist.
+  if (method === 'GET' && path === '/firmware') {
+    return send(res, 200, {
+      biosVersion: '0.10',
+      biosReleaseDate: '20241128000000.000000+000',
+      model: 'GPD Win 4 (G1618-04)',
+      canAttempt: false,
+      advisory:
+        'GPD Forge does not update firmware and will not attempt to. It reports what is installed ' +
+        'so you can compare against GPD’s release notes. If you do update by hand: run on AC, ' +
+        'above 50% charge, close GPD Forge and any other power tool first, and do not let the ' +
+        'machine sleep during the flash. This board has no vendor recovery path if it fails.',
+    })
+  }
+
+  // Hardware audit log. `verified` is deliberately three-valued and the seed carries all three:
+  // true (written and read back), false (refused), and null for a call that CANNOT report failure —
+  // SetAuto returns void, so "the EC responded" is the strongest claim available. A mock that only
+  // ever emitted true would let a UI render null as a failure and nobody would notice.
+  if (method === 'GET' && path === '/audit') {
+    const writes = state.audit.slice(0, Math.max(0, Number(url.searchParams.get('limit') ?? 100)))
+    return send(res, 200, {
+      capacity: 500,
+      total: state.audit.length,
+      failed: state.audit.filter((w) => w.verified === false).length,
+      unconfirmed: state.audit.filter((w) => w.verified === null).length,
+      writes,
+    })
   }
 
   // Update checker — canned "no update" (mirrors GET /update/check's honest-degrade shape; the mock

@@ -1,0 +1,491 @@
+{
+  "$comment": [
+    "GPD Forge — the API contract, and the arbiter for both sides of it. GPL-3.0-or-later.",
+    "",
+    "WHY THIS FILE EXISTS. On 2026-08-28 the shipped app was unusable while every test was green.",
+    "AlertSeverity is a C# enum; without JsonStringEnumConverter the daemon emitted the ordinal 1",
+    "while the mock daemon, docs/api.md and types.ts all said \"Aviso\". The UI called",
+    "severity.toLowerCase() on a number, React unmounted the whole tree, and the window went black.",
+    "The E2E suite passed throughout because it only ever talked to the mock — and the mock had",
+    "always been right. A contract tested only against its own replica is not tested.",
+    "",
+    "HOW IT WORKS. Neither side is compared to the other; both are compared to THIS FILE.",
+    "  core.tests/ApiContractTests.cs   starts the real daemon and validates it here.",
+    "  tests/e2e/contract.spec.ts       queries the mock daemon and validates it here.",
+    "A route the daemon gains but nobody declares fails the C# route-coverage test. Declaring it",
+    "then fails the mock test until the mock implements it. That chain is the point: it is what",
+    "makes it impossible to ship an endpoint the E2E suite has never seen.",
+    "",
+    "TYPES. A field value is either a type string or an object.",
+    "  \"string\" | \"number\" | \"boolean\" | \"object\" | \"array\"  — unions with '|', e.g. \"number|null\".",
+    "  { \"type\": \"array\", \"items\": { ...fields... } }  — items checked only when the array is",
+    "    non-empty; an empty array is legitimately empty on a clean machine.",
+    "  { \"type\": \"object\", \"fields\": { ...fields... } }",
+    "  { \"type\": \"string\", \"oneOf\": [...] }  — the enum guard. This is the one that would have",
+    "    caught the 2026-08-28 outage: an ordinal is not a string and 1 is not in the list.",
+    "",
+    "MISSING vs EXTRA. Every declared field must be present — a field that silently stops being",
+    "emitted breaks a client. Undeclared extra fields are allowed, so this is a floor and adding to",
+    "a response is never a breaking change.",
+    "",
+    "Shapes below were captured from the live daemon on 2026-08-31 (v0.2.0, commit a0a999f), not",
+    "written from the source. Re-capture rather than hand-edit when a response legitimately changes.",
+    "",
+    "⚠️ AND CHECK NULLABILITY AGAINST THE TYPE, NOT THE CAPTURE. A capture shows what one machine",
+    "returned, not what the field is allowed to return. /display/tablet was declared non-null from a",
+    "reading of false/0 when the type is bool?/int? and null is the normal state of a machine that",
+    "has never set ConvertibilityEnabled. The mock guard caught it in its first run precisely because",
+    "the mock models the null case — which is the whole argument for validating both sides against",
+    "this file instead of against each other."
+  ],
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "shape": { "ok": "boolean", "version": "string", "model": "string" }
+    },
+    {
+      "method": "GET",
+      "path": "/health/check",
+      "shape": { "status": "string", "issues": "array" }
+    },
+    {
+      "method": "GET",
+      "path": "/version",
+      "shape": {
+        "version": "string",
+        "commit": "string|null",
+        "builtUtc": "string|null",
+        "runtime": "string",
+        "model": "string"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/telemetry",
+      "shape": {
+        "cpuTempC": "number|null",
+        "gpuTempC": "number|null",
+        "packageW": "number|null",
+        "cpuClockMhz": "number|null",
+        "fanRpm": "number|null",
+        "fanDutyPct": "number|null",
+        "fps": "number|null",
+        "fps1PctLow": "number|null",
+        "batteryPct": "number|null",
+        "dischargeW": "number|null",
+        "acConnected": "boolean",
+        "tdpVerified": "boolean"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/history",
+      "shape": {
+        "samples": {
+          "type": "array",
+          "items": { "unixMs": "number", "snap": "object" }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/mode",
+      "shape": { "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "ai", "standby"] } }
+    },
+    {
+      "method": "GET",
+      "path": "/fan",
+      "shape": {
+        "mode": { "type": "string", "oneOf": ["Auto", "Manual", "Curve"] },
+        "manualDuty": "number",
+        "controllable": "boolean"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/profiles",
+      "shape": {
+        "battery": "object",
+        "windows": "object",
+        "gaming": "object",
+        "ai": "object",
+        "standby": "object"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/app-rules",
+      "shape": {
+        "rules": {
+          "type": "array",
+          "items": { "id": "string", "match": "string", "mode": "string", "enabled": "boolean" }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/alerts",
+      "shape": {
+        "alerts": {
+          "type": "array",
+          "items": {
+            "id": "string",
+            "timestampUtc": "string",
+            "severity": { "type": "string", "oneOf": ["Info", "Aviso", "Critica"] },
+            "category": { "type": "string", "oneOf": ["Thermal", "Hardware", "Service", "Configuration", "System"] },
+            "title": "string",
+            "message": "string",
+            "technicalData": "string|null",
+            "acknowledged": "boolean",
+            "dedupeKey": "string|null",
+            "count": "number",
+            "lastSeenUtc": "string|null"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/summary",
+      "shape": {
+        "unread": "number",
+        "unreadInfo": "number",
+        "unreadAviso": "number",
+        "unreadCritica": "number",
+        "latest": {
+          "type": "object|null",
+          "fields": {
+            "severity": { "type": "string", "oneOf": ["Info", "Aviso", "Critica"] },
+            "category": { "type": "string", "oneOf": ["Thermal", "Hardware", "Service", "Configuration", "System"] }
+          },
+          "$comment": "Declared down to the enums on purpose. When the converter was removed to falsify these guards, /alerts caught it and /alerts/summary did not — it carries the same alert object and was declared as a bare 'object'. One weak declaration is a hole the size of the whole endpoint."
+        },
+        "unreadOccurrences": "number"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/guardian",
+      "shape": {
+        "enabled": "boolean",
+        "autoThrottle": "boolean",
+        "tempThrottleC": "number",
+        "tempCriticalC": "number",
+        "throttleFloorW": "number",
+        "batteryLowPct": "number",
+        "batteryCriticalPct": "number",
+        "throttling": "boolean",
+        "throttledToW": "number|null",
+        "lastAlert": "string|null",
+        "lastSeverity": "string"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/audit",
+      "shape": {
+        "capacity": "number",
+        "total": "number",
+        "failed": "number",
+        "unconfirmed": "number",
+        "writes": {
+          "type": "array",
+          "items": {
+            "atUtc": "string",
+            "subsystem": "string",
+            "operation": "string",
+            "detail": "string",
+            "verified": "boolean|null"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/standby",
+      "shape": {
+        "lastDrainPctPerHour": "number|null",
+        "lastDrainSleptHours": "number|null",
+        "lastDrainAt": "string|null",
+        "topWakeReason": "string|null",
+        "blockers": "array",
+        "diagnosticsAvailable": "boolean",
+        "diagnosticsError": "string|null",
+        "lastRestore": "object|null",
+        "sleepStudy": "object|null",
+        "sleepStudyError": "string|null"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/standby/hibernate",
+      "shape": {
+        "hibernateAvailable": "boolean",
+        "unavailable": "string|null",
+        "onAc": { "type": "object", "fields": { "standbyIdleSeconds": "number", "hibernateIdleSeconds": "number" } },
+        "onBattery": { "type": "object", "fields": { "standbyIdleSeconds": "number", "hibernateIdleSeconds": "number" } }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/firmware",
+      "shape": {
+        "biosVersion": "string|null",
+        "biosReleaseDate": "string|null",
+        "model": "string|null",
+        "canAttempt": "boolean",
+        "advisory": "string"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/gpu",
+      "shape": {
+        "available": "boolean",
+        "status": "string",
+        "detail": "string|null",
+        "adapter": "string|null",
+        "lastReportUtc": "string|null"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/gpu/desired",
+      "shape": { "requested": "boolean", "frameCapFps": "number|null", "requestedAtUtc": "string|null" }
+    },
+    {
+      "method": "GET",
+      "path": "/display",
+      "shape": { "brightness": "number" }
+    },
+    {
+      "method": "GET",
+      "path": "/display/refresh",
+      "shape": { "current": "number", "supported": "array" }
+    },
+    {
+      "method": "GET",
+      "path": "/display/night",
+      "shape": { "on": "boolean", "warmth": "number" }
+    },
+    {
+      "method": "GET",
+      "path": "/display/tablet",
+      "shape": { "convertible": "boolean|null", "raw": "number|null", "applied": "boolean", "advisory": "string|null" },
+      "$comment": "convertible and raw are bool?/int? in TabletModeService — null means ConvertibilityEnabled is not set and Windows is using default chassis detection. They were first declared non-null here because the capture came from a machine where the key happened to be set, and the mock guard caught it on its first run. See the note on capture in $comment at the top of this file."
+    },
+    {
+      "method": "GET",
+      "path": "/display/keyboard-backlight",
+      "shape": { "controllable": "boolean", "applied": "boolean", "advisory": "string|null" }
+    },
+    {
+      "method": "GET",
+      "path": "/battery/budget",
+      "shape": {
+        "minutesRemaining": "number|null",
+        "remainingWh": "number|null",
+        "dischargeW": "number|null",
+        "projections": { "type": "array", "items": { "watts": "number", "minutes": "number|null" } }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/battery/charge-limit",
+      "shape": { "percent": "number", "available": "boolean", "applied": "boolean", "advisory": "string|null" }
+    },
+    {
+      "method": "GET",
+      "path": "/led",
+      "shape": {
+        "mode": "string",
+        "color": "string",
+        "controllable": "boolean",
+        "applied": "boolean",
+        "advisory": "string|null"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/undervolt",
+      "shape": { "coCount": "number", "offsetMv": "number", "applied": "boolean", "advisory": "string|null" }
+    },
+    {
+      "method": "GET",
+      "path": "/freezer",
+      "shape": { "frozen": "array" }
+    },
+    {
+      "method": "GET",
+      "path": "/jobs",
+      "shape": null,
+      "$comment": "Returns a bare array, not an object, so there are no root fields to declare. The route-existence and JSON-parseability checks still apply."
+    },
+    {
+      "method": "GET",
+      "path": "/sessions",
+      "shape": {
+        "fpsAvailable": "boolean",
+        "current": "string|null",
+        "sessions": {
+          "type": "array",
+          "items": {
+            "id": "string",
+            "app": "string",
+            "startedUtc": "string",
+            "endedUtc": "string|null",
+            "durationSeconds": "number",
+            "samples": "number",
+            "fpsAvg": "number|null",
+            "fps1PctLow": "number|null",
+            "onBattery": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/games",
+      "shape": {
+        "fpsAvailable": "boolean",
+        "games": {
+          "type": "array",
+          "items": {
+            "app": "string",
+            "sessions": "number",
+            "totalSeconds": "number",
+            "lastPlayedUtc": "string",
+            "fpsAvg": "number|null",
+            "fpsBest": "number|null"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ai",
+      "shape": {
+        "antiStandby": { "type": "object", "fields": { "active": "boolean", "holders": "number", "manual": "boolean" } },
+        "sustainedProfile": "object",
+        "vram": "object"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/ai/inference-hold",
+      "shape": {
+        "enforcing": "boolean",
+        "holding": "boolean",
+        "holdingSince": "string|null",
+        "lastTickAt": "string|null",
+        "reason": "string|null",
+        "watchedNames": "array",
+        "busyCpuFraction": "number",
+        "workers": "array",
+        "unmeasured": "array"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/auto-fps",
+      "shape": { "enabled": "boolean", "targetFps": "number" }
+    },
+    {
+      "method": "GET",
+      "path": "/tuner",
+      "shape": {
+        "running": "boolean",
+        "goal": "string",
+        "targetFps": "number|null",
+        "minW": "number",
+        "maxW": "number",
+        "tempCapC": "number",
+        "currentStapmW": "number|null",
+        "points": "array",
+        "best": "object|null",
+        "note": "string|null"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/power-source",
+      "shape": { "enabled": "boolean", "onBatteryMode": "string", "onAcMode": "string" }
+    },
+    {
+      "method": "GET",
+      "path": "/system/incumbents",
+      "shape": { "motionAssistant": "boolean", "gpdTool": "boolean" }
+    },
+    {
+      "method": "GET",
+      "path": "/update/check",
+      "shape": {
+        "current": "string",
+        "latest": "string|null",
+        "updateAvailable": "boolean",
+        "url": "string|null"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/settings/export",
+      "shape": {
+        "modePresets": "object",
+        "guardian": "object",
+        "fanMode": "string",
+        "brightness": "number|null",
+        "powerSource": "object",
+        "autoFps": "object"
+      }
+    },
+
+    {
+      "method": "GET",
+      "path": "/telemetry/stream",
+      "shape": null,
+      "mockOnly": true,
+      "$comment": "Deliberately mock-only, and documented as such in docs/api.md — the mock implements SSE so the UI can be developed against a live-looking feed; production polls. Declared here so the mock guard tolerates it BY NAME rather than by allowing unknown extra routes in general, which would let a genuine phantom through."
+    },
+
+    { "method": "GET", "path": "/history/export.csv", "shape": null, "$comment": "Serves CSV, not JSON. Declared so route coverage sees it; body shape is not checked here." },
+    { "method": "GET", "path": "/sessions/{id}", "shape": null, "$comment": "Parameterised; needs a live id, so it is declared for coverage and exercised by sessions.spec.ts." },
+
+    { "method": "POST", "path": "/mode" },
+    { "method": "POST", "path": "/tdp" },
+    { "method": "POST", "path": "/fan" },
+    { "method": "POST", "path": "/profiles/{mode}" },
+    { "method": "POST", "path": "/guardian" },
+    { "method": "POST", "path": "/panic" },
+    { "method": "POST", "path": "/auto-fps" },
+    { "method": "POST", "path": "/power-source" },
+    { "method": "POST", "path": "/display/brightness" },
+    { "method": "POST", "path": "/display/refresh" },
+    { "method": "POST", "path": "/display/night" },
+    { "method": "POST", "path": "/display/tablet" },
+    { "method": "POST", "path": "/display/keyboard-backlight" },
+    { "method": "POST", "path": "/battery/charge-limit" },
+    { "method": "POST", "path": "/led" },
+    { "method": "POST", "path": "/undervolt" },
+    { "method": "POST", "path": "/freezer/freeze" },
+    { "method": "POST", "path": "/freezer/thaw" },
+    { "method": "POST", "path": "/jobs" },
+    { "method": "POST", "path": "/app-rules" },
+    { "method": "PUT", "path": "/app-rules/{id}" },
+    { "method": "DELETE", "path": "/app-rules/{id}" },
+    { "method": "POST", "path": "/app-rules/{id}/move" },
+    { "method": "POST", "path": "/alerts/{id}/ack" },
+    { "method": "POST", "path": "/alerts/ack-all" },
+    { "method": "DELETE", "path": "/alerts/{id}" },
+    { "method": "DELETE", "path": "/sessions/{id}" },
+    { "method": "POST", "path": "/ai/anti-standby" },
+    { "method": "POST", "path": "/ai/vram" },
+    { "method": "POST", "path": "/gpu/frame-cap" },
+    { "method": "POST", "path": "/gpu/state" },
+    { "method": "POST", "path": "/standby/restore" },
+    { "method": "POST", "path": "/standby/hibernate" },
+    { "method": "POST", "path": "/tuner/start" },
+    { "method": "POST", "path": "/import/motionassistant" },
+    { "method": "POST", "path": "/settings/import" }
+  ]
+}

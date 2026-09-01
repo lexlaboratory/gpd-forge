@@ -173,9 +173,9 @@ public sealed class FileVramHistoryStore : IVramHistoryStore
     private readonly string _filePath;
     private readonly JsonSerializerOptions _json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
-    /// <summary>%ProgramData%\GPD Forge — the same root AlertStore and SessionStore use.</summary>
-    public static string DefaultDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge");
+    /// <summary>The same root AlertStore and SessionStore use — see <see cref="SystemControl.DataRoot"/>,
+    /// which is the single place that honours GPDFORGE_DATA_DIR.</summary>
+    public static string DefaultDirectory => SystemControl.DataRoot.Current;
 
     public FileVramHistoryStore() : this(DefaultDirectory) { }
 

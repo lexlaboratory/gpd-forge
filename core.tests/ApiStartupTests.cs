@@ -24,6 +24,7 @@
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text.Json;
+using GpdForge.Alerts;
 using Xunit;
 
 namespace GpdForge.Core.Tests;
@@ -37,6 +38,7 @@ public sealed class DaemonUnderTest : IDisposable
     public const int Port = 8846;
 
     private readonly Process? _process;
+    private readonly string _dataDir;
 
     public string BaseUrl { get; } = $"http://127.0.0.1:{Port}";
     public HttpClient Client { get; }
@@ -47,6 +49,21 @@ public sealed class DaemonUnderTest : IDisposable
     public DaemonUnderTest()
     {
         Client = new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(20) };
+
+        // Isolated state, for two reasons that are easy to conflate.
+        //
+        // The first is damage: until 2026-08-31 this fixture ran against %ProgramData%\GPD Forge, so
+        // every test run read and WROTE the installed service's alerts, sessions and app rules on
+        // whatever machine ran the suite.
+        //
+        // The second matters more for what these tests prove. A daemon whose input is the machine's
+        // history passes for reasons nobody chose: on the reference device /alerts held 13 real
+        // entries and the contract's item checks ran; on a clean CI runner the array is empty, every
+        // item check is skipped, and the guard reports success having verified nothing. Seeding it
+        // makes the shape checks say the same thing everywhere.
+        _dataDir = Path.Combine(Path.GetTempPath(), "gpdforge-tests", Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(_dataDir);
+        SeedAlerts(_dataDir);
 
         var dll = Path.Combine(AppContext.BaseDirectory, "GpdForge.Service.dll");
         if (!File.Exists(dll)) return;   // Started == false; the fixture-level test reports it
@@ -64,6 +81,7 @@ public sealed class DaemonUnderTest : IDisposable
         psi.Environment["GPDFORGE_ENABLE_FAN_CONTROL"] = "0";
         psi.Environment["GPDFORGE_ENABLE_GPU_PROFILES"] = "0";
         psi.Environment["GPDFORGE_AUTO_PROFILES"] = "0";
+        psi.Environment[GpdForge.SystemControl.DataRoot.OverrideVariable] = _dataDir;
 
         _process = Process.Start(psi);
         if (_process is null) return;
@@ -95,6 +113,24 @@ public sealed class DaemonUnderTest : IDisposable
         }
     }
 
+    /// <summary>
+    /// Writes one alert of every severity through the real <see cref="AlertStore"/> rather than by
+    /// hand-authoring alerts.json. Hand-authoring would mean encoding the store's naming policy and
+    /// enum handling in a second place, and a seed that drifts out of that format loads as zero
+    /// alerts — which looks exactly like a clean machine and re-creates the blind spot this seeding
+    /// exists to remove.
+    /// </summary>
+    private static void SeedAlerts(string dataDir)
+    {
+        var store = new AlertStore(dataDir);
+        store.Publish(AlertCategory.Thermal, AlertSeverity.Info, "Seeded info",
+            "Contract fixture — deterministic input for the shape checks.");
+        store.Publish(AlertCategory.Hardware, AlertSeverity.Aviso, "Seeded warning",
+            "Contract fixture — deterministic input for the shape checks.");
+        store.Publish(AlertCategory.Service, AlertSeverity.Critica, "Seeded critical",
+            "Contract fixture — deterministic input for the shape checks.");
+    }
+
     public void Dispose()
     {
         Client.Dispose();
@@ -104,10 +140,28 @@ public sealed class DaemonUnderTest : IDisposable
             _process?.Dispose();
         }
         catch { /* the daemon is a child of this test run; nothing survives it that matters */ }
+
+        // Best-effort: a leftover temp directory is noise, not a failure, and throwing here would
+        // turn a cleanup problem into a red suite.
+        try { if (Directory.Exists(_dataDir)) Directory.Delete(_dataDir, recursive: true); }
+        catch { /* the daemon may still hold a handle; %TEMP% is cleaned by the OS anyway */ }
     }
 }
 
-public class ApiStartupTests(DaemonUnderTest daemon) : IClassFixture<DaemonUnderTest>
+/// <summary>
+/// Shares ONE daemon across every class that needs it. It has to be a collection fixture rather than
+/// a class fixture: xUnit constructs a class fixture per class, and the daemon binds a fixed port, so
+/// the second class to run would get a daemon that could not listen — reported as twenty unrelated
+/// assertion failures rather than as "the port was taken".
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class DaemonCollection : ICollectionFixture<DaemonUnderTest>
+{
+    public const string Name = "the daemon under test";
+}
+
+[Collection(DaemonCollection.Name)]
+public class ApiStartupTests(DaemonUnderTest daemon)
 {
     /// <summary>
     /// Every route a client depends on. Adding an endpoint means adding it here — the list is the

@@ -625,8 +625,7 @@ builder.Services.AddSingleton<GuardianService>();
 builder.Services.AddSingleton<IAlertClock, SystemAlertClock>();
 builder.Services.AddSingleton<AlertStore>(sp =>
 {
-    var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge");
-    return new AlertStore(root, sp.GetRequiredService<IAlertClock>());
+    return new AlertStore(DataRoot.Current, sp.GetRequiredService<IAlertClock>());
 });
 builder.Services.AddSingleton<AlertService>();
 
@@ -655,8 +654,7 @@ builder.Services.AddSingleton<PowerSourceState>();
 // takes IFrameRateProbe as a NULLABLE dependency on purpose — when the FPS gate above is closed the
 // probe is unregistered, GetService returns null, and the recorder honestly records nothing rather
 // than inventing sessions out of "a game was probably running" (see core/Sessions/SessionModels.cs).
-builder.Services.AddSingleton(_ => new SessionStore(
-    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge")));
+builder.Services.AddSingleton(_ => new SessionStore(DataRoot.Current));
 builder.Services.AddSingleton(sp => new SessionRecorder(
     sp.GetRequiredService<SessionStore>(),
     sp.GetService<IFrameRateProbe>(),
@@ -673,8 +671,7 @@ bool autoProfiles = Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES")
 // The rule store is registered OUTSIDE that gate: the rules are user-owned data that must stay
 // readable and editable even when nothing is applying them. Turning auto-switching off pauses the
 // feature; it does not delete the user's rules or hide them from the UI.
-builder.Services.AddSingleton<IAppRuleStore>(_ => new AppRuleStore(
-    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GPD Forge")));
+builder.Services.AddSingleton<IAppRuleStore>(_ => new AppRuleStore(DataRoot.Current));
 
 if (autoProfiles)
 {

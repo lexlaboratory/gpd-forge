@@ -21,4 +21,15 @@
     <ProjectReference Include="..\core\GpdForge.Service.csproj" />
   </ItemGroup>
 
+  <!--
+    The API contract is shared with the Playwright suite, which validates the mock daemon against
+    the same file. Copied rather than embedded so both sides read one artefact on disk: two copies
+    of a contract is the failure this file exists to prevent.
+  -->
+  <ItemGroup>
+    <Content Include="..\tests\contract\api-contract.json"
+             Link="api-contract.json"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
