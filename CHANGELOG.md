@@ -5,6 +5,84 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-01
+
+If 0.2.0 was about the app no longer claiming things it had not verified, this one is about the app
+knowing the difference between a measurement and a zero — and about the tests being able to tell.
+
+### The headline
+- **Battery health**: how much of the pack's factory capacity survives, sampled once a day so
+  degradation is a trend rather than a reading. On the reference device, 40,009 of 43,890 mWh — 91.2 %.
+- **A charge guard** that counts the hours spent plugged in and full, and can hold a cooler ceiling
+  while that happens. It cannot stop charging, says so, and now has the evidence to back it.
+- **`gaming-battery`**: a fifth mode, frame-capped at 45 and cooler, for the longest session away
+  from a charger.
+- **A sensor with no reading is `null`, not `0`.** The last place in the app that still invented a
+  number when it could not measure one.
+- **One API contract, checked from both sides** — the real daemon and the mock are each validated
+  against the same file, never against each other.
+
+### What is honest about it
+Two of this release's features are refusals with evidence attached. The charge threshold does not
+exist on this board and [ADR-0004](docs/adr/0004-no-charge-threshold-on-this-board.md) says why, in
+four independent read-only findings. Cycle count and cell temperature report `null` with a stated
+reason rather than the `0` the EC hands over. And the frames-per-watt claim for `gaming-battery` is
+labelled in the roadmap as arithmetic rather than evidence, because nobody has run the game yet.
+
+### Added
+- **`GET /battery/health`** — designed vs full-charge capacity, health percentage, and a degradation
+  trend from daily samples. Cycle count and cell temperature are `null` with reasons: this EC returns
+  0 cycles for a pack that has demonstrably lost 8.8 %, and printing that would put "0 cycles" beside
+  "91 % health" for the user to reconcile. Design capacity is not exposed over WMI at all here, so it
+  comes from `powercfg /batteryreport` once and is cached — it is a factory constant.
+- **`GET`/`POST /battery/charge-guard`** — hours at high state of charge, an alert once per episode,
+  and an opt-in cooler ceiling. `canStopCharging` is a permanent `false` **in the contract** rather
+  than an omission, so no client can be built on the assumption. Lithium ages from time at high
+  charge multiplied by temperature; this attacks the half that is reachable.
+- **`gaming-battery` mode** — 15 W sustained, Tctl 90 (a lower ceiling means the fan spins less, and
+  the fan is part of the ~9 W the system draws before the SoC does anything), Chill, and a 45 fps
+  FRTC cap. The cap is the larger lever: an uncapped game turns every watt it is allowed into frames
+  nobody sees, and this panel reports 60 Hz with no other supported mode. Deliberately not auto-FPS
+  eligible — a cap below an active target is the one pathological pairing.
+- **`core/Profiles/Modes.cs`** — one catalogue for what a mode is. Modes had been enumerated in seven
+  places that did not know about each other; `ModeCatalogueTests` now fails the build when they
+  diverge, including across the TypeScript and mock-daemon boundaries.
+- **`tests/contract/api-contract.json`** plus guards on both sides. A route the daemon gains but
+  nobody declares fails the C# check; declaring it then fails the mock check until the mock
+  implements it.
+- **`tests/desktop/`** — the packaged shell driven through Windows UI Automation: the window opens,
+  the title states whether the daemon is reachable, a webview is mounted, and closing hides to tray
+  instead of exiting.
+- **`GPDFORGE_DATA_DIR`** — run the daemon against isolated state.
+
+### Fixed
+- **Telemetry reports `null` for a sensor it cannot read.** With the hardware gate closed the daemon
+  used to report `cpuTempC: 0, packageW: 0, fanRpm: 0`. A **measured** zero is still reported as
+  zero, so the distinction is per-field: `dischargeW: 0` on AC is true, and `cpuClockMhz` is a real
+  WMI reading.
+- **The thermal guardian says when it cannot see.** This is the dangerous half of that change: in C#
+  `null >= 90` is false, so every threshold would have gone on compiling and quietly deciding "not
+  hot" — and the release path is a comparison too, so a throttle already applied would never have
+  been cleared. It now holds an existing throttle and reports that it is holding one it cannot verify.
+- **`GET /health/check` warns instead of answering `ok`** for a machine whose CPU it cannot read.
+- **A failed battery read no longer announces an emergency.** It returned 0, and the guardian raises
+  CRITICAL below 8 %.
+- **The CSV export writes an empty cell, not a zero**, for an unmeasured sensor. That file outlives
+  the session, and a column of zeros plots a CPU at 0 °C.
+- **The test suite no longer writes to the installed service's state.** `ApiStartupTests` ran against
+  `%ProgramData%\GPD Forge`, so every run read and wrote the machine's real alerts and sessions — and
+  its shape checks silently verified nothing on a clean runner, because the arrays were empty.
+- **`/audit`, `/firmware` and `/standby/hibernate`** shipped in 0.2.0 with no mock behind them, so no
+  E2E test could reach them. Found by the new contract guard on its first run.
+- **The release workflow takes one version's section** of the changelog rather than the whole file.
+
+### Changed
+- The overlay's mode grid wraps to three-and-three. Six modes in one row on a handheld puts every
+  target below the thumb minimum, and that surface is gamepad-first.
+- `docs/ROADMAP.md` reconciled against the tree. Phase 6 had called itself "the single biggest
+  blocker in the project" while every item in it had shipped.
+- Decisions that constrain future work now live in [`docs/adr/`](docs/adr/README.md).
+
 ## [0.2.0] — 2026-08-30
 
 First release with the daemon doing real work on real hardware. The theme, if there is one, is that

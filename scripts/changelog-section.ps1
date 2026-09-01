@@ -90,14 +90,50 @@ Older notes that must not appear.
     # A version that is not there must yield nothing, so the caller can fail loudly.
     if ($null -ne (Get-ChangelogSection -Text $sample -Version '9.9.9')) { $fail += 'invented a missing version' }
 
+    # --- the round trip THROUGH A FILE ------------------------------------------------------------
+    #
+    # Everything above runs on an in-memory string, which is why it never caught the bug that shipped
+    # here: Get-Content defaults to the system ANSI codepage in Windows PowerShell 5.1, so a
+    # UTF-8 CHANGELOG without a BOM came back with every em dash as three Latin-1 characters — and
+    # the output half then wrote that mojibake back out as UTF-8, making it permanent in the body of
+    # the public GitHub release. Found by eye while cutting 0.3.0, not by this self-test.
+    #
+    # A parser test that never touches the disk cannot see an encoding bug. This part does.
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("changelog-selftest-" + [Guid]::NewGuid().ToString('n') + ".md")
+    $out = "$tmp.out"
+    try {
+        $emDash = [char]0x2014
+        $accented = "caf$([char]0xE9)"
+        $utf8Sample = "# Changelog`n`n## [1.2.3] - 2026-01-01`n`nNotes $emDash with punctuation, and $accented.`n"
+        [IO.File]::WriteAllText($tmp, $utf8Sample, [Text.UTF8Encoding]::new($false))
+
+        & $PSCommandPath -Version '1.2.3' -Path $tmp -OutFile $out | Out-Null
+        $round = [IO.File]::ReadAllText($out, [Text.UTF8Encoding]::new($false))
+
+        if ($round -notmatch [regex]::Escape($emDash))   { $fail += 'lost the em dash through a file round trip (encoding)' }
+        if ($round -notmatch [regex]::Escape($accented)) { $fail += 'lost an accented character through a file round trip (encoding)' }
+        if ($round -match ([char]0xE2 + [char]0x20AC))   { $fail += 'produced mojibake through a file round trip' }
+    }
+    finally {
+        Remove-Item $tmp, $out -ErrorAction SilentlyContinue
+    }
+
     if ($fail.Count -gt 0) { Write-Host "SELFTEST_FAIL: $($fail -join '; ')" -ForegroundColor Red; exit 1 }
-    Write-Host "SELFTEST_OK extracted=$($got.Length) chars"
+    Write-Host "SELFTEST_OK extracted=$($got.Length) chars, file round trip preserved non-ASCII"
     exit 0
 }
 
 if (-not $Version) { Write-Host "Specify -Version (or -SelfTest)." -ForegroundColor Red; exit 2 }
 
-$text = Get-Content -Raw -Path $Path
+# Read as UTF-8 EXPLICITLY. Windows PowerShell 5.1 defaults Get-Content to the system ANSI codepage,
+# so a CHANGELOG written in UTF-8 without a BOM comes back with every em dash as three Latin-1
+# characters. The output half then writes that mojibake back out AS UTF-8, making it permanent — and
+# this script generates the body of the public GitHub release. Caught while cutting 0.3.0, with
+# "measurement and a zero â€" and about" already in the extracted notes.
+#
+# [IO.File]::ReadAllText rather than -Encoding utf8: it honours a BOM when present and assumes UTF-8
+# when not, which is exactly the behaviour wanted, and it does not vary between PowerShell editions.
+$text = [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false))
 $section = Get-ChangelogSection -Text $text -Version $Version
 
 if ([string]::IsNullOrWhiteSpace($section)) {
