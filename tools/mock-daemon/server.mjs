@@ -222,6 +222,17 @@ const state = {
     },
     sleepStudyError: null,
   },
+  // Battery health — the reference device's real numbers (2026-09-01): a 43,890 mWh pack that now
+  // holds 40,009, i.e. 91.2 %. Two samples eight months apart so the UI has a trend to render;
+  // a single sample would exercise only the "not enough data" path.
+  batteryHealth: {
+    designedMwh: 43890,
+    fullChargeMwh: 40009,
+    samples: [
+      { atUtc: new Date(Date.now() - 243 * 86_400_000).toISOString(), fullChargeMwh: 41000, healthPercent: 93.4 },
+      { atUtc: new Date(Date.now() - 86_400_000).toISOString(), fullChargeMwh: 40009, healthPercent: 91.2 },
+    ],
+  },
   // Hibernate policy — mirrors core/Standby/HibernatePolicy.cs. The numbers are the ones measured on
   // the reference Win 4 on 2026-08-30: on battery, five minutes to Modern Standby and two full hours
   // of S0 drain before it finally hibernates. `hibernateAvailable` is true and `unavailable` null
@@ -1095,6 +1106,41 @@ const server = http.createServer(async (req, res) => {
     // Read back rather than echo the request: the real endpoint re-reads the registry after writing,
     // because powercfg can accept a value and leave the active scheme unchanged.
     return send(res, 200, state.hibernate)
+  }
+
+  // Battery health — how much of the factory capacity survives. Mirrors core/Battery/BatteryHealth.cs.
+  //
+  // The mock models the NULLS on purpose. cycleCount and cellTemperatureC are unavailable on the
+  // reference board, and a mock that invented plausible values for them would let the UI be built
+  // against data the real daemon never sends — which is the whole failure this contract exists to
+  // prevent. Each null ships with the reason, because a blank field and a broken field look alike.
+  if (method === 'GET' && path === '/battery/health') {
+    const samples = state.batteryHealth.samples
+    const first = samples[0]
+    const last = samples[samples.length - 1]
+    const acrossDays =
+      samples.length >= 2 && new Date(last.atUtc).toDateString() !== new Date(first.atUtc).toDateString()
+
+    return send(res, 200, {
+      designedMwh: state.batteryHealth.designedMwh,
+      fullChargeMwh: state.batteryHealth.fullChargeMwh,
+      healthPercent:
+        Math.round((1000 * state.batteryHealth.fullChargeMwh) / state.batteryHealth.designedMwh) / 10,
+      cycleCount: null,
+      cycleCountUnavailable:
+        "This board's EC does not report cycle count (it returns 0, which would read as an unused pack).",
+      cellTemperatureC: null,
+      cellTemperatureUnavailable: 'No BatteryTemperature instance is exposed on this device.',
+      chemistry: 'Lithium-ion',
+      unavailable: null,
+      degradationPoints: acrossDays
+        ? Math.round((first.healthPercent - last.healthPercent) * 100) / 100
+        : null,
+      trendUnavailable: acrossDays
+        ? null
+        : 'No history yet. GPD Forge records one health sample per day; the trend appears after the second.',
+      samples,
+    })
   }
 
   // Firmware — reports, never flashes. `canAttempt` is false here for the same reason it is false in

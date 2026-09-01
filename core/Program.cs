@@ -560,6 +560,20 @@ builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
 builder.Services.AddSingleton<HibernateService>();
 builder.Services.AddSingleton<GpuDesiredState>();
 
+// Battery health — how much of the pack's factory capacity survives. Not behind the hardware gate:
+// full-charge capacity is a plain WMI read and design capacity comes from `powercfg /batteryreport`,
+// the same trust level as the sleep study. Nothing here writes to the battery, and nothing can —
+// see docs/adr and GET /battery/charge-limit for why a charge threshold is a different matter.
+builder.Services.AddSingleton<IDesignCapacitySource>(sp => new PowercfgDesignCapacitySource(
+    sp.GetRequiredService<IProcessRunner>(),
+    logger: sp.GetService<ILogger<PowercfgDesignCapacitySource>>()));
+builder.Services.AddSingleton<IBatteryHealthProbe>(sp => new WmiBatteryHealthProbe(
+    sp.GetRequiredService<IDesignCapacitySource>(),
+    sp.GetService<ILogger<WmiBatteryHealthProbe>>()));
+builder.Services.AddSingleton<IBatteryHealthStore>(_ => new FileBatteryHealthStore(DataRoot.Current));
+builder.Services.AddSingleton<BatteryHealthHistory>();
+builder.Services.AddHostedService<BatteryHealthSampler>();
+
 // P3.3 — the UMA split stays BIOS-only, but the reading is persisted so a change can be CONFIRMED
 // across a reboot instead of assumed. A read plus a small local file, so not behind the hardware gate.
 //
@@ -1379,6 +1393,38 @@ app.MapPost("/undervolt", (UndervoltRequest req, CurveOptimizerService uv) =>
 
 // Battery budget (minutes left + projections at other TDPs).
 app.MapGet("/battery/budget", (BatteryService b) => Results.Json(b.GetBudget()));
+
+// What the pack can still hold, against what it left the factory with. The values that this board
+// does not expose are null with a stated reason — never a plausible substitute:
+//   cycleCount     the EC returns 0 for a pack that has demonstrably lost capacity, so 0 means
+//                  "not reported". Showing it would print "0 cycles" beside "91 % health".
+//   cellTempC      the BatteryTemperature WMI class has no instances here.
+// See core/Battery/BatteryHealth.cs for the full reasoning.
+app.MapGet("/battery/health", (IBatteryHealthProbe probe, BatteryHealthHistory history) =>
+{
+    var r = probe.Read();
+    return Results.Json(new
+    {
+        designedMwh = r.DesignedMilliwattHours,
+        fullChargeMwh = r.FullChargeMilliwattHours,
+        healthPercent = r.HealthPercent,
+        cycleCount = r.CycleCount,
+        cycleCountUnavailable = r.CycleCount is null
+            ? "This board's EC does not report cycle count (it returns 0, which would read as an unused pack)."
+            : null,
+        cellTemperatureC = r.CellTemperatureC,
+        cellTemperatureUnavailable = r.CellTemperatureC is null
+            ? "No BatteryTemperature instance is exposed on this device."
+            : null,
+        chemistry = r.Chemistry,
+        unavailable = r.Unavailable,
+        degradationPoints = history.DegradationPoints(),
+        trendUnavailable = history.TrendUnavailableReason(),
+        samples = history.Samples()
+            .OrderBy(s => s.AtUtc)
+            .Select(s => new { atUtc = s.AtUtc, fullChargeMwh = s.FullChargeMilliwattHours, healthPercent = s.HealthPercent }),
+    });
+});
 
 // Freezer: suspend/resume background processes (critical processes are protected).
 app.MapGet("/freezer", (FreezerService f) => Results.Json(new { frozen = f.Frozen }));

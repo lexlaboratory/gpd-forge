@@ -292,6 +292,28 @@
     },
     {
       "method": "GET",
+      "path": "/battery/health",
+      "shape": {
+        "designedMwh": "number|null",
+        "fullChargeMwh": "number|null",
+        "healthPercent": "number|null",
+        "cycleCount": "number|null",
+        "cycleCountUnavailable": "string|null",
+        "cellTemperatureC": "number|null",
+        "cellTemperatureUnavailable": "string|null",
+        "chemistry": "string|null",
+        "unavailable": "string|null",
+        "degradationPoints": "number|null",
+        "trendUnavailable": "string|null",
+        "samples": {
+          "type": "array",
+          "items": { "atUtc": "string", "fullChargeMwh": "number|null", "healthPercent": "number|null" }
+        }
+      },
+      "$comment": "Almost everything is nullable and that is the feature, not laxness. cycleCount and cellTemperatureC are null on this board because the EC does not report them, each with a stated reason field — the alternative is printing '0 cycles' next to '91% health' and leaving the user to resolve it."
+    },
+    {
+      "method": "GET",
       "path": "/battery/charge-limit",
       "shape": { "percent": "number", "available": "boolean", "applied": "boolean", "advisory": "string|null" }
     },

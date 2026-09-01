@@ -187,6 +187,7 @@ public class ApiStartupTests(DaemonUnderTest daemon)
         "/firmware",
         "/guardian",
         "/battery/budget",
+        "/battery/health",
         "/history",
         "/alerts",
         "/settings/export",

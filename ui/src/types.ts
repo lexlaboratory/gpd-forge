@@ -32,6 +32,28 @@ export interface HistoryResponse { samples: HistorySample[] }
 
 export interface Preset { stapmW: number; fastW: number; slowW: number; tctlC: number }
 export interface BatteryBudget { minutesRemaining: number | null; remainingWh: number; dischargeW: number; projections: { watts: number; minutes: number }[] }
+
+/**
+ * Battery health. Nearly every field is nullable and that is the design, not laxness: on this board
+ * the EC does not report cycle count (it returns 0, which would read as an unused pack next to a
+ * health figure of 91 %) and exposes no cell temperature at all. Each null carries its own reason
+ * string so the UI can say WHY a value is missing instead of rendering a blank that looks broken.
+ */
+export interface BatteryHealth {
+  designedMwh: number | null
+  fullChargeMwh: number | null
+  healthPercent: number | null
+  cycleCount: number | null
+  cycleCountUnavailable: string | null
+  cellTemperatureC: number | null
+  cellTemperatureUnavailable: string | null
+  chemistry: string | null
+  unavailable: string | null
+  /** Percentage points lost between the oldest and newest sample; null until two days of history. */
+  degradationPoints: number | null
+  trendUnavailable: string | null
+  samples: { atUtc: string; fullChargeMwh: number | null; healthPercent: number | null }[]
+}
 export interface AutoFps { enabled: boolean; targetFps: number }
 export interface Guardian {
   enabled: boolean; autoThrottle: boolean

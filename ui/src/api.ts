@@ -6,7 +6,7 @@
 // relative requests do not stay inside the local shell. Calls throw on failure; callers degrade.
 
 import type {
-  Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
+  Telemetry, ModeId, Job, Standby, Preset, BatteryBudget, BatteryHealth, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
   InferenceHold,
   HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
@@ -86,6 +86,8 @@ export const setFanManualDuty = (manualDuty: number) => json<FanInfo>('/fan', po
 
 // --- battery budget ---
 export const getBudget = () => json<BatteryBudget>('/battery/budget')
+// Health changes over months, so this is fetched once per mount rather than polled.
+export const getBatteryHealth = () => json<BatteryHealth>('/battery/health')
 
 // --- freezer ---
 export const getFrozen = async () => (await json<{ frozen: string[] }>('/freezer')).frozen

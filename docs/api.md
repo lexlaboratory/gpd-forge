@@ -307,6 +307,33 @@ success.
 Runtime estimate from the current discharge rate, plus what-if runtimes at a spread of power levels.
 `minutesRemaining` is `null` on AC (nothing to project).
 
+### `GET /battery/health`  (how much of the pack's factory capacity survives)
+`200 → { designedMwh, fullChargeMwh, healthPercent, cycleCount, cycleCountUnavailable,
+  cellTemperatureC, cellTemperatureUnavailable, chemistry, unavailable, degradationPoints,
+  trendUnavailable, samples: Array<{ atUtc, fullChargeMwh, healthPercent }> }`
+
+`healthPercent` is `fullChargeMwh / designedMwh`. On the reference device: **40,009 of 43,890 mWh —
+91.2 %**, matching `powercfg /batteryreport` exactly.
+
+**Nearly every field is nullable, and that is the design.** Two of the four things anyone wants here
+are not available on this board, and each null carries its own reason string:
+
+- **`cycleCount` is `null`, never `0`.** Both `powercfg` and the `BatteryCycleCount` WMI class report
+  0 for a pack that has demonstrably lost 8.8 % of its capacity — so 0 means "the EC does not keep
+  this number". Reporting it would print *0 cycles* beside *91 % health* and leave the reader to
+  resolve the contradiction.
+- **`cellTemperatureC` is `null`** — the `BatteryTemperature` WMI class has no instances here.
+- **`degradationPoints` is `null` until two samples exist on different days**, with
+  `trendUnavailable` explaining the wait. One reading is a value, not a trend, and this pack loses
+  single-digit percent over *years*, so anything sub-daily is measurement jitter.
+
+Where the numbers come from differs by field, deliberately: full-charge capacity is a live, cheap WMI
+read, while design capacity exists only in `powercfg /batteryreport` (a process spawn and a 76 KB
+report) and is a factory constant — so it is read once and cached to disk.
+
+Nothing here writes to the battery, and nothing can. A charge threshold is a separate matter with no
+verified path on this board — see `GET /battery/charge-limit` above.
+
 ### `GET /freezer`  ·  `POST /freezer/freeze`  ·  `POST /freezer/thaw`
 Suspend/resume background processes to free CPU/RAM during a game or a heavy inference run.
 - `GET → { frozen: string[] }` — process names currently suspended.

@@ -1,8 +1,8 @@
 // GPD Forge UI — System page plus battery budget, power source, backup/restore, guardian, update note. GPL-3.0-or-later.
 import { useEffect, useState, type ChangeEvent } from 'react'
-import type { Telemetry, BatteryBudget, Guardian, PowerSourceConfig, UpdateCheck } from '../types'
+import type { Telemetry, BatteryBudget, BatteryHealth, Guardian, PowerSourceConfig, UpdateCheck } from '../types'
 import {
-  getBudget, getGuardian, setGuardian, getPowerSource, setPowerSource,
+  getBudget, getBatteryHealth, getGuardian, setGuardian, getPowerSource, setPowerSource,
   settingsExportUrl, importSettings, checkUpdate,
 } from '../api'
 import { Frame, Readout, Toggle, Button, Segmented, Badge } from '../components'
@@ -16,6 +16,11 @@ export function SystemPage({ tele }: { tele: Telemetry | null }) {
     <>
       <HealthCard />
       <PanicCoolButton />
+      {/* Here rather than on the Dashboard next to the budget: the budget answers "how long until
+          this dies", which changes minute to minute, while health answers "how much pack is left
+          after two years", which changes over months. Putting a figure that barely moves in a live
+          panel teaches people to stop reading the panel. */}
+      <BatteryHealthCard />
       <Frame title="Power controller" hint={<Badge tone={tele?.tdpVerified ? 'ok' : 'muted'}>{tele?.tdpVerified ? 'TDP verified' : 'TDP unverified'}</Badge>}>
         <p className="muted">GPD Forge yields while another controller runs: it takes over TDP only when it is the sole owner. Use the installer's <code>-Substitute</code> to stop + disable MotionAssistant / GPD Tool.</p>
       </Frame>
@@ -41,6 +46,72 @@ export function BatteryBudgetCard() {
         <div className="bb-main">{b.minutesRemaining}<span className="tile-unit"> min left</span></div>
         <div className="bb-proj">{b.projections.map((p) => <span key={p.watts} className="bb-chip">{p.watts}W → {p.minutes}m</span>)}</div>
       </div>
+    </Frame>
+  )
+}
+
+/**
+ * How much of the pack's factory capacity survives, and how fast it is going.
+ *
+ * Written around what this board WILL NOT tell us. Cycle count and cell temperature are null here
+ * and the card says so with the daemon's own reason rather than hiding the rows — a missing row
+ * looks like a bug, and an invented number is worse than either. The trend is likewise absent until
+ * there are samples from two different days, and it explains itself while it waits.
+ */
+export function BatteryHealthCard() {
+  const [h, setH] = useState<BatteryHealth | null>(null)
+  // Fetched once per mount: capacity moves over months, so polling it would be noise.
+  useEffect(() => { getBatteryHealth().then(setH).catch(() => {}) }, [])
+
+  if (!h) return null
+
+  if (h.unavailable) {
+    return (
+      <Frame title="Battery health">
+        <p className="muted" data-testid="battery-health-unavailable">{h.unavailable}</p>
+      </Frame>
+    )
+  }
+
+  // No health figure means a capacity read failed. Showing the card with a dash is right; showing
+  // "0 %" would announce a dead battery because a WMI query came back empty.
+  const pct = h.healthPercent
+
+  return (
+    <Frame
+      title="Battery health"
+      hint={h.chemistry ? <Badge tone="muted">{h.chemistry}</Badge> : undefined}
+    >
+      <div className="battery-budget" data-testid="battery-health">
+        <div className="bb-main" data-testid="battery-health-pct">
+          {pct == null ? '--' : pct.toFixed(1)}<span className="tile-unit"> % of design</span>
+        </div>
+        <div className="bb-proj">
+          {h.fullChargeMwh != null && h.designedMwh != null && (
+            <span className="bb-chip" data-testid="battery-health-capacity">
+              {(h.fullChargeMwh / 1000).toFixed(1)} of {(h.designedMwh / 1000).toFixed(1)} Wh
+            </span>
+          )}
+          {h.degradationPoints != null && (
+            <span className="bb-chip" data-testid="battery-health-trend">
+              {h.degradationPoints >= 0 ? '−' : '+'}{Math.abs(h.degradationPoints).toFixed(1)} pts
+              {' '}over {h.samples.length} samples
+            </span>
+          )}
+        </div>
+      </div>
+
+      {h.trendUnavailable && (
+        <p className="muted" data-testid="battery-health-trend-pending">{h.trendUnavailable}</p>
+      )}
+      {h.cycleCountUnavailable && (
+        <p className="muted" data-testid="battery-health-cycles-unavailable">
+          Cycle count: not reported. {h.cycleCountUnavailable}
+        </p>
+      )}
+      {h.cycleCount != null && (
+        <p className="muted" data-testid="battery-health-cycles">Cycle count: {h.cycleCount}</p>
+      )}
     </Frame>
   )
 }
