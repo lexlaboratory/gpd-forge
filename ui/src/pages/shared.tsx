@@ -3,6 +3,7 @@ import type { Mode, ModeId, Telemetry } from '../types'
 
 export const MODES: Mode[] = [
   { id: 'gaming',  label: 'Gaming',        icon: '🎮', blurb: 'Auto-TDP to target FPS, reactive fan, OSD.' },
+  { id: 'gaming-battery', label: 'Gaming (battery)', icon: '🎮', blurb: 'Frame-capped at 45 and cooler — the longest session away from a charger.' },
   { id: 'ai',      label: 'Agents / AI',   icon: '🤖', blurb: 'Sustained CPU, VRAM/UMA, anti-standby, local API.' },
   { id: 'windows', label: 'Windows',       icon: '🪟', blurb: 'Balanced power, quiet fan, hotkeys.' },
   { id: 'battery', label: 'Battery',       icon: '🔋', blurb: 'Low TDP floor, longest runtime.' },
@@ -11,7 +12,8 @@ export const MODES: Mode[] = [
 
 // Short, correctly-cased chip labels for the preset keys (so 'ai' shows as 'AI', not 'Ai').
 export const PRESET_LABEL: Record<string, string> = {
-  battery: 'Battery', windows: 'Windows', gaming: 'Gaming', ai: 'AI', standby: 'Standby',
+  battery: 'Battery', windows: 'Windows', gaming: 'Gaming', 'gaming-battery': 'Gaming (batt)',
+  ai: 'AI', standby: 'Standby',
 }
 
 export interface Shared {

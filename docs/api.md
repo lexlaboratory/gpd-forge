@@ -74,8 +74,36 @@ kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
 
 ### `GET /mode`  ·  `POST /mode`
 - `GET  → { active: ModeId }`
-- `POST { name: ModeId } → { active: ModeId }` — switches the active mode (applies its TDP + fan curve).
-  `400` on unknown mode.
+- `POST { name: ModeId } → { active: ModeId, tdp: string, frameCap: string | null }` — switches the
+  active mode (applies its TDP + fan curve). `400` on unknown mode.
+
+`ModeId` is one of `gaming`, `gaming-battery`, `ai`, `windows`, `battery`, `standby`. The catalogue
+lives in `core/Profiles/Modes.cs`, and `ModeCatalogueTests` fails the build if the TypeScript union,
+the UI list or the mock daemon falls behind it.
+
+**`frameCap`** reports what the mode did about the driver-level cap, and is `null` for the modes that
+have no opinion (which is most of them — silently clearing a cap the user set is the same class of
+mistake as silently applying one).
+
+Only `gaming-battery` asks for one today: **45 fps**, which is the larger part of what makes that
+mode work. An uncapped game converts every watt it is allowed into frames nobody sees, and this panel
+reports 60 Hz with no other supported mode; capping stops the work at the source, so the SoC clocks
+down on its own and the TDP ceiling never comes into play.
+
+The cap is requested as **desired state** through the same path as `POST /gpu/frame-cap` — the daemon
+cannot reach ADLX from session 0, so the user-session agent reconciles it (see
+[ADR-0002](adr/0002-adlx-runs-in-a-user-session-agent.md)).
+
+⚠️ **It is checked, not assumed.** If auto-FPS is running with a target above the mode's cap, applying
+it would create the one pathological pairing the API exists to refuse — arriving sideways through a
+mode switch rather than through the endpoint that guards it. The **mode still applies**; only the cap
+is skipped, and `frameCap` says so naming both numbers:
+
+```
+"frameCap": "not applied — A 45 FPS cap sits below the 60 FPS auto-FPS target. Auto-FPS would keep
+raising power to reach a frame rate the driver is holding back, so the machine would run hot for no
+extra frames. Raise the cap, lower the target, or turn one of them off."
+```
 
 ### `POST /tdp`
 `POST { stapmW: number } → { requested: number, observed: number, verified: boolean }`

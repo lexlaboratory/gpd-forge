@@ -109,9 +109,11 @@
         "battery": "object",
         "windows": "object",
         "gaming": "object",
+        "gaming-battery": "object",
         "ai": "object",
         "standby": "object"
-      }
+      },
+      "$comment": "One key per mode in core/Profiles/Modes.cs. ModeCatalogueTests already fails if a mode is missing from the C# preset table, the TypeScript union, the UI list or the mock — this entry adds the wire itself, so a mode cannot reach a release without a preset a client can read."
     },
     {
       "method": "GET",

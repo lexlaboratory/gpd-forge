@@ -1,6 +1,8 @@
 // GPD Forge UI — shared types (mirror of core/Telemetry/TelemetrySnapshot). GPL-3.0-or-later.
 
-export type ModeId = 'gaming' | 'ai' | 'windows' | 'battery' | 'standby'
+// Mirrors core/Profiles/Modes.cs. ModeCatalogueTests fails the build if this union falls behind the
+// C# catalogue — a union that lags means the UI rejects a mode the daemon reports, silently.
+export type ModeId = 'gaming' | 'gaming-battery' | 'ai' | 'windows' | 'battery' | 'standby'
 
 export interface Mode {
   id: ModeId

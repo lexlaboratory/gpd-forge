@@ -114,9 +114,16 @@ public sealed class ForgeWorker(
                     }
                     // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
                     // Without a real FPS source Fps is 0, so this stays inert instead of ramping TDP to max.
-                    else if (autoFps.Enabled && mode.Active == "gaming" && snapshot.Fps > 0)
+                    // ModeCatalogue.AutoFpsEligible, not `== "gaming"`. The literal meant that any
+                    // second gaming-shaped mode either inherited the governor or did not depending on
+                    // its spelling, with nothing anywhere stating which was intended. It matters now:
+                    // `gaming-battery` deliberately does NOT get the governor, because its strategy is
+                    // a driver-level frame CAP, and a cap below an active target is the one
+                    // pathological pairing — the governor climbs forever chasing frames the driver is
+                    // withholding, hot and loud, with no error raised anywhere.
+                    else if (autoFps.Enabled && ModeCatalogue.AutoFpsEligible(mode.Active) && snapshot.Fps > 0)
                     {
-                        var gaming = ModeProfiles.For("gaming") ?? new TdpProfile(25, 33, 28, 95);
+                        var gaming = ModeProfiles.For(mode.Active) ?? new TdpProfile(25, 33, 28, 95);
                         int next = fpsController.NextStapm(autoFps.TargetFps, snapshot.Fps, autoFps.CurrentStapm, minW: 8, maxW: 30);
                         autoFps.CurrentStapm = next;
                         await tdp.ApplyAsync(gaming with { StapmW = next }, stoppingToken);

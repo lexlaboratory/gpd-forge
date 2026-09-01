@@ -110,9 +110,12 @@ body {
    MODES
    ======================================================================== */
 
-.qam-modes { display: flex; gap: var(--gap-tight); }
+/* Wraps since the sixth mode landed. A single row of six on a handheld puts each target below the
+   thumb minimum, and this surface is gamepad- and thumb-first — density here is decided by INPUT,
+   not by viewport width. Three-and-three keeps every square tappable. */
+.qam-modes { display: flex; flex-wrap: wrap; gap: var(--gap-tight); }
 .qam-mode {
-  flex: 1; min-height: var(--tap-min);
+  flex: 1 1 28%; min-height: var(--tap-min);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: var(--space-1); padding: var(--space-2) var(--space-1);
   border: var(--hairline) solid var(--border); border-radius: var(--radius-md);

@@ -884,15 +884,41 @@ app.MapGet("/history/export.csv", (HttpContext ctx, TelemetryHistory history) =>
 
 app.MapGet("/mode", (ModeState m) => Results.Json(new { active = m.Active }));
 
-app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier, CancellationToken ct) =>
+app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier,
+                            GpuDesiredState gpuDesired, AutoFpsState autoFps, CancellationToken ct) =>
 {
     string outcome = "unchanged";
+    string? frameCap = null;
+
     if (!string.IsNullOrWhiteSpace(req.Name))
     {
         m.Active = req.Name!;
         outcome = (await applier.ApplyAsync(m.Active, ct)).ToString();   // apply the mode's TDP (yields if a rival runs)
+
+        // A mode may ask the driver for a frame cap — `gaming-battery` does, and the cap is the
+        // larger part of what makes that mode work. Requested through GpuDesiredState like every
+        // other cap: the daemon records intent and the user-session agent reconciles it, because the
+        // daemon cannot touch ADLX (see docs/adr/0002).
+        if (ModeCatalogue.RecommendedFrameCap(m.Active) is int cap)
+        {
+            // Checked, not assumed. If the user has auto-FPS running with a target above this cap,
+            // applying it would create the one pathological pairing the API exists to refuse —
+            // arriving by the back door of a mode switch rather than through the endpoint that
+            // guards it. The mode still applies; only the cap is skipped, and it says so.
+            var conflict = FrameRateGovernance.Conflict(autoFps.Enabled, autoFps.TargetFps, cap);
+            if (conflict is null)
+            {
+                gpuDesired.RequestFrameCap(cap, DateTimeOffset.UtcNow);
+                frameCap = $"requested {cap} FPS";
+            }
+            else
+            {
+                frameCap = $"not applied — {conflict}";
+            }
+        }
     }
-    return Results.Json(new { active = m.Active, tdp = outcome });
+
+    return Results.Json(new { active = m.Active, tdp = outcome, frameCap });
 });
 
 // Safe today: the wired backend is a stub (no hardware write). Becomes real in #3 behind approval.

@@ -35,6 +35,14 @@ public static class GpuModeProfiles
             // this profile sets nothing else — the exclusion is honoured, not fought.
             ["battery"] = new GpuProfile("Battery", Chill: true),
 
+            // Same reasoning as `battery`: frames-per-watt is the goal, and Chill is the one AMD
+            // feature that genuinely trades one for the other. It excludes Anti-Lag and Boost by
+            // driver rule, which is why nothing else is set here — the exclusion is honoured rather
+            // than fought. The frame cap that does the heavy lifting for this mode is not a Radeon
+            // *profile* setting; it is FRTC, applied through GpuDesiredState when the mode is
+            // selected (see ModeCatalogue.RecommendedFrameCapFps).
+            ["gaming-battery"] = new GpuProfile("Gaming (battery)", Chill: true),
+
             // Inference is compute, not presentation. Anti-Lag and Chill act on the frame pipeline and
             // do nothing for it; leaving them on would only add a variable nobody asked for.
             ["ai"] = new GpuProfile("Agents / AI"),

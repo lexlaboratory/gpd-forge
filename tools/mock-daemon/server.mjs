@@ -22,11 +22,15 @@ const VERSION = JSON.parse(
   readFileSync(resolve(MOCK_DIR, '..', '..', 'ui', 'package.json'), 'utf8')).version
 const MODEL = 'GPD Win 4 (G1618-04) · Ryzen AI 9 HX 370'
 
-const MODES = new Set(['gaming', 'ai', 'windows', 'battery', 'standby'])
+// Mirrors core/Profiles/Modes.cs. ModeCatalogueTests reads THIS FILE and fails if a mode in the C#
+// catalogue is missing here — without that guard, a new mode ships, every E2E test that selects it
+// gets a 400 from the mock, and the failure reads like a UI bug.
+const MODES = new Set(['gaming', 'gaming-battery', 'ai', 'windows', 'battery', 'standby'])
 const PROFILES = [
   { id: 'battery', label: 'Battery', stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
   { id: 'windows', label: 'Windows', stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
   { id: 'gaming', label: 'Gaming', stapmW: 25, fastW: 33, slowW: 28, tctlC: 95 },
+  { id: 'gaming-battery', label: 'Gaming (battery)', stapmW: 15, fastW: 20, slowW: 17, tctlC: 90 },
   { id: 'ai', label: 'Agents / AI', stapmW: 25, fastW: 25, slowW: 25, tctlC: 90 },
   { id: 'standby', label: 'Standby Doctor', stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
 ]
@@ -181,10 +185,19 @@ const state = {
       frameRateCap: { supported: true, enabled: false, value: 60, min: 15, max: 1000 },
     },
   },
+  // An EIGHTH copy of the mode list, found on 2026-09-01 by the contract guard after the other seven
+  // had been consolidated: `PROFILES` above is what POST /mode reads, and this is what GET /profiles
+  // serves. They were separate, so updating one left the other stale.
+  //
+  // Kept as literal data rather than derived from PROFILES on purpose — the mock is meant to be
+  // readable at a glance, and the two guards cover the risk between them: ModeCatalogueTests checks
+  // MODES against the C# catalogue, and tests/contract/api-contract.json checks THIS object, since
+  // it declares one key per mode.
   presets: {
     battery: { stapmW: 8, fastW: 12, slowW: 10, tctlC: 90 },
     windows: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
     gaming:  { stapmW: 25, fastW: 33, slowW: 28, tctlC: 95 },
+    'gaming-battery': { stapmW: 15, fastW: 20, slowW: 17, tctlC: 90 },
     ai:      { stapmW: 25, fastW: 25, slowW: 25, tctlC: 90 },
     standby: { stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
   },

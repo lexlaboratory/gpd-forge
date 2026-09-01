@@ -19,6 +19,9 @@ import { useSpatialNav } from './hooks/useSpatialNav'
 
 const QMODES: { id: ModeId; icon: string; label: string }[] = [
   { id: 'gaming', icon: '🎮', label: 'Gaming' },
+  // The mode most worth having HERE: it is chosen mid-session, away from a desk, at the moment
+  // someone notices the battery — which is exactly the situation the overlay exists for.
+  { id: 'gaming-battery', icon: '🔌', label: 'Gaming (batt)' },
   { id: 'ai', icon: '🤖', label: 'AI' },
   { id: 'windows', icon: '🪟', label: 'Windows' },
   { id: 'battery', icon: '🔋', label: 'Battery' },

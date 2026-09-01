@@ -18,17 +18,14 @@ public static class ModeProfiles
     /// The default preset below is already flat, but nothing was <i>keeping</i> it flat: a single
     /// POST to /profiles/ai reintroduced boost, because Set clamps ranges without flattening.
     /// </summary>
-    public const string SustainedMode = "ai";
+    public const string SustainedMode = ModeCatalogue.Ai;
 
-    // Mutable so the UI can tune presets live (like MotionAssistant's per-profile TDP).
-    public static readonly Dictionary<string, TdpProfile> Map = new()
-    {
-        ["battery"] = new(StapmW: 8,  FastW: 12, SlowW: 10, TctlC: 90),
-        ["windows"] = new(StapmW: 15, FastW: 20, SlowW: 17, TctlC: 92),
-        ["gaming"]  = new(StapmW: 25, FastW: 33, SlowW: 28, TctlC: 95),
-        ["ai"]      = new(StapmW: 25, FastW: 25, SlowW: 25, TctlC: 90),  // sustained: fast ≈ slow ≈ stapm
-        ["standby"] = new(StapmW: 15, FastW: 20, SlowW: 17, TctlC: 92),
-    };
+    // Mutable so the UI can tune presets live (like MotionAssistant's per-profile TDP), but SEEDED
+    // from ModeCatalogue rather than from a second hand-written list. A preset table that did not
+    // know about the catalogue is how a mode could exist with a GPU profile and no TDP preset — or
+    // the reverse — with nothing to catch it.
+    public static readonly Dictionary<string, TdpProfile> Map =
+        ModeCatalogue.All.ToDictionary(m => m.Id, m => m.DefaultTdp, StringComparer.OrdinalIgnoreCase);
 
     public static TdpProfile? For(string mode) =>
         Map.TryGetValue(mode, out var p) ? (mode == SustainedMode ? Shape(p) : p) : null;

@@ -5,12 +5,12 @@ public static class AppRulePolicy
 {
     public const int MaxMatchLength = 120;
 
-    // "standby" is a ModeProfiles preset for a system state, not something a foreground app should
-    // ever be able to select — a rule that put the machine into standby mode on focus would be a
-    // trap. The remaining four are the usage modes the UI offers.
-    private static readonly string[] Modes = ["battery", "windows", "gaming", "ai"];
-
-    public static IReadOnlyList<string> SelectableModes => Modes;
+    // "standby" is a preset for a system state, not something a foreground app should ever be able
+    // to select — a rule that put the machine into standby mode on focus would be a trap. That
+    // exclusion now lives on the mode itself (ModeDefinition.SelectableByAppRule) instead of in a
+    // second hand-maintained list here, which had to be edited in step with the first one and,
+    // being a list of what is ALLOWED, failed closed and silently when it was not.
+    public static IReadOnlyList<string> SelectableModes => ModeCatalogue.SelectableIds;
 
     /// <summary>Canonical form of a process fragment: trimmed, lowercase, without a ".exe" tail.</summary>
     public static string Normalize(string? value)
@@ -21,7 +21,7 @@ public static class AppRulePolicy
         return p.Trim();
     }
 
-    public static bool IsValidMode(string? mode) => mode is not null && Modes.Contains(mode, StringComparer.Ordinal);
+    public static bool IsValidMode(string? mode) => mode is not null && SelectableModes.Contains(mode, StringComparer.Ordinal);
 
     public static bool Matches(string? match, string? processName)
     {
@@ -39,7 +39,7 @@ public static class AppRulePolicy
         var needle = Normalize(match);
         if (needle.Length == 0) return "A rule needs a process name to match.";
         if (needle.Length > MaxMatchLength) return $"Process name is too long (max {MaxMatchLength} characters).";
-        if (!IsValidMode(mode)) return $"Unknown mode '{mode}'. Valid modes: {string.Join(", ", Modes)}.";
+        if (!IsValidMode(mode)) return $"Unknown mode '{mode}'. Valid modes: {string.Join(", ", SelectableModes)}.";
         if (existing.Any(r => r.Id != excluding && string.Equals(r.Match, needle, StringComparison.Ordinal)))
             return $"A rule for '{needle}' already exists.";
         return null;
