@@ -9,7 +9,7 @@ A modern, gamepad-native replacement for MotionAssistant and GPD Tool — built 
 ![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D6?logo=windows11&logoColor=white)
 ![Core](https://img.shields.io/badge/core-.NET%209-512BD4?logo=dotnet&logoColor=white)
 ![UI](https://img.shields.io/badge/ui-Tauri%202%20%2B%20React-24C8DB?logo=tauri&logoColor=white)
-![Status](https://img.shields.io/badge/status-Phase%201%3A%20core%20working-2ea44f)
+![Status](https://img.shields.io/badge/status-v0.2.0%20released-2ea44f)
 
 ![GPD Forge dashboard](docs/preview.png)
 
@@ -38,8 +38,10 @@ so your own automation can drive the device.
 - **Least privilege at the metal.** The default telemetry path is **driverless (WMI)**. Anything that
   needs a kernel driver (package watts, temps, TDP, EC fan) is **opt-in behind `GPDFORGE_ENABLE_HARDWARE`
   + elevation**. Target for that path is **PawnIO** (signed modules in a restricted VM), not `WinRing0`.
-  *Current status:* the optional richer sensors ride on LibreHardwareMonitor, which today loads a Ring0
-  (WinRing0-family) driver; the PawnIO migration is tracked in `docs/ROADMAP.md` (driver decision log).
+  *Current status:* **EC access already runs on PawnIO** (`core/Fan/PawnIoEcPort.cs`, using the module
+  embedded in LibreHardwareMonitorLib — no separate install). The optional richer **sensors** still ride
+  on LibreHardwareMonitor's Ring0-family driver; migrating that half too is the remaining target. The
+  decision and its consequences: [`docs/adr/0001`](docs/adr/0001-pawnio-over-winring0-for-ec-access.md).
 - **Zero visual & functional defects.** Every change passes a verification gate: build → types → lint →
   tests (≥80%) → security, plus **Playwright** E2E against the web UI (or computer-use on the real GPD).
 
@@ -93,10 +95,19 @@ See [`docs/CREDITS.md`](docs/CREDITS.md) and [`NOTICE`](NOTICE) for the full att
 
 ## Status
 
-**Phase 1 — core working.** Real telemetry, a verified closed-loop TDP engine (confirmed on a Ryzen AI 9
-HX 370), focus-process auto-profiles, a local API, and a desktop app all build and pass tests
-(core unit tests + Playwright E2E). Fan control and some subsystems are still gated or in progress —
-see [`docs/ROADMAP.md`](docs/ROADMAP.md).
+**v0.2.0 — released 2026-08-30.** Running on real hardware: verified closed-loop TDP (confirmed on a
+Ryzen AI 9 HX 370), EC fan read and control through PawnIO with hysteresis curves, AMD Radeon profiles
+and a real frame cap (FRTC) applied per app, standby measurement and hibernate policy, focus-process
+auto-profiles, an audit log of every hardware write, a local API, an MCP server, and a gamepad-native
+desktop app and overlay.
+
+Hardware writes stay **opt-in behind gates** (`GPDFORGE_ENABLE_HARDWARE`, and fan control behind a
+second one). Controller remapping is **blocked on a measured fact** — the pad exposes no HID feature
+reports on this device — and firmware flashing is **refused by design**.
+
+What is open, blocked, dropped, or awaiting triage is tracked in one place:
+[`docs/ROADMAP.md` § *Open, blocked, and dropped*](docs/ROADMAP.md#open-blocked-and-dropped).
+Decisions that constrain future work: [`docs/adr/`](docs/adr/README.md).
 
 ## License
 
