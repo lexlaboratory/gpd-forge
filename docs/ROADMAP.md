@@ -361,6 +361,8 @@ The sequenced plan for what comes next is
 | Resident overlay hotkey bound to a Home button | Phase 5 | The listener scripts exist and are installable; the WinControls binding does not. |
 | ~~Packaged-shell E2E~~ | done 2026-08-31 | `tests/desktop/` — pywinauto/UIA over the installed binary. Scope is the window layer only: UIA cannot see the WebView2 DOM. **Skips on CI** (no installation there), so it is a post-install check, not a CI gate. |
 | ~~Mock↔daemon contract parity~~ | done 2026-08-31 | `tests/contract/api-contract.json` is the arbiter; the real daemon and the mock are each validated against it, never against each other. |
+| 🔴 Telemetry reports **0**, not `null`, for sensors it cannot read | *(new, found 2026-08-31)* | With `GPDFORGE_ENABLE_HARDWARE=0` the daemon returns `cpuTempC: 0`, `packageW: 0`, `fanRpm: 0`. A CPU at 0 °C is a plausible, confident, wrong number — the exact failure this project removed from `GET /standby`, where unmeasurable values became `null` rather than invented. The UI cannot distinguish "cold" from "unmeasured". Fixing it changes what the panel shows on any machine without the gate open, so it is a product decision, not a silent patch. |
+| Run the UI against the real daemon | *(deferred, with reasons)* | Attempted 2026-08-31 and **not viable as planned**: against a gates-closed daemon every sensor reads 0, so an assert demanding "a digit, not `--`" passes without proving anything; against the installed daemon the specs mutate real TDP and fan state. Worth doing as a read-only subset once the zero-vs-null item above is settled — the two are the same problem. |
 
 ## Blocked — and by what, precisely
 
