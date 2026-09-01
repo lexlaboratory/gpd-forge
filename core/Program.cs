@@ -1451,9 +1451,11 @@ app.MapGet("/battery/charge-guard", (ChargeGuardService guard) =>
             : (double?)null,
         canStopCharging = false,
         advisory =
-            "GPD Forge cannot stop charging on this board: the threshold is an EC/BIOS value with no " +
-            "verified driverless path on the G1618-04, and guessing an EC register for a charge " +
-            "controller on hardware with no vendor recovery is not a risk worth taking. What this " +
+            "GPD Forge cannot stop charging on this board, and this is measured rather than assumed " +
+            "(docs/adr/0004): no vendor tool implements a charge limit, ACPI declares no _BMC/_BMD, " +
+            "and the EC fields that look like a threshold are never referenced by any firmware " +
+            "method. Guessing an EC register for a charge controller on hardware with no vendor " +
+            "recovery is not a risk worth taking. What this " +
             "does instead is measure the ageing pattern and, if you enable it, keep the machine " +
             "cooler while the pack sits full — lithium ages from time at high charge multiplied by " +
             "temperature, and temperature is the half that is reachable from here.",

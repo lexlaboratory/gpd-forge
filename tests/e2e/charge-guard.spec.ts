@@ -19,9 +19,12 @@ test.describe('Charge guard', () => {
     await expect(advisory).toBeVisible()
     await expect(advisory).toContainText('cannot stop charging')
 
-    // And it says WHY, so the limitation reads as a measured fact about the board rather than as
-    // something GPD Forge chose not to bother with.
-    await expect(advisory).toContainText('EC/BIOS')
+    // And it cites EVIDENCE, so the limitation reads as a measured fact about the board rather than
+    // as something GPD Forge chose not to bother with. ADR-0004 records the four read-only findings:
+    // no vendor tool implements it, ACPI declares no _BMC/_BMD, _BTP only notifies, and the EC fields
+    // that look like a threshold are never referenced by any firmware method.
+    await expect(advisory).toContainText('measured rather than assumed')
+    await expect(advisory).toContainText('_BMC/_BMD')
   })
 
   test('counts the hours spent plugged in at high charge', async ({ page }) => {
