@@ -24,6 +24,7 @@ a future session, seeing only the code, be tempted to undo it? ADR-0002 exists p
 | [0002](0002-adlx-runs-in-a-user-session-agent.md) | ADLX runs in a user-session agent, and the daemon never holds a handle | accepted |
 | [0003](0003-firmware-assistant-reports-and-refuses.md) | The firmware assistant reports and refuses; `canAttempt` is permanently false | accepted |
 | [0004](0004-no-charge-threshold-on-this-board.md) | There is no charge threshold on the G1618-04, and here is the evidence | accepted |
+| [0005](0005-no-api-token-origin-allowlist-instead.md) | The local API has no token; an Origin allowlist is the boundary | accepted |
 
 ## Format
 

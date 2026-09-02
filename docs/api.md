@@ -6,7 +6,15 @@ tests can run before the C# service exists — it is the reference the C# `Api/`
 
 ## Transport & security
 - Bind **localhost only** by default: `http://127.0.0.1:8787`. Remote access (over the tailnet) is opt-in.
-- Auth: bearer token for HTTP; ACL for the named pipe. The mock skips auth (localhost, dev).
+- **Auth: none, deliberately** — see [ADR-0005](adr/0005-no-api-token-origin-allowlist-instead.md).
+  The boundary is loopback binding plus an **Origin allowlist** (the Tauri shell and the Vite
+  dev/preview ports; the panel and overlay are same-origin and need no entry).
+  ⚠️ That stops a web page the user visited — the vector that genuinely existed, since the policy was
+  `AllowAnyOrigin` until 2026-09-02 and any site could `POST /tdp` and read `GET /audit`. It does
+  **nothing** against a local process, which can still reach `127.0.0.1:8787` with `curl`. Accepted
+  knowingly: a process running as the user could read any token we handed the clients.
+  🔴 This line used to promise "bearer token for HTTP; ACL for the named pipe". Neither has ever
+  existed in `core/`, and the named pipe is recorded as dropped in the roadmap.
 - Live telemetry: **the daemon polls only** — clients `GET /telemetry` on a timer (the UI does 1 Hz).
   There is no streaming endpoint in production. The mock implements SSE at `/telemetry/stream` for
   convenience, but no client consumes it.
