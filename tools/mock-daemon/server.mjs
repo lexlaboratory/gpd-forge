@@ -132,9 +132,6 @@ const state = {
   refresh: { current: 60, supported: [48, 60] },
   night: { on: false, warmth: 0 },
   tablet: { raw: null }, // null = ConvertibilityEnabled not set (default OS chassis detection)
-  // Test-only seam; see telemetry(). Reached through a `_test-` prefixed route so it can never be
-  // mistaken for product surface, and the contract guard skips those by name.
-  blindTelemetry: false,
   // Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer. The mock
   // presents all three as controllable/available so the UI/E2E can exercise a full round-trip —
   // the real daemon (see core/Led, core/Battery, core/Undervolt) stays honestly gated/advisory.
@@ -340,12 +337,18 @@ function simulateTuneSweep(minW, maxW, tempCapC) {
   return points
 }
 
-function telemetry() {
+function telemetry(blind = false) {
   // Test-only: makes every sensor report null, the way the real daemon does with no hardware access.
   // Without this seam the mock always produces numbers, so no E2E test would ever see the UI render
   // its placeholder — and the whole point of the 2026-09-01 nullable migration is what the panel
   // shows when a sensor cannot be read. A guard nobody can exercise is not a guard.
-  if (state.blindTelemetry) {
+  //
+  // ⚠️ PER-REQUEST, not a server flag. It was a flag for exactly one day and it leaked twice over:
+  // this suite is serial and shares one mock daemon, and unmeasured.spec.ts sorts immediately before
+  // visual.spec.ts. Worse, the /telemetry route pushes every reading into the shared history ring,
+  // so blind samples ended up in the Monitor page's chart and moved the visual baselines. Both
+  // failures vanish when the flag cannot outlive the request that asked for it.
+  if (blind) {
     return {
       cpuTempC: null, gpuTempC: null, packageW: null, cpuClockMhz: null,
       fanRpm: null, fanDutyPct: null, fps: null, fps1PctLow: null,
@@ -680,14 +683,12 @@ const server = http.createServer(async (req, res) => {
   if (method === 'POST' && path === '/alerts/ack-all') { const n = state.alerts.filter((a) => !a.acknowledged).length; state.alerts.forEach((a) => { a.acknowledged = true }); return send(res, 200, { acknowledged: n }) }
   if (method === 'POST' && path.match(/^\/alerts\/[^/]+\/ack$/)) { const a = state.alerts.find((x) => x.id === path.split('/')[2]); if (!a || a.acknowledged) return err(res, 404, 'not_found', 'alert not found or already acknowledged'); a.acknowledged = true; return send(res, 200, { acknowledged: true, id: a.id }) }
   if (method === 'DELETE' && path.startsWith('/alerts/')) { const id = path.slice('/alerts/'.length); const n = state.alerts.length; state.alerts = state.alerts.filter((a) => a.id !== id); return state.alerts.length < n ? send(res, 204, null) : err(res, 404, 'not_found', 'alert not found') }
-  if (method === 'POST' && path === '/telemetry/_test-blind') {
-    const body = await readBody(req)
-    state.blindTelemetry = Boolean(body?.blind)
-    return send(res, 200, { blind: state.blindTelemetry })
-  }
   if (method === 'GET' && path === '/telemetry') {
-    const t = telemetry()
-    pushHistory(t)
+    const blind = url.searchParams.get('_test_blind') === '1'
+    const t = telemetry(blind)
+    // A blind reading is never recorded: history is shared state, and null samples in the ring
+    // outlive the request and repaint the Monitor chart for every later spec.
+    if (!blind) pushHistory(t)
     return send(res, 200, t)
   }
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })

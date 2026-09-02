@@ -148,6 +148,58 @@ public class ModeCatalogueTests
             "support a mode with no way to pick it.");
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // The four copies the first version of this guard did not cover.
+    //
+    // On 2026-09-01 the mode list was consolidated into ModeCatalogue and this file was written to
+    // stop it scattering again. It checked types.ts, shared.tsx and the mock daemon — and MISSED four
+    // more, every one of which was still on five modes a day later. The guard was written to prevent
+    // exactly the drift it then allowed, which is worse than having no guard: it produced confidence.
+    //
+    // Data-driven now, so adding a fifth surface is a row rather than a method.
+    // ---------------------------------------------------------------------------------------------
+
+    public static TheoryData<string, string, string> ModeListSurfaces => new()
+    {
+        // file, a marker that must be present (fails loudly if the shape changed), how a mode appears
+        { "mcp/server.mjs",                "const MODES = [",        "'{0}'" },
+        { "scripts/forge-hotkeys.ps1",     "$modes = @(",            "'{0}'" },
+        { "ui/src/pages/ProfilesPage.tsx", "FALLBACK_MODES",         "'{0}'" },
+        { "ui/src/CommandPalette.tsx",     "MODE_IDS",               "'{0}'" },
+    };
+
+    [Theory]
+    [MemberData(nameof(ModeListSurfaces))]
+    public void Every_mode_list_outside_the_catalogue_stays_in_step(string relativePath, string marker, string format)
+    {
+        var source = ReadRepoFile(relativePath.Split('/'));
+
+        // The guard's own guard: if the declaration is renamed, this must fail LOUDLY rather than
+        // scan a file that no longer contains what it thinks it does and report success.
+        Assert.True(source.Contains(marker, StringComparison.Ordinal),
+            $"{relativePath} no longer contains '{marker}'. The list was renamed or moved, so this " +
+            "check is scanning for something that is not there and proves nothing until it is fixed.");
+
+        // Two of these surfaces carry SELECTABLE modes only, and both for the same reason standby is
+        // excluded from AppRulePolicy: it is a system state applied by the resume restore, not
+        // something a person picks.
+        //   forge-hotkeys.ps1  — cycling into standby with a keystroke would be a trap.
+        //   ProfilesPage.tsx   — it is the fallback for which modes a per-app RULE may select, which
+        //                        is what its own comment says. The first version of this test demanded
+        //                        all six here and went red; the file was right and the test was wrong.
+        var selectableOnly = relativePath.EndsWith("forge-hotkeys.ps1", StringComparison.Ordinal)
+                          || relativePath.EndsWith("ProfilesPage.tsx", StringComparison.Ordinal);
+        var expected = selectableOnly ? ModeCatalogue.SelectableIds : ModeCatalogue.Ids;
+
+        var missing = expected
+            .Where(id => !source.Contains(string.Format(format, id), StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(missing.Count == 0,
+            $"{relativePath} is missing: {string.Join(", ", missing)}. " +
+            "A mode the daemon supports that this surface does not offer is invisible to whoever uses it.");
+    }
+
     /// <summary>Walks up to the repository root, anchored on Directory.Build.props — the same
     /// approach ProgramRoutes uses, and it throws loudly rather than returning empty.</summary>
     private static string ReadRepoFile(params string[] relative)

@@ -466,16 +466,25 @@ public class JobsStateAntiStandbyTests
     }
 
     [Fact]
-    public void Adding_a_running_job_engages_anti_standby()
+    public void Adding_a_running_job_does_NOT_engage_anti_standby()
     {
+        // Inverted on 2026-09-02, and the old assertion is why this is worth spelling out: this test
+        // used to require the opposite, so it PINNED THE BUG. JobsState.Add engaged a hold, and the
+        // only release is Finish, which nothing calls — so one POST /jobs kept Windows awake for the
+        // rest of the service's uptime and silently defeated the Standby Doctor.
+        //
+        // Observed on the live daemon before the change: holders 0 -> 1, still 1 after twenty
+        // seconds, and POST /ai/anti-standby {enable:false} could not clear it.
+        //
+        // A hold is only taken where a release is guaranteed. Today that is the manual toggle.
         var sink = new FakeSink();
         var anti = new AntiStandbyService(sink);
         var jobs = new JobsState(anti);
 
         jobs.Add("infer batch", null, "running");
 
-        Assert.Equal(1, anti.HolderCount);
-        Assert.Equal(1, sink.Engaged);
+        Assert.Equal(0, anti.HolderCount);
+        Assert.Equal(0, sink.Engaged);
     }
 
     [Fact]
@@ -492,23 +501,26 @@ public class JobsStateAntiStandbyTests
     }
 
     [Fact]
-    public void Two_running_jobs_ref_count_independently()
+    public void Holds_ref_count_independently_and_only_the_edges_touch_the_sink()
     {
+        // Was written against JobsState.Add/Finish, which no longer takes holds (see above). The
+        // ref-counting itself is correct, valuable and worth keeping under test — so it is tested
+        // where it actually lives instead of through a trigger that was removed. Testing a mechanism
+        // through a caller that no longer calls it is how a test ends up asserting nothing.
         var sink = new FakeSink();
         var anti = new AntiStandbyService(sink);
-        var jobs = new JobsState(anti);
 
-        var a = jobs.Add("job a", null, "running");
-        var b = jobs.Add("job b", null, "running");
+        anti.Start();
+        anti.Start();
 
         Assert.Equal(2, anti.HolderCount);
         Assert.Equal(1, sink.Engaged);   // only the 0->1 edge engages the sink
 
-        jobs.Finish(a.Id);
+        anti.Stop();
         Assert.Equal(1, anti.HolderCount);
-        Assert.Equal(0, sink.Released);  // b still running -> not released yet
+        Assert.Equal(0, sink.Released);  // a holder remains -> not released yet
 
-        jobs.Finish(b.Id);
+        anti.Stop();
         Assert.Equal(0, anti.HolderCount);
         Assert.Equal(1, sink.Released);
     }

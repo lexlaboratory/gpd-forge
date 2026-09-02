@@ -386,6 +386,16 @@ The sequenced plan for what comes next is
   failed once during a full-suite run on 2026-09-01 and passed 3/3 in isolation and on the next full
   run. Recorded rather than ignored: a test that fails at random teaches people to re-run the suite
   instead of reading it, which is how a real failure gets waved through.
+- ✅ **The "flaky" visual `sections` failures were not flaky, and calling them that was wrong.**
+  On 2026-09-02 three consecutive full runs failed a *different* subset of `sections` baselines while
+  every one passed in isolation, and they were dismissed as load-related twice before being
+  diagnosed. The cause was deterministic and self-inflicted: the mock's `_test-blind` seam (added
+  2026-09-01) was **server state**, `unmeasured.spec.ts` sorts immediately before `visual.spec.ts`,
+  and `GET /telemetry` pushes every reading into the shared history ring — so null samples landed in
+  the Monitor chart and repainted the baselines. Fixed by making the seam **per-request**, so it
+  cannot outlive the request that asked for it, and by never recording a blind reading into history.
+  Suite green 140/140. The lesson worth keeping: *"flaky" is a diagnosis, not a label,* and reaching
+  for it is how a deterministic bug survives three encounters.
 
 ## Triage — reported by the daemon, owned by nobody
 
