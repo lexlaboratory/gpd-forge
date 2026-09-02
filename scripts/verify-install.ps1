@@ -47,7 +47,12 @@ Test-Check 'telemetry endpoint returns live values' {
     if ($null -eq $t.cpuTempC) { throw 'response has no cpuTempC field' }
     if ($t.cpuTempC -le 0) { throw "cpuTempC is $($t.cpuTempC) - sensors are not reporting" }
     if ($null -eq $t.batteryPct) { throw 'response has no batteryPct field' }
-    "cpu=$($t.cpuTempC)C pkg=$($t.packageW)W fan=$($t.fanRpm)rpm batt=$($t.batteryPct)% fps=$($t.fps)"
+    # Sensors report null when they cannot be read (see docs/api.md GET /telemetry). PowerShell
+    # renders null as an empty string, so the line came out as "fps=" — which reads like a broken
+    # script rather than an unmeasured sensor. Same rule as everywhere else: say "n/a", never invent.
+    $show = { param($v) if ($null -eq $v) { 'n/a' } else { $v } }
+    "cpu=$(& $show $t.cpuTempC)C pkg=$(& $show $t.packageW)W fan=$(& $show $t.fanRpm)rpm " +
+    "batt=$(& $show $t.batteryPct)% fps=$(& $show $t.fps)"
 }
 
 # 3) the installed shell is a build that knows how to reach the daemon.
