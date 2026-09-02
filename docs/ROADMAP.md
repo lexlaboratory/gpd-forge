@@ -351,9 +351,13 @@ constraint now belongs to the remaining Phase 3 item.
 exists and where. Below is what is actually left. If the two disagree, this section is wrong and the
 tree is right — re-verify before planning against either.
 
-Current baseline: **v0.2.0 published**, phases 0–6 and 8 closed, `origin/main` at `f9d5687`.
-The sequenced plan for what comes next is
-[`superpowers/plans/2026-08-31-post-0.2.0-phase-plan.md`](superpowers/plans/2026-08-31-post-0.2.0-phase-plan.md).
+Current baseline: **v0.3.0 published and installed**, phases 0–6, 8 and G1–G5 closed, `origin/main`
+at `13b2fe3`. The sequenced plan for what comes next is
+[`superpowers/plans/2026-09-01-post-0.3.0-feature-plan.md`](superpowers/plans/2026-09-01-post-0.3.0-feature-plan.md).
+
+*(This line said "v0.2.0 published, origin/main at f9d5687" until 2026-09-02, a day after 0.3.0
+shipped — in the section immediately above that warns this is the role that rots. Noted rather than
+quietly corrected, because it is the second time this file has been wrong about its own status.)*
 
 ## Open — work someone can pick up today
 
@@ -365,6 +369,7 @@ The sequenced plan for what comes next is
 | ~~Mock↔daemon contract parity~~ | done 2026-08-31 | `tests/contract/api-contract.json` is the arbiter; the real daemon and the mock are each validated against it, never against each other. |
 | ~~Charge guard~~ | done 2026-09-01 | `GET`/`POST /battery/charge-guard` — counts hours spent plugged in at high charge, warns once per episode, and optionally holds a cooler ceiling while the pack sits full. **It cannot stop charging and says so**: `canStopCharging` is in the contract as a permanent `false`. Attacks the reachable half of lithium ageing (temperature), since the threshold is an EC/BIOS value with no verified path. Phase G3. |
 | ~~EC charge-threshold research~~ | closed 2026-09-01 | **Not available on this board, with evidence** — [ADR-0004](adr/0004-no-charge-threshold-on-this-board.md). No vendor tool implements it (so nothing to observe), ACPI declares no `_BMC`/`_BMD`, `_BTP` only notifies, and the promising `BCTH`/`BCTL` EC fields appear **once each** — declared and never referenced by any AML method. Closing this as "no" was the defined success condition for Phase G5. |
+| ⚠️ E2E suite fails intermittently, cause unknown | *(open)* | **Reproduced, not diagnosed.** Roughly one run in three fails a *different* handful of tests; three consecutive clean 141/141 runs are normal, then one run failed 49. The signature is the app shell never rendering (`toBeVisible` timeouts) and, in the worst run, `connect ETIMEDOUT 127.0.0.1:8799` against a mock daemon that was **still alive** — so not a crash. Refuted so far: CPU contention (141/141 under deliberate load, *faster*), back-to-back run collision on the preview port (the first run failed and the immediate second passed), the mock dying on an unhandled throw (real, fixed, but it dies with `ECONNREFUSED`, not `ETIMEDOUT`), and ephemeral-port exhaustion (64511-port range, 30 s `TcpTimedWaitDelay`, 5 sockets in `TIME_WAIT`). Deliberately **not** papered over with local retries. Next: capture mock-daemon stdout during a failing run — the harness currently discards it. |
 | ⚠️ Check BIOS setup for a charge threshold | *(open, needs Alex, ~10 min)* | The one remaining lead after ADR-0004, and the cheapest open item in the project. Hold `DEL` at boot. If it exists, the firmware has a path ACPI does not expose and the EC dump-and-diff becomes worth building; if it does not, the question is fully settled. |
 | ~~Gaming-on-battery mode~~ | done 2026-09-01 | `gaming-battery` — 15 W sustained, Tctl 90, Chill, and a **45 fps FRTC cap**, which is the larger part of what makes it work. Not auto-FPS eligible: a cap plus a target is the pathological pairing. Mode lists consolidated into `core/Profiles/Modes.cs` first, with `ModeCatalogueTests` guarding the C#, TypeScript, UI and mock copies. ⚠️ **The frames-per-watt claim is still unmeasured** — see *Open*. Phase G2. |
 | ⚠️ Verify `gaming-battery` against a real game | *(open, needs Alex)* | The preset is derived from measured idle overhead (~9 W) and pack capacity (40 Wh), predicting ~1.6 h against ~1.1 h for `gaming`. That is arithmetic, not evidence. The gate is two equal-length runs of one real game with `/sessions` reporting fps average, 1 % low and battery consumed. If it does not beat `gaming` on frames-per-watt, the numbers get re-derived. |

@@ -74,6 +74,63 @@ public class FanCurveInterpolateTests
         Assert.Equal(0, FanCurve.Interpolate(50, Array.Empty<CurvePoint>()));
     }
 
+    // -------------------------------------------------------------------------------------------
+    // The precondition Interpolate documents, and what it costs when it is false.
+    //
+    // Interpolate's summary says points "must be sorted ascending by TempC — true of the three
+    // curves above". Until 2026-09-02 nothing checked that: it was an invariant asserted in a
+    // comment, held only by the three list literals happening to be written in order.
+    //
+    // There is NO validation to add at a store boundary, because there is no store — CurvePoint is
+    // constructed nowhere but FanCurve.cs, and POST /fan takes a mode and a duty, never a curve. So
+    // the only way this can break is someone editing those literals, and the only useful guard is
+    // one that reads them. Sorting inside Interpolate would be paying every worker tick to defend
+    // against an input that cannot vary at runtime.
+    // -------------------------------------------------------------------------------------------
+
+    public static TheoryData<string> ShippedCurves => new() { "Quiet", "Balanced", "Aggressive" };
+
+    [Theory]
+    [MemberData(nameof(ShippedCurves))]
+    public void Every_shipped_curve_satisfies_the_precondition_Interpolate_documents(string mode)
+    {
+        var points = FanCurve.ForMode(mode);
+        Assert.NotNull(points);
+        Assert.NotEmpty(points!);
+
+        for (int i = 1; i < points!.Count; i++)
+            Assert.True(points[i].TempC > points[i - 1].TempC,
+                $"{mode} point {i} is at {points[i].TempC}°C, not above the previous {points[i - 1].TempC}°C. " +
+                "Interpolate reads these in order and does not sort; see the test below for what that costs.");
+
+        Assert.All(points, p => Assert.InRange(p.Duty, 0, 255));
+
+        // The last point is what every temperature above it clamps to, which on a thermal path means
+        // it is the duty the fan holds at 95°C and at 105°C alike.
+        Assert.Equal(255, points[^1].Duty);
+    }
+
+    [Fact]
+    public void An_out_of_order_curve_silently_caps_the_fan_below_full_when_hot()
+    {
+        // Quiet with only its last two points transposed — a plausible editing slip, and one that
+        // no existing test would have caught: every other case here uses curves already in order.
+        CurvePoint[] slipped =
+        [
+            new(0, 0), new(45, 0), new(50, 55), new(60, 90),
+            new(70, 130), new(80, 190), new(90, 255), new(85, 235),
+        ];
+
+        // Because the clamp for "at or above the last point" reads points[^1] positionally rather
+        // than the hottest point, everything from 85°C upward pins to 235.
+        Assert.Equal(255, FanCurve.Interpolate(99, FanCurve.Quiet));
+        Assert.Equal(235, FanCurve.Interpolate(99, slipped));
+
+        // Not a rounding difference — the fan never reaches full duty at any temperature at all.
+        var hottest = Enumerable.Range(0, 130).Max(t => FanCurve.Interpolate(t, slipped));
+        Assert.Equal(235, hottest);
+    }
+
     [Fact]
     public void Single_point_returns_that_duty_everywhere()
     {

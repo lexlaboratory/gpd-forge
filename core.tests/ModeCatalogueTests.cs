@@ -166,6 +166,12 @@ public class ModeCatalogueTests
         { "scripts/forge-hotkeys.ps1",     "$modes = @(",            "'{0}'" },
         { "ui/src/pages/ProfilesPage.tsx", "FALLBACK_MODES",         "'{0}'" },
         { "ui/src/CommandPalette.tsx",     "MODE_IDS",               "'{0}'" },
+        // Added 2026-09-02, after this file's own `type ModeId` union was found still on five modes
+        // — while prose ninety lines further down in the SAME document listed all six correctly, and
+        // claimed "ModeCatalogueTests fails the build if the TypeScript union ... falls behind it".
+        // It did not: the guard covered ui/src/types.ts, and the doc keeps a second copy of that
+        // union. A document that describes the guard is not covered by it unless it is listed here.
+        { "docs/api.md",                   "type ModeId =",          "'{0}'" },
     };
 
     [Theory]

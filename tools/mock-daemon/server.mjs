@@ -631,7 +631,9 @@ function readBody(req) {
   })
 }
 
-const server = http.createServer(async (req, res) => {
+// The route table. Wrapped by the server below rather than passed to createServer directly — see
+// the comment there for what that cost when it was not.
+async function handle(req, res) {
   const { method } = req
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const path = url.pathname
@@ -1315,6 +1317,37 @@ const server = http.createServer(async (req, res) => {
   }
 
   return err(res, 404, 'not_found', `${method} ${path}`)
+}
+
+/**
+ * One throw used to end the whole run.
+ *
+ * `http.createServer` was handed the async route table directly, with no try/catch anywhere in the
+ * file. An exception in any handler therefore became an unhandled promise rejection, and Node has
+ * terminated the process for those since v15 — so a single bad request did not return a 500, it
+ * killed the daemon. Every test after that point failed against a closed port.
+ *
+ * That is a bad failure to debug because of how it PRESENTS: contract.spec.ts talks to this server
+ * over HTTP, so the visible symptom was 41 simultaneous contract failures — a report that the API
+ * had broken every one of its promises at once, when in fact the API was not running. Observed on
+ * 2026-09-02: 49 failures whose real cause was that the daemon had exited.
+ *
+ * Now a handler throw is a 500 naming the route, and the process says so and stays up.
+ */
+const server = http.createServer(async (req, res) => {
+  try {
+    await handle(req, res)
+  } catch (e) {
+    console.error(`[gpd-forge mock] ${req.method} ${req.url} threw:`, e)
+    if (!res.headersSent) err(res, 500, 'mock_handler_threw', `${req.method} ${req.url}: ${e?.message ?? e}`)
+    else res.end()
+  }
 })
+
+// Last resort. A mock that dies silently mid-suite is indistinguishable from a product that broke,
+// and costs an hour before anyone suspects the harness. Staying up degraded is worth more here than
+// exiting clean: this process only ever serves tests.
+process.on('unhandledRejection', (e) => console.error('[gpd-forge mock] unhandled rejection:', e))
+process.on('uncaughtException', (e) => console.error('[gpd-forge mock] uncaught exception:', e))
 
 server.listen(PORT, '127.0.0.1', () => console.log(`[gpd-forge mock] http://127.0.0.1:${PORT}`))
