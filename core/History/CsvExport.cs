@@ -48,7 +48,9 @@ public static class CsvExport
           .Append(Cell(t.BatteryPct)).Append(',')
           .Append(Cell(t.DischargeW)).Append(',')
           .Append(t.AcConnected ? "true" : "false").Append(',')
-          .Append(t.TdpVerified ? "true" : "false")
+          // Empty for null, same rule as every other unmeasured cell in this export: "we never wrote
+          // a power limit" must not read as "the firmware reverted it".
+          .Append(t.TdpVerified is bool v ? (v ? "true" : "false") : string.Empty)
           .Append('\n');
     }
 

@@ -187,7 +187,7 @@ public class AutoFpsLoopTests
         public TdpProfile Last { get; private set; }
         public int Calls { get; private set; }
 
-        public Task<TdpApplyResult> ApplyAsync(TdpProfile profile, CancellationToken ct)
+        public Task<TdpApplyResult> ApplyAsync(TdpProfile profile, string owner, CancellationToken ct)
         {
             Last = profile;
             Calls++;

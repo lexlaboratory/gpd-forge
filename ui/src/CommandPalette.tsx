@@ -23,7 +23,8 @@ export interface Command {
   run: (arg?: number) => Promise<string>
 }
 
-const MODE_IDS: ModeId[] = ['gaming', 'ai', 'windows', 'battery', 'standby']
+// Mirrors core/Profiles/Modes.cs. ModeCatalogueTests parses this line.
+const MODE_IDS: ModeId[] = ['gaming', 'gaming-battery', 'ai', 'windows', 'battery', 'standby']
 const FAN_MODES = ['auto', 'quiet', 'balanced', 'aggressive']
 
 /** Commands that navigate are supplied by the shell, which owns routing. */

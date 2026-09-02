@@ -64,9 +64,20 @@ public static class FanCurve
     };
 
     /// <summary>
-    /// Piecewise-linear interpolation over <paramref name="points"/> (must be sorted ascending by
-    /// <see cref="CurvePoint.TempC"/> — true of the three curves above). Temps at or below the first
+    /// Piecewise-linear interpolation over <paramref name="points"/>. Temps at or below the first
     /// point, or at or above the last, clamp to that endpoint's duty. Result is always clamped 0..255.
+    ///
+    /// ⚠️ <paramref name="points"/> MUST be sorted ascending by <see cref="CurvePoint.TempC"/>. This
+    /// is not defensive here on purpose — the function runs every worker tick, and there is no store
+    /// of user-authored curves for it to defend against: <see cref="CurvePoint"/> is constructed
+    /// nowhere outside this file, and <c>POST /fan</c> takes a mode and a duty, never a curve.
+    ///
+    /// What it costs when the precondition is false is worth knowing, because it is silent and it
+    /// runs the wrong way. The "at or above the last point" clamp reads <c>points[^1]</c>
+    /// positionally, not the hottest point — so transposing the final two points of Quiet holds the
+    /// fan at 235/255 at every temperature above 85°C, including 99°C, and no existing behaviour
+    /// looks wrong anywhere else. <c>FanCurveInterpolateTests</c> asserts the three curves below
+    /// satisfy this and pins that failure; until 2026-09-02 the invariant lived only in this comment.
     /// </summary>
     public static int Interpolate(double tempC, IReadOnlyList<CurvePoint> points)
     {

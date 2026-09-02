@@ -6,7 +6,15 @@ tests can run before the C# service exists — it is the reference the C# `Api/`
 
 ## Transport & security
 - Bind **localhost only** by default: `http://127.0.0.1:8787`. Remote access (over the tailnet) is opt-in.
-- Auth: bearer token for HTTP; ACL for the named pipe. The mock skips auth (localhost, dev).
+- **Auth: none, deliberately** — see [ADR-0005](adr/0005-no-api-token-origin-allowlist-instead.md).
+  The boundary is loopback binding plus an **Origin allowlist** (the Tauri shell and the Vite
+  dev/preview ports; the panel and overlay are same-origin and need no entry).
+  ⚠️ That stops a web page the user visited — the vector that genuinely existed, since the policy was
+  `AllowAnyOrigin` until 2026-09-02 and any site could `POST /tdp` and read `GET /audit`. It does
+  **nothing** against a local process, which can still reach `127.0.0.1:8787` with `curl`. Accepted
+  knowingly: a process running as the user could read any token we handed the clients.
+  🔴 This line used to promise "bearer token for HTTP; ACL for the named pipe". Neither has ever
+  existed in `core/`, and the named pipe is recorded as dropped in the roadmap.
 - Live telemetry: **the daemon polls only** — clients `GET /telemetry` on a timer (the UI does 1 Hz).
   There is no streaming endpoint in production. The mock implements SSE at `/telemetry/stream` for
   convenience, but no client consumes it.
@@ -14,12 +22,14 @@ tests can run before the C# service exists — it is the reference the C# `Api/`
 
 ## Types (mirror of `ui/src/types.ts` and `core/Telemetry/TelemetrySnapshot`)
 ```ts
-type ModeId = 'gaming' | 'ai' | 'windows' | 'battery' | 'standby'
+type ModeId = 'gaming' | 'gaming-battery' | 'ai' | 'windows' | 'battery' | 'standby'
 
 interface Telemetry {
-  cpuTempC: number; gpuTempC: number; packageW: number; cpuClockMhz: number
-  fanRpm: number; fanDutyPct: number; fps: number; fps1PctLow: number
-  batteryPct: number; dischargeW: number; acConnected: boolean; tdpVerified: boolean
+  cpuTempC: number | null; gpuTempC: number | null; packageW: number | null
+  cpuClockMhz: number | null; fanRpm: number | null; fanDutyPct: number | null
+  fps: number | null; fps1PctLow: number | null
+  batteryPct: number | null; dischargeW: number | null
+  acConnected: boolean; tdpVerified: boolean | null
 }
 
 interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: number; tctlC: number }
@@ -78,7 +88,15 @@ distinguish "nothing is presenting frames" from "PresentMon has no window of dat
 reporting `0` would assert the first when only the second is known. A probe that measures zero
 frames reports `0`.
 
-`acConnected` and `tdpVerified` are not nullable — they are answers the daemon always has.
+`acConnected` is not nullable — mains power is an answer the daemon always has.
+
+`tdpVerified` **is** nullable, and this document claimed the opposite until 2026-09-02: it read
+"`acConnected` and `tdpVerified` are not nullable — they are answers the daemon always has." It was
+not an answer at all. The field was a hardcoded `true` at the single construction site, so with the
+hardware gate closed — where the stub backend echoes back whatever it was handed — the daemon
+reported a verified power limit it had never verified. `null` now means *nothing has written a TDP
+yet, or the backend cannot report a readback*, which is a different claim from `false` (*the write
+was read back and did not match*). Clients must not collapse the two; see `GET /tdp`.
 
 **Two consequences worth knowing**, because the alternative was silent: `GET /health/check` now
 returns `warn` with `telemetry_unavailable` instead of `ok` when it cannot see the CPU, and the
@@ -138,6 +156,44 @@ extra frames. Raise the cap, lower the target, or turn one of them off."
 Applies a sustained TDP through the **closed loop**: the daemon re-reads the PM table. If the firmware
 reverted the limit, `verified:false` and `observed` reflects what actually held (this is the honest
 behavior that replaces MotionAssistant's blind 30s re-apply). `400` if `stapmW` is out of the safe band.
+
+### `GET /audit`  (every hardware write the daemon has made)
+`200 → { capacity: 500, total: number, failed: number, unconfirmed: number,
+writes: Array<{ atUtc: string, subsystem: string, operation: string, detail: string,
+verified: boolean | null }> }`  ·  `?limit=` 1..500, default 100, newest first.
+
+The in-memory record of every write to the silicon: TDP, fan, GPU. `verified` is the readback where
+the subsystem performs one and `null` where it cannot, and `detail` carries the owner of a TDP change
+in brackets (`[thermal-guardian]`), which is the same value `GET /tdp` reports.
+
+Deliberately **in memory and capped at 500** — a write log that filled the single SSD of a handheld
+would be a worse fault than anything it helps diagnose. It does not survive a restart; anything a
+person must still see after a reboot is written to the alert store instead.
+
+⚠️ This endpoint is a complete history of what the daemon did to the hardware, and it was readable
+cross-origin by any website until the CORS allowlist landed on 2026-09-02 (see the top of this
+document). It went undocumented here until the same day, which is how it stayed unexamined.
+
+### `GET /tdp`  (who set the power limit, and did it hold)
+`200 → { stapmW: number | null, owner: string | null, verified: boolean | null, backend: string,
+observedStapmW: number | null, observedPptW: number | null, attempts: number | null,
+atUtc: string | null, note: string | null }`
+
+The provenance of the last TDP write. Every field is null and `note` explains why when nothing has
+written a limit since the service started — a fresh daemon has no last write, and reporting `0 W`
+or `verified: false` for that would be inventing an event.
+
+- `owner` — which subsystem made the write, one of `mode`, `manual`, `panic`, `thermal-guardian`,
+  `charge-guard`, `auto-fps`, `tuner`, `restore`, `resume-restore` (`GpdForge.Tdp.TdpOwner`). Ten
+  call sites write TDP; before 2026-09-02 none of them recorded which, so "why did my wattage
+  change" had no answer. `ITdpController.ApplyAsync` now requires the owner, which is what keeps
+  this list complete — a new writer does not compile without one.
+- `verified` — the closed-loop readback for that write. `null` means the backend cannot report one.
+- `backend` — `ryzenadj` or `stub`. **`stub` means no power limit was actually applied to hardware**;
+  the stub echoes back whatever it was handed, so a `verified: true` from it attests to nothing.
+  This is the distinction `GET /telemetry`'s `tdpVerified` hid while it was a hardcoded `true`.
+
+The same owner is written into the `GET /audit` line for the change.
 
 ### `POST /panic`  (Panic cool — safety)
 `200 → { applied: boolean, stapmW: 8 }` — immediately applies a flat 8 W floor TDP profile
@@ -489,20 +545,47 @@ clears once temps recover; on battery it raises low/critical alerts. Throttle ac
 `200 → { status: 'ok'|'warn'|'critical', issues: Array<{ level: string, code: string, message: string }> }`
 Pure rules (`GpdForge.Health.HealthCheck.Evaluate`, unit-tested exhaustively) evaluated against a REAL
 live telemetry snapshot — never a hardware write, purely diagnostic. `status` is the max severity
-across `issues` (`ok` when empty). Rules today: fan reads 0 rpm while `cpuTempC` is above 70 °C → warn
-(this literally catches a parked-fan-while-warm state); `cpuTempC >= 95` → critical; `!tdpVerified` →
-warn (firmware silently reverting TDP); on battery with `dischargeW > 30` → warn (high discharge). The
+across `issues` (`ok` when empty). Rules today, by the `code` each emits:
+- `telemetry_unavailable` → warn — `cpuTempC` is null, so the two thermal rules below cannot run at
+  all. Reported rather than skipped: a health check that cannot measure and answers `ok` is worse
+  than one that answers nothing.
+- `fan_not_spinning` → warn — fan reads 0 rpm while `cpuTempC` is above 70 °C (this literally catches
+  a parked-fan-while-warm state). Requires a real rpm reading; a null fan source does not fire it.
+- `thermal_critical` → critical — `cpuTempC >= 95`.
+- `tdp_not_holding` → warn — `tdpVerified` is **`false`** (firmware silently reverting TDP). Not
+  `!tdpVerified`: null means nothing has written a limit yet, and warning about a write that never
+  happened would fire on every freshly started daemon.
+- `high_discharge` → warn — on battery with `dischargeW > 30`.
+
+The
 System page's health card polls this and shows a green "All good" when `issues` is empty, or the
 issue list colored by severity otherwise.
 
-### `POST /jobs`  ·  `GET /jobs/:id`  ·  `GET /jobs`  (Agents / AI mode)
+### `POST /jobs`  ·  `GET /jobs`  (Agents / AI mode)
+
+> ⚠️ **This endpoint records jobs. It does not run them.** There is no executor and no scheduler in
+> the daemon: `cmd` is checked for emptiness, stored, and never passed to a process. Read the rest of
+> this section as a description of a registry, not a queue.
+
 - `POST { cmd: string, constraints?: { requireAC?: boolean, maxTempC?: number, window?: string } }`
-  `→ { id: string, status: 'queued' | 'running' | 'done' | 'blocked' }`
-  The scheduler runs the job only while its constraints hold (AC connected, under temp, inside the time
-  window); otherwise `blocked`. This is how an external agent says "run this batch only on AC, under 80 °C,
-  between 02:00–07:00".
-- `GET /jobs/:id → { id, status, cmd, startedAt?, finishedAt?, log: string[] }`
-- `GET /jobs → Array<...>`
+  `→ { id: string, status: 'running' | 'blocked' }`
+  `requireAC` is evaluated **once**, at POST time, against a live telemetry read: on battery the job
+  is recorded as `blocked`, otherwise `running`. `maxTempC` and `window` are accepted and discarded —
+  `JobsState.Add` takes the constraints as `_`. Status never changes afterwards, because nothing
+  advances it.
+- `GET /jobs → Array<{ id: string, cmd: string, status: string }>`
+
+**What this document claimed until 2026-09-02**, all of it false: a `GET /jobs/:id` route (no such
+route is registered); fields `startedAt`, `finishedAt` and `log: string[]` on the job (the record is
+`Job(Id, Cmd, Status)` — those three fields have never existed); statuses `queued` and `done` (only
+`running` and `blocked` are ever produced, and `Finish`, which would set `done`, has no callers); and
+a scheduler that "runs the job only while its constraints hold", offered with the example *"run this
+batch only on AC, under 80 °C, between 02:00–07:00"* — two of those three constraints are discarded
+and the batch is never run at all.
+
+The one real behaviour this endpoint used to have was a bug: a `running` job took an anti-standby
+hold that nothing could release, silently defeating the Standby Doctor for the remaining uptime of
+the service. That was removed on 2026-09-02; see the comment on `JobsState.Add`.
 
 ### `GET /ai`  ·  `GET /ai/inference-hold`  ·  `POST /ai/anti-standby`  ·  `POST /ai/vram`  (Agents / AI mode — anti-standby, sustained profile, VRAM/UMA)
 - `GET /ai → { antiStandby: { active: boolean, holders: number, manual: boolean }, sustainedProfile:
@@ -752,4 +835,4 @@ read-only HTTP call, not a hardware/BIOS write).
 `{ error: { code: string, message: string } }` with the appropriate HTTP status.
 
 ## Versioning
-`GET /health.version` carries the contract version. Breaking changes bump the major and are noted here.
+The `version` field of `GET /health` carries the contract version. Breaking changes bump the major and are noted here.

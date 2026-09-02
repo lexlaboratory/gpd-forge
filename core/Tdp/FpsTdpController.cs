@@ -145,7 +145,7 @@ public sealed class AutoFpsLoop
         int nextStapm = _controller.NextStapm(targetFps, measured, current.StapmW, _opt.MinW, _opt.MaxW);
 
         TdpProfile applied = current with { StapmW = nextStapm };
-        TdpApplyResult result = await _tdp.ApplyAsync(applied, ct);
+        TdpApplyResult result = await _tdp.ApplyAsync(applied, TdpOwner.AutoFps, ct);
 
         _logger?.LogDebug(
             "auto-fps: target={Target:F1} measured={Measured:F1} stapm {Old}W->{New}W verified={Verified}",

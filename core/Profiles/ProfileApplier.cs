@@ -28,7 +28,7 @@ public sealed class ProfileApplier(
             return ApplyOutcome.SkippedConflict;
         }
 
-        var r = await tdp.ApplyAsync(profile.Value, ct);
+        var r = await tdp.ApplyAsync(profile.Value, TdpOwner.Mode, ct);
         logger?.LogInformation("Applied '{Mode}' TDP: STAPM {W}W -> {Verdict}",
             mode, profile.Value.StapmW, r.Verified ? "verified" : "UNVERIFIED");
 

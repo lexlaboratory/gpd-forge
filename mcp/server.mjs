@@ -15,7 +15,10 @@ import { createInterface } from 'node:readline'
 const BASE = process.env.GPDFORGE_API || 'http://127.0.0.1:8787'
 const NAME = 'gpd-forge'
 const VERSION = '0.1.0'
-const MODES = ['gaming', 'ai', 'windows', 'battery', 'standby']
+// Mirrors core/Profiles/Modes.cs. ModeCatalogueTests parses THIS LINE and fails the build if a
+// mode in the C# catalogue is missing here — it was missing `gaming-battery` for a day because
+// the guard only covered three of the seven copies.
+const MODES = ['gaming', 'gaming-battery', 'ai', 'windows', 'battery', 'standby']
 
 // --- tiny HTTP client against the daemon ---
 async function api(path, method = 'GET', body) {
@@ -44,7 +47,7 @@ const tools = [
   },
   {
     name: 'get_mode',
-    description: 'The active power mode (gaming | ai | windows | battery | standby).',
+    description: 'The active power mode (gaming | gaming-battery | ai | windows | battery | standby).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     call: () => api('/mode'),
   },

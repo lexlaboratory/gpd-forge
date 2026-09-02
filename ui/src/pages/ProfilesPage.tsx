@@ -10,7 +10,8 @@ import { useToast } from '../Toast'
 
 // Only used before the first response arrives (or while the daemon is down): the daemon is the
 // authority on which modes a rule may select, and it sends them with every ruleset.
-const FALLBACK_MODES: ModeId[] = ['battery', 'windows', 'gaming', 'ai']
+// Mirrors core/Profiles/Modes.cs. ModeCatalogueTests parses this line.
+const FALLBACK_MODES: ModeId[] = ['battery', 'windows', 'gaming', 'gaming-battery', 'ai']
 
 export function MotionAssistantImportCard() {
   const toast = useToast()

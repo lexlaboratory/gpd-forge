@@ -132,9 +132,13 @@ const state = {
   refresh: { current: 60, supported: [48, 60] },
   night: { on: false, warmth: 0 },
   tablet: { raw: null }, // null = ConvertibilityEnabled not set (default OS chassis detection)
-  // Test-only seam; see telemetry(). Reached through a `_test-` prefixed route so it can never be
-  // mistaken for product surface, and the contract guard skips those by name.
-  blindTelemetry: false,
+  // Last TDP write with its provenance — see core/Tdp/TdpState.cs. Seeded as a mode-applied write
+  // that verified, which is the common case; POST /tdp and POST /mode overwrite it below.
+  lastTdp: {
+    stapmW: 15, owner: 'mode', verified: true, backend: 'ryzenadj',
+    observedStapmW: 15, observedPptW: 20, attempts: 1,
+    atUtc: new Date(Date.now() - 30_000).toISOString(),
+  },
   // Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer. The mock
   // presents all three as controllable/available so the UI/E2E can exercise a full round-trip —
   // the real daemon (see core/Led, core/Battery, core/Undervolt) stays honestly gated/advisory.
@@ -340,12 +344,18 @@ function simulateTuneSweep(minW, maxW, tempCapC) {
   return points
 }
 
-function telemetry() {
+function telemetry(blind = false) {
   // Test-only: makes every sensor report null, the way the real daemon does with no hardware access.
   // Without this seam the mock always produces numbers, so no E2E test would ever see the UI render
   // its placeholder — and the whole point of the 2026-09-01 nullable migration is what the panel
   // shows when a sensor cannot be read. A guard nobody can exercise is not a guard.
-  if (state.blindTelemetry) {
+  //
+  // ⚠️ PER-REQUEST, not a server flag. It was a flag for exactly one day and it leaked twice over:
+  // this suite is serial and shares one mock daemon, and unmeasured.spec.ts sorts immediately before
+  // visual.spec.ts. Worse, the /telemetry route pushes every reading into the shared history ring,
+  // so blind samples ended up in the Monitor page's chart and moved the visual baselines. Both
+  // failures vanish when the flag cannot outlive the request that asked for it.
+  if (blind) {
     return {
       cpuTempC: null, gpuTempC: null, packageW: null, cpuClockMhz: null,
       fanRpm: null, fanDutyPct: null, fps: null, fps1PctLow: null,
@@ -621,7 +631,9 @@ function readBody(req) {
   })
 }
 
-const server = http.createServer(async (req, res) => {
+// The route table. Wrapped by the server below rather than passed to createServer directly — see
+// the comment there for what that cost when it was not.
+async function handle(req, res) {
   const { method } = req
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const path = url.pathname
@@ -680,15 +692,27 @@ const server = http.createServer(async (req, res) => {
   if (method === 'POST' && path === '/alerts/ack-all') { const n = state.alerts.filter((a) => !a.acknowledged).length; state.alerts.forEach((a) => { a.acknowledged = true }); return send(res, 200, { acknowledged: n }) }
   if (method === 'POST' && path.match(/^\/alerts\/[^/]+\/ack$/)) { const a = state.alerts.find((x) => x.id === path.split('/')[2]); if (!a || a.acknowledged) return err(res, 404, 'not_found', 'alert not found or already acknowledged'); a.acknowledged = true; return send(res, 200, { acknowledged: true, id: a.id }) }
   if (method === 'DELETE' && path.startsWith('/alerts/')) { const id = path.slice('/alerts/'.length); const n = state.alerts.length; state.alerts = state.alerts.filter((a) => a.id !== id); return state.alerts.length < n ? send(res, 204, null) : err(res, 404, 'not_found', 'alert not found') }
-  if (method === 'POST' && path === '/telemetry/_test-blind') {
-    const body = await readBody(req)
-    state.blindTelemetry = Boolean(body?.blind)
-    return send(res, 200, { blind: state.blindTelemetry })
-  }
   if (method === 'GET' && path === '/telemetry') {
-    const t = telemetry()
-    pushHistory(t)
+    const blind = url.searchParams.get('_test_blind') === '1'
+    const t = telemetry(blind)
+    // A blind reading is never recorded: history is shared state, and null samples in the ring
+    // outlive the request and repaint the Monitor chart for every later spec.
+    if (!blind) pushHistory(t)
     return send(res, 200, t)
+  }
+  // What TDP is in force and WHO set it. Mirrors core/Tdp/TdpState.cs. The mock reports a real
+  // backend name because the point of the field is that a stub must be visible — a mock that always
+  // said "ryzenadj" would let a UI ship that never renders the stub case.
+  if (method === 'GET' && path === '/tdp') {
+    const last = state.lastTdp
+    if (!last) {
+      return send(res, 200, {
+        stapmW: null, owner: null, verified: null, backend: null,
+        observedStapmW: null, observedPptW: null, attempts: null, atUtc: null,
+        note: 'No TDP write has happened since the daemon started.',
+      })
+    }
+    return send(res, 200, { ...last, note: null })
   }
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
 
@@ -1293,6 +1317,37 @@ const server = http.createServer(async (req, res) => {
   }
 
   return err(res, 404, 'not_found', `${method} ${path}`)
+}
+
+/**
+ * One throw used to end the whole run.
+ *
+ * `http.createServer` was handed the async route table directly, with no try/catch anywhere in the
+ * file. An exception in any handler therefore became an unhandled promise rejection, and Node has
+ * terminated the process for those since v15 — so a single bad request did not return a 500, it
+ * killed the daemon. Every test after that point failed against a closed port.
+ *
+ * That is a bad failure to debug because of how it PRESENTS: contract.spec.ts talks to this server
+ * over HTTP, so the visible symptom was 41 simultaneous contract failures — a report that the API
+ * had broken every one of its promises at once, when in fact the API was not running. Observed on
+ * 2026-09-02: 49 failures whose real cause was that the daemon had exited.
+ *
+ * Now a handler throw is a 500 naming the route, and the process says so and stays up.
+ */
+const server = http.createServer(async (req, res) => {
+  try {
+    await handle(req, res)
+  } catch (e) {
+    console.error(`[gpd-forge mock] ${req.method} ${req.url} threw:`, e)
+    if (!res.headersSent) err(res, 500, 'mock_handler_threw', `${req.method} ${req.url}: ${e?.message ?? e}`)
+    else res.end()
+  }
 })
+
+// Last resort. A mock that dies silently mid-suite is indistinguishable from a product that broke,
+// and costs an hour before anyone suspects the harness. Staying up degraded is worth more here than
+// exiting clean: this process only ever serves tests.
+process.on('unhandledRejection', (e) => console.error('[gpd-forge mock] unhandled rejection:', e))
+process.on('uncaughtException', (e) => console.error('[gpd-forge mock] uncaught exception:', e))
 
 server.listen(PORT, '127.0.0.1', () => console.log(`[gpd-forge mock] http://127.0.0.1:${PORT}`))

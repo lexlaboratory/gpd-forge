@@ -56,7 +56,9 @@ if (-not $ok) { Write-Error "RegisterHotKey failed (a chord is already taken).";
 $TDP_MIN = 5; $TDP_MAX = 40; $TDP_FALLBACK = 20
 $script:tdp = $null              # unknown until the daemon tells us; never assume a starting wattage
 $script:tdpAt = [datetime]::MinValue
-$modes = @('windows', 'gaming', 'ai', 'battery')
+# Mirrors core/Profiles/Modes.cs (selectable modes only — standby is a system state, not something
+# a hotkey should cycle into). ModeCatalogueTests parses this line.
+$modes = @('windows', 'gaming', 'gaming-battery', 'ai', 'battery')
 
 function Post($path, $body) { try { return Invoke-RestMethod "$Api$path" -Method Post -ContentType 'application/json' -Body ($body | ConvertTo-Json -Compress) -TimeoutSec 4 } catch { return $null } }
 function Get-Mode { try { return (Invoke-RestMethod "$Api/mode" -TimeoutSec 4).active } catch { return 'windows' } }

@@ -64,11 +64,13 @@ Control to refuse. Everything this section listed as blocked has since shipped:
 | The `fan` step of the resume restore | shipped — reaches `IGpdFanController`; verified by effect (`"the EC responded (duty reads 203)"`) |
 | "Sustained" fan curve for AI mode (Phase 3) | **unblocked, not built** — see *Open* at the end of this file |
 
-⚠️ **Still an honest caveat, not a resolved item:** the optional richer telemetry (package watts,
-temps) goes through LibreHardwareMonitor, which loads a **Ring0-family** driver when
-`GPDFORGE_ENABLE_HARDWARE=1`. The **default** telemetry path is driverless WMI. Moving that half to
-PawnIO too remains the target — and it is the surface that has to be ruled out for the
-`DPC_WATCHDOG_VIOLATION` bugcheck of 2026-08-28.
+🔴 **This paragraph used to say the opposite, and it was wrong.** It claimed the optional richer
+telemetry "goes through LibreHardwareMonitor, which loads a Ring0-family driver", and that moving it
+to PawnIO "remains the target". Checked against the pinned binary on 2026-09-01: the shipped
+`LibreHardwareMonitorLib.dll` contains **zero** references to `WinRing0`, `Ring0`, `KernelDriver`,
+`OpenLibSys` or `InpOut`, no `.sys` resource, and ships the `PawnIo.RyzenSMU` / `PawnIo.AMDFamily17`
+modules. **Upstream already moved to PawnIO.** The claim was carried forward from the 2026-08-25
+decision note and never re-verified. See [ADR-0001 § Consequences](adr/0001-pawnio-over-winring0-for-ec-access.md).
 - [x] `Telemetry/` read-only via WMI (battery/AC/discharge/clock/thermal-zone) — verified on device
 - [x] `Telemetry/` package power + fan RPM (broker) + FPS (Intel PresentMon, `GPDFORGE_ENABLE_FPS=1`)
 - ⛔ `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify — **blocked on a measured fact,
@@ -349,9 +351,13 @@ constraint now belongs to the remaining Phase 3 item.
 exists and where. Below is what is actually left. If the two disagree, this section is wrong and the
 tree is right — re-verify before planning against either.
 
-Current baseline: **v0.2.0 published**, phases 0–6 and 8 closed, `origin/main` at `f9d5687`.
-The sequenced plan for what comes next is
-[`superpowers/plans/2026-08-31-post-0.2.0-phase-plan.md`](superpowers/plans/2026-08-31-post-0.2.0-phase-plan.md).
+Current baseline: **v0.3.0 published and installed**, phases 0–6, 8 and G1–G5 closed, `origin/main`
+at `13b2fe3`. The sequenced plan for what comes next is
+[`superpowers/plans/2026-09-01-post-0.3.0-feature-plan.md`](superpowers/plans/2026-09-01-post-0.3.0-feature-plan.md).
+
+*(This line said "v0.2.0 published, origin/main at f9d5687" until 2026-09-02, a day after 0.3.0
+shipped — in the section immediately above that warns this is the role that rots. Noted rather than
+quietly corrected, because it is the second time this file has been wrong about its own status.)*
 
 ## Open — work someone can pick up today
 
@@ -363,6 +369,7 @@ The sequenced plan for what comes next is
 | ~~Mock↔daemon contract parity~~ | done 2026-08-31 | `tests/contract/api-contract.json` is the arbiter; the real daemon and the mock are each validated against it, never against each other. |
 | ~~Charge guard~~ | done 2026-09-01 | `GET`/`POST /battery/charge-guard` — counts hours spent plugged in at high charge, warns once per episode, and optionally holds a cooler ceiling while the pack sits full. **It cannot stop charging and says so**: `canStopCharging` is in the contract as a permanent `false`. Attacks the reachable half of lithium ageing (temperature), since the threshold is an EC/BIOS value with no verified path. Phase G3. |
 | ~~EC charge-threshold research~~ | closed 2026-09-01 | **Not available on this board, with evidence** — [ADR-0004](adr/0004-no-charge-threshold-on-this-board.md). No vendor tool implements it (so nothing to observe), ACPI declares no `_BMC`/`_BMD`, `_BTP` only notifies, and the promising `BCTH`/`BCTL` EC fields appear **once each** — declared and never referenced by any AML method. Closing this as "no" was the defined success condition for Phase G5. |
+| ⚠️ E2E suite fails intermittently, cause unknown | *(open)* | **Reproduced, not diagnosed.** Roughly one run in three fails a *different* handful of tests; three consecutive clean 141/141 runs are normal, then one run failed 49. The signature is the app shell never rendering (`toBeVisible` timeouts) and, in the worst run, `connect ETIMEDOUT 127.0.0.1:8799` against a mock daemon that was **still alive** — so not a crash. Refuted so far: CPU contention (141/141 under deliberate load, *faster*), back-to-back run collision on the preview port (the first run failed and the immediate second passed), the mock dying on an unhandled throw (real, fixed, but it dies with `ECONNREFUSED`, not `ETIMEDOUT`), and ephemeral-port exhaustion (64511-port range, 30 s `TcpTimedWaitDelay`, 5 sockets in `TIME_WAIT`). Deliberately **not** papered over with local retries. Next: capture mock-daemon stdout during a failing run — the harness currently discards it. |
 | ⚠️ Check BIOS setup for a charge threshold | *(open, needs Alex, ~10 min)* | The one remaining lead after ADR-0004, and the cheapest open item in the project. Hold `DEL` at boot. If it exists, the firmware has a path ACPI does not expose and the EC dump-and-diff becomes worth building; if it does not, the question is fully settled. |
 | ~~Gaming-on-battery mode~~ | done 2026-09-01 | `gaming-battery` — 15 W sustained, Tctl 90, Chill, and a **45 fps FRTC cap**, which is the larger part of what makes it work. Not auto-FPS eligible: a cap plus a target is the pathological pairing. Mode lists consolidated into `core/Profiles/Modes.cs` first, with `ModeCatalogueTests` guarding the C#, TypeScript, UI and mock copies. ⚠️ **The frames-per-watt claim is still unmeasured** — see *Open*. Phase G2. |
 | ⚠️ Verify `gaming-battery` against a real game | *(open, needs Alex)* | The preset is derived from measured idle overhead (~9 W) and pack capacity (40 Wh), predicting ~1.6 h against ~1.1 h for `gaming`. That is arithmetic, not evidence. The gate is two equal-length runs of one real game with `/sessions` reporting fps average, 1 % low and battery consumed. If it does not beat `gaming` on frames-per-watt, the numbers get re-derived. |
@@ -384,15 +391,28 @@ The sequenced plan for what comes next is
   failed once during a full-suite run on 2026-09-01 and passed 3/3 in isolation and on the next full
   run. Recorded rather than ignored: a test that fails at random teaches people to re-run the suite
   instead of reading it, which is how a real failure gets waved through.
+- ✅ **The "flaky" visual `sections` failures were not flaky, and calling them that was wrong.**
+  On 2026-09-02 three consecutive full runs failed a *different* subset of `sections` baselines while
+  every one passed in isolation, and they were dismissed as load-related twice before being
+  diagnosed. The cause was deterministic and self-inflicted: the mock's `_test-blind` seam (added
+  2026-09-01) was **server state**, `unmeasured.spec.ts` sorts immediately before `visual.spec.ts`,
+  and `GET /telemetry` pushes every reading into the shared history ring — so null samples landed in
+  the Monitor chart and repainted the baselines. Fixed by making the seam **per-request**, so it
+  cannot outlive the request that asked for it, and by never recording a blind reading into history.
+  Suite green 140/140. The lesson worth keeping: *"flaky" is a diagnosis, not a label,* and reaching
+  for it is how a deterministic bug survives three encounters.
 
 ## Triage — reported by the daemon, owned by nobody
 
 `GET /standby` has been returning these since the sleep study shipped. Neither is confirmed to be
 ours; both are ours to rule out.
 
-- **Bugcheck `0x133` (`DPC_WATCHDOG_VIOLATION`), 2026-08-28.** A driver held a DPC too long. This
-  project loads a Ring0-family driver through LibreHardwareMonitor when hardware access is enabled
-  (see [ADR-0001](adr/0001-pawnio-over-winring0-for-ec-access.md) § Consequences).
+- **Bugcheck `0x133` (`DPC_WATCHDOG_VIOLATION`), 2026-08-28.** A driver held a DPC too long.
+  ⚠️ **The stated reason for investigating this was wrong** and is corrected here: it said "this
+  project loads a Ring0-family driver through LibreHardwareMonitor", and the pinned LHM loads no such
+  thing (see [ADR-0001](adr/0001-pawnio-over-winring0-for-ec-access.md) § Consequences). That does
+  **not** clear GPD Forge — PawnIO is still a kernel driver, and a DPC watchdog violation still needs
+  an owner — but the triage starts from what the binary actually loads, not from the retired claim.
 - **Failed resume, 2026-08-29.** A 5-hour hibernate whose next event was an abnormal shutdown. No
   crash dump, which places it before Windows takes control.
 

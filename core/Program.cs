@@ -403,7 +403,36 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 
 builder.Services.AddWindowsService(options => options.ServiceName = "GPD Forge");
-builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+// CORS: an explicit allowlist, not AllowAnyOrigin.
+//
+// Until 2026-09-02 this was `AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()`, and the hole was
+// demonstrated against the running service before it was closed: a preflight sent with
+// `Origin: https://evil.example.com` for `POST /tdp` returned 204 with `Access-Control-Allow-Origin: *`
+// and `Access-Control-Allow-Methods: POST`, and `GET /audit` answered 200 with the same header — so
+// any page the user happened to be visiting could set power limits, trigger a panic cool, and READ
+// this machine's hardware audit log, against a daemon running as SYSTEM.
+//
+// ⚠️ What this does NOT do, stated plainly so nobody mistakes it for authentication: CORS is enforced
+// by browsers. It stops "a web page the user visited", which is the vector that existed here. It does
+// nothing about a local process, which can still reach loopback and call every route. Whether that
+// needs a token is a separate decision, recorded rather than assumed — see docs/api.md.
+//
+// The first-party surfaces are NOT in this list because they do not need to be: the panel and the
+// overlay are served by this daemon from wwwroot, so they are same-origin and CORS never applies.
+builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+    .WithOrigins(
+        // The Tauri desktop shell. Its page origin is tauri.localhost, not the daemon's, so the
+        // shell's fetches ARE cross-origin. Both schemes: Windows serves http today, and a WebView2
+        // configuration change to https must not silently break the app.
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        // Development and E2E. Ports are strictPort in ui/vite.config.ts (5188 dev, 4173 preview),
+        // and both host spellings are listed because 127.0.0.1 and localhost are different origins
+        // to CORS — omitting one produces a failure that looks like a bug in the app.
+        "http://localhost:5188", "http://127.0.0.1:5188",
+        "http://localhost:4173", "http://127.0.0.1:4173")
+    .AllowAnyHeader()
+    .AllowAnyMethod()));
 
 // Enums go out as their NAMES, not their ordinals. Without this, System.Text.Json serialized
 // AlertSeverity.Aviso as `1`, while the mock daemon, docs/api.md and ui/src/types.ts all agree the
@@ -492,9 +521,17 @@ else
         new GpdForge.Fan.NoOpGpdFanController(), sp.GetRequiredService<HardwareAuditLog>()));
 }
 
+builder.Services.AddSingleton<TdpState>();
 builder.Services.AddSingleton<ITdpController>(sp => new AuditingTdpController(
     ActivatorUtilities.CreateInstance<ClosedLoopTdpController>(sp),
-    sp.GetRequiredService<HardwareAuditLog>()));
+    sp.GetRequiredService<HardwareAuditLog>(),
+    sp.GetRequiredService<TdpState>(),
+    // The backend NAME travels to the wire because GET /tdp is otherwise unreadable: with the
+    // hardware gate closed StubTdpBackend echoes back whatever it was handed, so every write
+    // "verifies". Reporting verified:true without saying the backend is a stub is a liar with a
+    // timestamp — resolved from the registered backend rather than from the gate variable, so it
+    // describes what is actually wired.
+    sp.GetRequiredService<ITdpBackend>() is StubTdpBackend ? "stub" : "ryzenadj"));
 builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 // Standby Doctor: powercfg diagnostics plus a MEASURED overnight drain. The sampler runs
@@ -928,10 +965,48 @@ app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier
     return Results.Json(new { active = m.Active, tdp = outcome, frameCap });
 });
 
+// What TDP is in force, and WHO put it there.
+//
+// There was no GET /tdp at all until 2026-09-02 — only the POST. So the daemon could report the
+// number through /telemetry and could not answer "which of the ten writers set it", which is the
+// difference between a reading and a fact. A handheld sitting at 12 W looks the same whether the
+// thermal guardian is protecting it, the charge guard is cooling it, or a mode preset simply says so.
+app.MapGet("/tdp", (TdpState state) =>
+{
+    var s = state.Last;
+    if (s is not TdpSnapshot last)
+        // Null, not a zeroed row: "nothing has written TDP since this daemon started" is a real
+        // answer and must not be dressed up as 0 W applied by nobody.
+        return Results.Json(new
+        {
+            stapmW = (int?)null, owner = (string?)null, verified = (bool?)null,
+            backend = (string?)null, observedStapmW = (int?)null, observedPptW = (int?)null,
+            attempts = (int?)null, atUtc = (DateTimeOffset?)null,
+            note = "No TDP write has happened since the daemon started.",
+        });
+
+    return Results.Json(new
+    {
+        stapmW = last.Requested.StapmW,
+        owner = last.Owner,
+        // Three-valued, like the audit log: true (read back and matched), false (the firmware
+        // refused), null (no readback was possible).
+        verified = last.Verified,
+        backend = last.Backend,
+        observedStapmW = last.Observed.StapmW,
+        observedPptW = last.Observed.PptW,
+        attempts = last.Attempts,
+        atUtc = last.AtUtc,
+        note = last.Backend == "stub"
+            ? "The hardware gate is closed: the stub backend echoes the request, so 'verified' means the echo matched, not the silicon."
+            : null,
+    });
+});
+
 // Safe today: the wired backend is a stub (no hardware write). Becomes real in #3 behind approval.
 app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, CancellationToken ct) =>
 {
-    var r = await tdp.ApplyAsync(new TdpProfile(req.StapmW, req.StapmW, req.StapmW, 90), ct);
+    var r = await tdp.ApplyAsync(new TdpProfile(req.StapmW, req.StapmW, req.StapmW, 90), TdpOwner.Manual, ct);
     return Results.Json(new { requested = r.Requested.StapmW, observed = r.Observed.StapmW, verified = r.Verified });
 });
 
@@ -942,7 +1017,7 @@ app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, CancellationToken
 app.MapPost("/panic", async (ITdpController tdp, FanState fan, CancellationToken ct) =>
 {
     var floor = new TdpProfile(8, 8, 8, 90);
-    var r = await tdp.ApplyAsync(floor, ct);
+    var r = await tdp.ApplyAsync(floor, TdpOwner.Panic, ct);
     fan.Mode = "Aggressive";
     return Results.Json(new { applied = r.Verified, stapmW = floor.StapmW });
 });
@@ -1771,14 +1846,35 @@ namespace GpdForge.Api
 
         public IReadOnlyList<Job> All { get { lock (_gate) return _jobs.ToArray(); } }
 
+        /// <summary>
+        /// Records a job. Deliberately does NOT take an anti-standby hold — see below.
+        ///
+        /// 🔴 It used to. Until 2026-09-02 a `running` job called <c>antiStandby.Start()</c>, and the
+        /// only thing that releases a hold is <see cref="Finish"/>, which nothing in this codebase
+        /// calls: there is no job executor, jobs resolve their status synchronously on POST /jobs and
+        /// never progress. So every POST /jobs on AC pinned Windows awake for the remaining uptime of
+        /// the service.
+        ///
+        /// Observed on the live daemon before the fix: holders 0 → 1 after one request, still 1
+        /// twenty seconds later, and <c>POST /ai/anti-standby {enable:false}</c> could not clear it —
+        /// there was no route back at all short of restarting the service.
+        ///
+        /// The damage is worse than a stuck counter: it silently defeats the Standby Doctor, which is
+        /// this project's flagship subsystem. A user who ran one job would find their handheld never
+        /// sleeping again and nothing on screen saying why.
+        ///
+        /// The hold/release wiring stays (see <see cref="Finish"/>) because it is correct and tested;
+        /// what is removed is ACQUIRING a hold that nothing can release. A future job runner may call
+        /// Start again — on the same day it can guarantee Finish.
+        /// </summary>
+        /// <param name="_">Constraints are accepted and discarded. Only RequireAC is evaluated, by the
+        /// caller, before this is called. maxTempC and window are documented but not enforced.</param>
         public Job Add(string cmd, JobConstraints? _, string status)
         {
             lock (_gate)
             {
                 var job = new Job($"job-{++_seq}", cmd, status);
                 _jobs.Add(job);
-                if (status == "running" && _holding.Add(job.Id))
-                    antiStandby.Start();
                 return job;
             }
         }

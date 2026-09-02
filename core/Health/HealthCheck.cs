@@ -58,7 +58,11 @@ public static class HealthCheck
                     $"CPU at {temp:0}°C — critical thermal."));
         }
 
-        if (!t.TdpVerified)
+        // `is false`, not `!`. TdpVerified is nullable since 2026-09-02, and null means "nothing has
+        // written TDP yet, or the backend cannot report a readback" — which is not the same claim as
+        // "the firmware reverted the limit". Under `!` a null would raise a warning about a write
+        // that never happened, on every freshly started daemon.
+        if (t.TdpVerified is false)
             issues.Add(new HealthIssue("warn", "tdp_not_holding",
                 "TDP not holding (firmware reverting)."));
 

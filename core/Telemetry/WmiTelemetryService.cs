@@ -14,6 +14,9 @@ public sealed class WmiTelemetryService(
     IHardwareSensors? sensors = null,
     IFanRpm? fanRpmSource = null,
     IFrameRateProbe? frameRateProbe = null,
+    // Optional so every existing test that news this up directly keeps working — and when it is
+    // absent TdpVerified is null, which is the correct answer for "nobody is tracking TDP here".
+    GpdForge.Tdp.TdpState? tdpState = null,
     ILogger<WmiTelemetryService>? logger = null) : ITelemetryService
 {
     public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct)
@@ -60,9 +63,13 @@ public sealed class WmiTelemetryService(
             fps1PctLow = frames.Fps1PctLow;
         }
 
+        // Was `TdpVerified: true` — a literal, on every snapshot, regardless of whether anything had
+        // ever written a power limit or whether the write was confirmed. Now it reports what the last
+        // write actually observed, and null when there has not been one.
         var snapshot = new TelemetrySnapshot(
             cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fanDutyPct,
-            fps, fps1PctLow, batteryPct, dischargeW, acConnected, TdpVerified: true);
+            fps, fps1PctLow, batteryPct, dischargeW, acConnected,
+            TdpVerified: tdpState?.Last?.Verified);
 
         return Task.FromResult(snapshot);
     }

@@ -75,8 +75,24 @@
         "batteryPct": "number|null",
         "dischargeW": "number|null",
         "acConnected": "boolean",
-        "tdpVerified": "boolean"
+        "tdpVerified": "boolean|null"
       }
+    },
+    {
+      "method": "GET",
+      "path": "/tdp",
+      "shape": {
+        "stapmW": "number|null",
+        "owner": "string|null",
+        "verified": "boolean|null",
+        "backend": "string|null",
+        "observedStapmW": "number|null",
+        "observedPptW": "number|null",
+        "attempts": "number|null",
+        "atUtc": "string|null",
+        "note": "string|null"
+      },
+      "$comment": "Every field nullable because 'nothing has written TDP since the daemon started' is a real answer and must not be dressed up as 0 W applied by nobody. `verified` is three-valued like the audit log, and `backend` is on the wire because with the hardware gate closed the stub echoes the request back and therefore 'verifies' every time — reporting verified without the backend would be a liar with a timestamp."
     },
     {
       "method": "GET",
@@ -91,7 +107,7 @@
     {
       "method": "GET",
       "path": "/mode",
-      "shape": { "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "ai", "standby"] } }
+      "shape": { "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "gaming-battery", "ai", "standby"] } }
     },
     {
       "method": "GET",

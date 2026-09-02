@@ -115,7 +115,7 @@ public class StandbyRestoreOrderTests
 
     private sealed class RecordingTdp(List<string> order) : ITdpController
     {
-        public Task<TdpApplyResult> ApplyAsync(TdpProfile profile, CancellationToken ct)
+        public Task<TdpApplyResult> ApplyAsync(TdpProfile profile, string owner, CancellationToken ct)
         {
             order.Add("tdp");
             return Task.FromResult(new TdpApplyResult(profile, new TdpReadout(profile.StapmW, profile.FastW), true, 1));
@@ -313,7 +313,7 @@ public class StandbyServiceTests
 
     private sealed class FakeTdpController(bool verified) : ITdpController
     {
-        public Task<TdpApplyResult> ApplyAsync(TdpProfile profile, CancellationToken ct) =>
+        public Task<TdpApplyResult> ApplyAsync(TdpProfile profile, string owner, CancellationToken ct) =>
             Task.FromResult(new TdpApplyResult(profile, new TdpReadout(profile.StapmW, profile.FastW), verified, 1));
     }
 

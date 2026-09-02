@@ -64,11 +64,23 @@ The read path issues address + read only. **No control writes go through it** wi
 - **Reflection against an `internal` API is a real fragility.** A LibreHardwareMonitorLib upgrade can
   rename the type, the method or the resource. The constructor's descriptive throws are the
   mitigation: the failure is loud and names the missing symbol rather than degrading into "no fan".
-- LibreHardwareMonitor still loads a **Ring0-family driver** for the optional telemetry path
-  (`core/Telemetry/HardwareSensors.cs`). This is an honest caveat, not a resolved item: the default
-  path is WMI, the Ring0 path is gated, and moving that half to PawnIO too remains the target.
-  ⚠️ It is also the reason the `DPC_WATCHDOG_VIOLATION` bugcheck of 2026-08-28 cannot be dismissed
-  without investigation — a driver holding a DPC too long is exactly the failure class this surface
-  can produce.
+- 🔴 **Corrected 2026-09-01, and the original text here was wrong.** This ADR said, on the day it was
+  written, that "LibreHardwareMonitor still loads a Ring0-family driver for the optional telemetry
+  path". That is **false for the version pinned in this repository**. Scanned the shipped
+  `LibreHardwareMonitorLib.dll`: **zero** occurrences of `WinRing0`, `Ring0`, `KernelDriver`,
+  `OpenLibSys` or `InpOut`, no `.sys` resource, and **15** hits for `PawnIo` plus the
+  `PawnIo.RyzenSMU.bin` and `PawnIo.AMDFamily17.bin` modules. The dependency already reads the PM
+  table through PawnIO.
+
+  So "moving that half to PawnIO too" is not a target — it is done, by upstream, and this ADR was
+  claiming otherwise about its own dependency. The claim was inherited from the 2026-08-25 decision
+  note and never re-checked against the pinned binary.
+
+  ⚠️ **This matters beyond tidiness, because the false claim was load-bearing.** The
+  `DPC_WATCHDOG_VIOLATION` triage item in the roadmap rests on it: the reason given for not
+  dismissing the 2026-08-28 bugcheck was "this project loads a Ring0-family driver through LHM". It
+  does not. That does not clear GPD Forge — PawnIO is still a kernel driver and a DPC watchdog
+  violation still needs an owner — but the triage must start from what the binary actually loads,
+  not from this paragraph.
 - Board detection is required before any access: G1618-04 / "Ver.1.0" → WinMax2, `RpmRead 0x0218`
   (`core/Fan/GpdDeviceDb.cs`). A wrong board mapping writes to the wrong EC register.

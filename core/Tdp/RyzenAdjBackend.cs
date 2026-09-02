@@ -63,10 +63,15 @@ public sealed partial class RyzenAdjBackend(
 /// <summary>Pure parser for `ryzenadj --info` output (unit-tested, no process needed).</summary>
 public static partial class RyzenAdjOutput
 {
+    /// <summary>
+    /// Reads the two limits out of `ryzenadj --info`. A label that is not in the output yields
+    /// <c>null</c>, never 0 — see <see cref="TdpReadout"/>. The `?? 0` that used to be here turned a
+    /// missing line into a confident zero-watt reading.
+    /// </summary>
     public static TdpReadout Parse(string info)
     {
-        int stapm = (int)Math.Round(FindValue(info, "STAPM LIMIT") ?? 0);
-        int ppt = (int)Math.Round(FindValue(info, "PPT LIMIT FAST") ?? 0);
+        int? stapm = FindValue(info, "STAPM LIMIT") is double s ? (int)Math.Round(s) : null;
+        int? ppt = FindValue(info, "PPT LIMIT FAST") is double p ? (int)Math.Round(p) : null;
         return new TdpReadout(stapm, ppt);
     }
 

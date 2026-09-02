@@ -33,7 +33,9 @@ export interface Telemetry {
   batteryPct: number | null
   dischargeW: number | null
   acConnected: boolean
-  tdpVerified: boolean
+  /** Null when nothing has written TDP yet, or the backend cannot report a readback. Was a
+   * hardcoded `true` in the daemon until 2026-09-02 — see GET /tdp for the provenance. */
+  tdpVerified: boolean | null
 }
 
 // One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon
