@@ -28,7 +28,7 @@ public class ClosedLoopTdpControllerTests
     public async Task Verifies_when_limit_holds_immediately()
     {
         var backend = new FakeBackend(_ => new TdpReadout(25, 25));
-        var result = await Controller(backend).ApplyAsync(Want, CancellationToken.None);
+        var result = await Controller(backend).ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
 
         Assert.True(result.Verified);
         Assert.Equal(1, result.Attempts);
@@ -40,7 +40,7 @@ public class ClosedLoopTdpControllerTests
     {
         // Firmware caps at 30W and never honors the 25W request → never matches.
         var backend = new FakeBackend(_ => new TdpReadout(30, 30));
-        var result = await Controller(backend, new ClosedLoopTdpController.Options(MaxAttempts: 4)).ApplyAsync(Want, CancellationToken.None);
+        var result = await Controller(backend, new ClosedLoopTdpController.Options(MaxAttempts: 4)).ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
 
         Assert.False(result.Verified);
         Assert.Equal(4, result.Attempts);
@@ -52,7 +52,7 @@ public class ClosedLoopTdpControllerTests
     {
         // Reverts on the first read, holds from the second.
         var backend = new FakeBackend(applies => applies >= 2 ? new TdpReadout(25, 25) : new TdpReadout(18, 18));
-        var result = await Controller(backend).ApplyAsync(Want, CancellationToken.None);
+        var result = await Controller(backend).ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
 
         Assert.True(result.Verified);
         Assert.Equal(2, result.Attempts);
@@ -62,7 +62,7 @@ public class ClosedLoopTdpControllerTests
     public async Task Accepts_readings_within_tolerance()
     {
         var backend = new FakeBackend(_ => new TdpReadout(24, 26)); // ±1 of 25
-        var result = await Controller(backend, new ClosedLoopTdpController.Options(ToleranceW: 1)).ApplyAsync(Want, CancellationToken.None);
+        var result = await Controller(backend, new ClosedLoopTdpController.Options(ToleranceW: 1)).ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
 
         Assert.True(result.Verified);
     }

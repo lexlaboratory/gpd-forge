@@ -249,7 +249,7 @@ public sealed class StandbyService : IStandbyService
             return new("tdp", false, "The TDP backend is the no-hardware stub; no power limit was written.");
         try
         {
-            var result = await _tdp.ApplyAsync(profile.Value, ct);
+            var result = await _tdp.ApplyAsync(profile.Value, TdpOwner.ResumeRestore, ct);
             return result.Verified
                 ? new StandbyRestoreStep("tdp", true, $"STAPM {profile.Value.StapmW} W re-applied and read back.")
                 : new StandbyRestoreStep("tdp", false, $"STAPM {profile.Value.StapmW} W was written but did not read back after {result.Attempts} attempts.");

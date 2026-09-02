@@ -51,20 +51,33 @@ public sealed class AuditingGpdFanController(
 public sealed class AuditingTdpController(
     ITdpController inner,
     HardwareAuditLog audit,
+    TdpState? state = null,
+    string backendName = "unknown",
     Func<DateTimeOffset>? now = null) : ITdpController
 {
     private readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
-    public async Task<TdpApplyResult> ApplyAsync(TdpProfile profile, CancellationToken ct)
+    public async Task<TdpApplyResult> ApplyAsync(TdpProfile profile, string owner, CancellationToken ct)
     {
-        var result = await inner.ApplyAsync(profile, ct);
+        var result = await inner.ApplyAsync(profile, owner, ct);
+        var at = _now();
+
+        // The owner is IN the audit line, not beside it. A log of hardware writes that cannot say
+        // which subsystem asked answers "what happened" and not "why", and on a machine sitting at
+        // 12 W the second question is the one being asked.
         audit.Record(
             "tdp",
             "Apply",
-            $"stapm={profile.StapmW}W fast={profile.FastW}W slow={profile.SlowW}W tctl={profile.TctlC}C "
+            $"[{owner}] stapm={profile.StapmW}W fast={profile.FastW}W slow={profile.SlowW}W tctl={profile.TctlC}C "
             + $"-> observed {result.Observed} after {result.Attempts} attempt(s)",
             result.Verified,
-            _now());
+            at);
+
+        // Recorded here, in the decorator, for the same reason the audit line is: every caller is
+        // covered by construction rather than by remembering.
+        state?.Record(new TdpSnapshot(
+            profile, result.Observed, result.Verified, result.Attempts, owner, backendName, at));
+
         return result;
     }
 }

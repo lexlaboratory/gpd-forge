@@ -40,11 +40,29 @@ public class RyzenAdjBackendTests
     }
 
     [Fact]
-    public void Parse_returns_zero_when_labels_absent()
+    public void Parse_returns_null_when_labels_absent()
     {
+        // Inverted on 2026-09-02, and the old assertion is the point: this test REQUIRED the zero, so
+        // it pinned the defect. A `ryzenadj --info` run with no "STAPM LIMIT" line — the tool missing,
+        // a failed call, a changed output format — produced a confident 0 W reading. Zero watts is not
+        // something a CPU reports; it is the absence of a reading wearing a number.
+        //
+        // It mattered downstream: ClosedLoopTdpController.Holds compares the readback against the
+        // request to decide `verified`, and "we could not read it" is not the same fact as "the
+        // firmware refused the write".
         var readout = RyzenAdjOutput.Parse("no table here");
-        Assert.Equal(0, readout.StapmW);
-        Assert.Equal(0, readout.PptW);
+        Assert.Null(readout.StapmW);
+        Assert.Null(readout.PptW);
+    }
+
+    [Fact]
+    public void Parse_returns_the_value_it_finds_and_null_for_the_one_it_does_not()
+    {
+        // The half that keeps the change honest: a partial read must report the field it HAS.
+        // Collapsing the whole readout to null on one missing label would lose real information.
+        var readout = RyzenAdjOutput.Parse("STAPM LIMIT | 15.000 | stapm limit");
+        Assert.Equal(15, readout.StapmW);
+        Assert.Null(readout.PptW);
     }
 
     [Fact]

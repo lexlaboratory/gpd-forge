@@ -22,7 +22,16 @@ export function SystemPage({ tele }: { tele: Telemetry | null }) {
           panel teaches people to stop reading the panel. */}
       <BatteryHealthCard />
       <ChargeGuardCard />
-      <Frame title="Power controller" hint={<Badge tone={tele?.tdpVerified ? 'ok' : 'muted'}>{tele?.tdpVerified ? 'TDP verified' : 'TDP unverified'}</Badge>}>
+      {/* Three states, not two. `tdpVerified` is nullable since 2026-09-02: null means nothing has
+          written a power limit yet (or the backend cannot report a readback), which is not the same
+          claim as "the firmware reverted it". A freshly started daemon showing "TDP unverified"
+          would be reporting a failure that never happened. */}
+      <Frame title="Power controller" hint={
+        <Badge tone={tele?.tdpVerified === true ? 'ok' : tele?.tdpVerified === false ? 'warn' : 'muted'}>
+          {tele?.tdpVerified === true ? 'TDP verified'
+            : tele?.tdpVerified === false ? 'TDP not holding'
+            : 'TDP not written yet'}
+        </Badge>}>
         <p className="muted">GPD Forge yields while another controller runs: it takes over TDP only when it is the sole owner. Use the installer's <code>-Substitute</code> to stop + disable MotionAssistant / GPD Tool.</p>
       </Frame>
       <FreezerCard />

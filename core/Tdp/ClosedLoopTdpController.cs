@@ -15,7 +15,7 @@ public sealed class ClosedLoopTdpController(
 
     private readonly Options _opt = options ?? new Options();
 
-    public async Task<TdpApplyResult> ApplyAsync(TdpProfile profile, CancellationToken ct)
+    public async Task<TdpApplyResult> ApplyAsync(TdpProfile profile, string owner, CancellationToken ct)
     {
         TdpReadout observed = default;
 
@@ -40,8 +40,19 @@ public sealed class ClosedLoopTdpController(
         return new TdpApplyResult(profile, observed, false, _opt.MaxAttempts);
     }
 
+    /// <summary>
+    /// Whether the readback matches what was asked for.
+    ///
+    /// An ABSENT reading is not a match, and it is spelled out rather than left to nullable
+    /// arithmetic: <c>Math.Abs(null - want)</c> is null, and <c>null &lt;= tol</c> is false — so this
+    /// would have kept compiling and quietly returned false. That happens to be the safe direction,
+    /// but "we could not read it" and "the firmware refused" are different facts and only one of them
+    /// should ever be reported as a reverted write.
+    /// </summary>
     private static bool Holds(TdpReadout observed, TdpProfile want, int tol) =>
-        Math.Abs(observed.StapmW - want.StapmW) <= tol && Math.Abs(observed.PptW - want.FastW) <= tol;
+        observed.StapmW is int stapm && observed.PptW is int ppt
+        && Math.Abs(stapm - want.StapmW) <= tol
+        && Math.Abs(ppt - want.FastW) <= tol;
 
     private TimeSpan Backoff(int attempt)
     {

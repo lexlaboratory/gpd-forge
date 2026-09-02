@@ -86,13 +86,36 @@ public sealed class ForgeWorker(
                 {
                     logger.LogWarning("Guardian [{Severity}]: {Alert}", g.Severity, g.Alert);
                     var severity = g.Severity switch { "critical" => AlertSeverity.Critica, "warn" => AlertSeverity.Aviso, _ => AlertSeverity.Info };
-                    alerts.Publish(AlertCategory.Thermal, severity, "Thermal guardian", g.Alert, $"cpuTempC={snapshot.CpuTempC:F1}; batteryPct={snapshot.BatteryPct}", $"guardian:{g.Severity}:{g.Alert}");
+
+                    // Key on the PHENOMENON, not on the message. The key used to be
+                    // $"guardian:{g.Severity}:{g.Alert}" and the message embeds the reading, so one
+                    // degree of change opened a new alert: measured on this device, 77 rows with 67 of
+                    // them Count == 1, one per degree of CPU temperature and one per percent of
+                    // battery. AlertStore's coalescing was never broken — it was handed a key that
+                    // could not repeat. Same rule already written one screen below for the charge
+                    // guard: one key for the whole feature, not one per reading.
+                    //
+                    // Kind falls back to the old shape only if a decision forgot to set one, so a
+                    // missing Kind degrades to yesterday's noisy behaviour rather than silently
+                    // merging two unrelated phenomena under one key.
+                    var dedupeKey = g.Kind ?? $"guardian:{g.Severity}:{g.Alert}";
+
+                    // Category and title follow the phenomenon too: a low battery filed under
+                    // "Thermal guardian" is a small lie that shows up on every row of the alert list,
+                    // and all 77 rows on this device carried that title.
+                    var isBattery = g.Kind is GuardianKind.BatteryLow or GuardianKind.BatteryCritical;
+                    var category = isBattery ? AlertCategory.System : AlertCategory.Thermal;
+                    var title = isBattery ? "Battery guardian" : "Thermal guardian";
+
+                    alerts.Publish(category, severity, title, g.Alert,
+                        $"cpuTempC={snapshot.CpuTempC:F1}; batteryPct={snapshot.BatteryPct}", dedupeKey);
                 }
 
                 if (g.ThrottleToW is int throttleW)
                 {
                     // Hard cool-down: hold a flat sustained ceiling. Skips auto-FPS this tick.
-                    await tdp.ApplyAsync(new TdpProfile(throttleW, throttleW, throttleW, (int)guardian.Config.TempCriticalC), stoppingToken);
+                    await tdp.ApplyAsync(new TdpProfile(throttleW, throttleW, throttleW, (int)guardian.Config.TempCriticalC),
+                            TdpOwner.ThermalGuardian, stoppingToken);
                 }
                 else
                 {
@@ -119,12 +142,12 @@ public sealed class ForgeWorker(
                     {
                         // A ceiling, held flat. EffectiveCeiling has already refused to raise power,
                         // so reaching here means this is genuinely lower than the mode would run.
-                        await tdp.ApplyAsync(new TdpProfile(coolW, coolW, coolW, 90), stoppingToken);
+                        await tdp.ApplyAsync(new TdpProfile(coolW, coolW, coolW, 90), TdpOwner.ChargeGuard, stoppingToken);
                     }
                     else if (g.ClearThrottle || cg.ClearCool)
                     {
                         var restore = ModeProfiles.For(mode.Active);
-                        if (restore is not null) await tdp.ApplyAsync(restore.Value, stoppingToken);
+                        if (restore is not null) await tdp.ApplyAsync(restore.Value, TdpOwner.Restore, stoppingToken);
                     }
 
                     // Auto-tuner sweep takes priority over auto-FPS while it's running (both steer
@@ -136,7 +159,7 @@ public sealed class ForgeWorker(
                     // useful rather than inventing a reading — see TunerState.Tick.
                     if (tuner.Running)
                     {
-                        await tdp.ApplyAsync(tuner.CurrentProfile(), stoppingToken);
+                        await tdp.ApplyAsync(tuner.CurrentProfile(), TdpOwner.Tuner, stoppingToken);
                         tuner.Tick(snapshot.Fps, snapshot.CpuTempC);
                     }
                     // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
@@ -158,7 +181,7 @@ public sealed class ForgeWorker(
                         var gaming = ModeProfiles.For(mode.Active) ?? new TdpProfile(25, 33, 28, 95);
                         int next = fpsController.NextStapm(autoFps.TargetFps, measuredFps, autoFps.CurrentStapm, minW: 8, maxW: 30);
                         autoFps.CurrentStapm = next;
-                        await tdp.ApplyAsync(gaming with { StapmW = next }, stoppingToken);
+                        await tdp.ApplyAsync(gaming with { StapmW = next }, TdpOwner.AutoFps, stoppingToken);
                     }
                 }
 

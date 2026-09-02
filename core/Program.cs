@@ -521,9 +521,17 @@ else
         new GpdForge.Fan.NoOpGpdFanController(), sp.GetRequiredService<HardwareAuditLog>()));
 }
 
+builder.Services.AddSingleton<TdpState>();
 builder.Services.AddSingleton<ITdpController>(sp => new AuditingTdpController(
     ActivatorUtilities.CreateInstance<ClosedLoopTdpController>(sp),
-    sp.GetRequiredService<HardwareAuditLog>()));
+    sp.GetRequiredService<HardwareAuditLog>(),
+    sp.GetRequiredService<TdpState>(),
+    // The backend NAME travels to the wire because GET /tdp is otherwise unreadable: with the
+    // hardware gate closed StubTdpBackend echoes back whatever it was handed, so every write
+    // "verifies". Reporting verified:true without saying the backend is a stub is a liar with a
+    // timestamp — resolved from the registered backend rather than from the gate variable, so it
+    // describes what is actually wired.
+    sp.GetRequiredService<ITdpBackend>() is StubTdpBackend ? "stub" : "ryzenadj"));
 builder.Services.AddSingleton<IFanController, StubFanController>();
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
 // Standby Doctor: powercfg diagnostics plus a MEASURED overnight drain. The sampler runs
@@ -957,10 +965,48 @@ app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier
     return Results.Json(new { active = m.Active, tdp = outcome, frameCap });
 });
 
+// What TDP is in force, and WHO put it there.
+//
+// There was no GET /tdp at all until 2026-09-02 — only the POST. So the daemon could report the
+// number through /telemetry and could not answer "which of the ten writers set it", which is the
+// difference between a reading and a fact. A handheld sitting at 12 W looks the same whether the
+// thermal guardian is protecting it, the charge guard is cooling it, or a mode preset simply says so.
+app.MapGet("/tdp", (TdpState state) =>
+{
+    var s = state.Last;
+    if (s is not TdpSnapshot last)
+        // Null, not a zeroed row: "nothing has written TDP since this daemon started" is a real
+        // answer and must not be dressed up as 0 W applied by nobody.
+        return Results.Json(new
+        {
+            stapmW = (int?)null, owner = (string?)null, verified = (bool?)null,
+            backend = (string?)null, observedStapmW = (int?)null, observedPptW = (int?)null,
+            attempts = (int?)null, atUtc = (DateTimeOffset?)null,
+            note = "No TDP write has happened since the daemon started.",
+        });
+
+    return Results.Json(new
+    {
+        stapmW = last.Requested.StapmW,
+        owner = last.Owner,
+        // Three-valued, like the audit log: true (read back and matched), false (the firmware
+        // refused), null (no readback was possible).
+        verified = last.Verified,
+        backend = last.Backend,
+        observedStapmW = last.Observed.StapmW,
+        observedPptW = last.Observed.PptW,
+        attempts = last.Attempts,
+        atUtc = last.AtUtc,
+        note = last.Backend == "stub"
+            ? "The hardware gate is closed: the stub backend echoes the request, so 'verified' means the echo matched, not the silicon."
+            : null,
+    });
+});
+
 // Safe today: the wired backend is a stub (no hardware write). Becomes real in #3 behind approval.
 app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, CancellationToken ct) =>
 {
-    var r = await tdp.ApplyAsync(new TdpProfile(req.StapmW, req.StapmW, req.StapmW, 90), ct);
+    var r = await tdp.ApplyAsync(new TdpProfile(req.StapmW, req.StapmW, req.StapmW, 90), TdpOwner.Manual, ct);
     return Results.Json(new { requested = r.Requested.StapmW, observed = r.Observed.StapmW, verified = r.Verified });
 });
 
@@ -971,7 +1017,7 @@ app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, CancellationToken
 app.MapPost("/panic", async (ITdpController tdp, FanState fan, CancellationToken ct) =>
 {
     var floor = new TdpProfile(8, 8, 8, 90);
-    var r = await tdp.ApplyAsync(floor, ct);
+    var r = await tdp.ApplyAsync(floor, TdpOwner.Panic, ct);
     fan.Mode = "Aggressive";
     return Results.Json(new { applied = r.Verified, stapmW = floor.StapmW });
 });

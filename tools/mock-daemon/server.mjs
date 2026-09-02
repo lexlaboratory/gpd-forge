@@ -132,6 +132,13 @@ const state = {
   refresh: { current: 60, supported: [48, 60] },
   night: { on: false, warmth: 0 },
   tablet: { raw: null }, // null = ConvertibilityEnabled not set (default OS chassis detection)
+  // Last TDP write with its provenance — see core/Tdp/TdpState.cs. Seeded as a mode-applied write
+  // that verified, which is the common case; POST /tdp and POST /mode overwrite it below.
+  lastTdp: {
+    stapmW: 15, owner: 'mode', verified: true, backend: 'ryzenadj',
+    observedStapmW: 15, observedPptW: 20, attempts: 1,
+    atUtc: new Date(Date.now() - 30_000).toISOString(),
+  },
   // Advanced (hardware-gated): LED/RGB, battery charge limit, undervolt/Curve Optimizer. The mock
   // presents all three as controllable/available so the UI/E2E can exercise a full round-trip —
   // the real daemon (see core/Led, core/Battery, core/Undervolt) stays honestly gated/advisory.
@@ -690,6 +697,20 @@ const server = http.createServer(async (req, res) => {
     // outlive the request and repaint the Monitor chart for every later spec.
     if (!blind) pushHistory(t)
     return send(res, 200, t)
+  }
+  // What TDP is in force and WHO set it. Mirrors core/Tdp/TdpState.cs. The mock reports a real
+  // backend name because the point of the field is that a stub must be visible — a mock that always
+  // said "ryzenadj" would let a UI ship that never renders the stub case.
+  if (method === 'GET' && path === '/tdp') {
+    const last = state.lastTdp
+    if (!last) {
+      return send(res, 200, {
+        stapmW: null, owner: null, verified: null, backend: null,
+        observedStapmW: null, observedPptW: null, attempts: null, atUtc: null,
+        note: 'No TDP write has happened since the daemon started.',
+      })
+    }
+    return send(res, 200, { ...last, note: null })
   }
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
 
