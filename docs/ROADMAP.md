@@ -64,11 +64,13 @@ Control to refuse. Everything this section listed as blocked has since shipped:
 | The `fan` step of the resume restore | shipped — reaches `IGpdFanController`; verified by effect (`"the EC responded (duty reads 203)"`) |
 | "Sustained" fan curve for AI mode (Phase 3) | **unblocked, not built** — see *Open* at the end of this file |
 
-⚠️ **Still an honest caveat, not a resolved item:** the optional richer telemetry (package watts,
-temps) goes through LibreHardwareMonitor, which loads a **Ring0-family** driver when
-`GPDFORGE_ENABLE_HARDWARE=1`. The **default** telemetry path is driverless WMI. Moving that half to
-PawnIO too remains the target — and it is the surface that has to be ruled out for the
-`DPC_WATCHDOG_VIOLATION` bugcheck of 2026-08-28.
+🔴 **This paragraph used to say the opposite, and it was wrong.** It claimed the optional richer
+telemetry "goes through LibreHardwareMonitor, which loads a Ring0-family driver", and that moving it
+to PawnIO "remains the target". Checked against the pinned binary on 2026-09-01: the shipped
+`LibreHardwareMonitorLib.dll` contains **zero** references to `WinRing0`, `Ring0`, `KernelDriver`,
+`OpenLibSys` or `InpOut`, no `.sys` resource, and ships the `PawnIo.RyzenSMU` / `PawnIo.AMDFamily17`
+modules. **Upstream already moved to PawnIO.** The claim was carried forward from the 2026-08-25
+decision note and never re-verified. See [ADR-0001 § Consequences](adr/0001-pawnio-over-winring0-for-ec-access.md).
 - [x] `Telemetry/` read-only via WMI (battery/AC/discharge/clock/thermal-zone) — verified on device
 - [x] `Telemetry/` package power + fan RPM (broker) + FPS (Intel PresentMon, `GPDFORGE_ENABLE_FPS=1`)
 - ⛔ `Hid/` ViGEmBus + HidHide + L4/R4 remap with 1024B backup/verify — **blocked on a measured fact,
@@ -390,9 +392,12 @@ The sequenced plan for what comes next is
 `GET /standby` has been returning these since the sleep study shipped. Neither is confirmed to be
 ours; both are ours to rule out.
 
-- **Bugcheck `0x133` (`DPC_WATCHDOG_VIOLATION`), 2026-08-28.** A driver held a DPC too long. This
-  project loads a Ring0-family driver through LibreHardwareMonitor when hardware access is enabled
-  (see [ADR-0001](adr/0001-pawnio-over-winring0-for-ec-access.md) § Consequences).
+- **Bugcheck `0x133` (`DPC_WATCHDOG_VIOLATION`), 2026-08-28.** A driver held a DPC too long.
+  ⚠️ **The stated reason for investigating this was wrong** and is corrected here: it said "this
+  project loads a Ring0-family driver through LibreHardwareMonitor", and the pinned LHM loads no such
+  thing (see [ADR-0001](adr/0001-pawnio-over-winring0-for-ec-access.md) § Consequences). That does
+  **not** clear GPD Forge — PawnIO is still a kernel driver, and a DPC watchdog violation still needs
+  an owner — but the triage starts from what the binary actually loads, not from the retired claim.
 - **Failed resume, 2026-08-29.** A 5-hour hibernate whose next event was an abnormal shutdown. No
   crash dump, which places it before Windows takes control.
 
