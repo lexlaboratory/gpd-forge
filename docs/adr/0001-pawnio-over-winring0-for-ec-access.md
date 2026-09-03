@@ -76,11 +76,16 @@ The read path issues address + read only. **No control writes go through it** wi
   claiming otherwise about its own dependency. The claim was inherited from the 2026-08-25 decision
   note and never re-checked against the pinned binary.
 
-  ⚠️ **This matters beyond tidiness, because the false claim was load-bearing.** The
-  `DPC_WATCHDOG_VIOLATION` triage item in the roadmap rests on it: the reason given for not
+  ⚠️ **This mattered beyond tidiness, because the false claim was load-bearing.** The
+  `DPC_WATCHDOG_VIOLATION` triage item in the roadmap rested on it: the reason given for not
   dismissing the 2026-08-28 bugcheck was "this project loads a Ring0-family driver through LHM". It
-  does not. That does not clear GPD Forge — PawnIO is still a kernel driver and a DPC watchdog
-  violation still needs an owner — but the triage must start from what the binary actually loads,
-  not from this paragraph.
+  does not. That did not clear GPD Forge on its own — PawnIO is still a kernel driver — but it meant
+  the triage had to start from what the binary actually loads, not from this paragraph.
+  **Resolved 2026-09-03**: both bugchecks (2026-08-05 and 2026-08-28) were read with `!analyze -v`
+  in WinDbg. Neither call stack contains `PawnIo.sys`, or any other third-party driver — both are
+  Microsoft's own storage/memory-manager code. See the [ROADMAP](../ROADMAP.md) triage section for
+  the full stacks. PawnIO is cleared for these two crashes specifically; it remains a kernel driver
+  and a DPC watchdog violation involving it in the future would still need investigating on its own
+  terms.
 - Board detection is required before any access: G1618-04 / "Ver.1.0" → WinMax2, `RpmRead 0x0218`
   (`core/Fan/GpdDeviceDb.cs`). A wrong board mapping writes to the wrong EC register.
