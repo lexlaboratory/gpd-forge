@@ -404,17 +404,48 @@ quietly corrected, because it is the second time this file has been wrong about 
 
 ## Triage — reported by the daemon, owned by nobody
 
-`GET /standby` has been returning these since the sleep study shipped. Neither is confirmed to be
-ours; both are ours to rule out.
+`GET /standby` has been returning these since the sleep study shipped.
 
-- **Bugcheck `0x133` (`DPC_WATCHDOG_VIOLATION`), 2026-08-28.** A driver held a DPC too long.
-  ⚠️ **The stated reason for investigating this was wrong** and is corrected here: it said "this
-  project loads a Ring0-family driver through LibreHardwareMonitor", and the pinned LHM loads no such
-  thing (see [ADR-0001](adr/0001-pawnio-over-winring0-for-ec-access.md) § Consequences). That does
-  **not** clear GPD Forge — PawnIO is still a kernel driver, and a DPC watchdog violation still needs
-  an owner — but the triage starts from what the binary actually loads, not from the retired claim.
-- **Failed resume, 2026-08-29.** A 5-hour hibernate whose next event was an abnormal shutdown. No
-  crash dump, which places it before Windows takes control.
+- ✅ **Bugcheck `0x133` (`DPC_WATCHDOG_VIOLATION`) — resolved 2026-09-03, clears GPD Forge.** Two
+  occurrences, 2026-08-05 and 2026-08-28. ⚠️ **The original reason for investigating this was
+  wrong** and was corrected in [ADR-0001](adr/0001-pawnio-over-winring0-for-ec-access.md) §
+  Consequences: it said "this project loads a Ring0-family driver through LibreHardwareMonitor",
+  and the pinned LHM loads no such thing. That correction still left the question open — a DPC
+  watchdog violation needs an owner regardless of which claim sent us looking.
+  Both `.dmp` files were read directly (kernel dumps are `PAGEDU64`, not the `MDMP` format minidump
+  tools expect; parsed the header by hand to pull `BugcheckCode`/parameters before trusting
+  anything) and then run through `!analyze -v` in WinDbg:
+  - 2026-08-05, `P1=0` (`SINGLE_DPC_TIMEOUT_EXCEEDED`) — the named driver is `CLASSPNP.SYS`, but
+    the full stack shows it's mid-callback inside a `storport` adapter DPC completing NVMe I/O,
+    called from `MiStoreEvictThread` (the compressed memory store evicting a page to the pagefile
+    under memory pressure). `storport → CLASSPNP → Ntfs → KeSetEvent → KiHeteroSelectProcessorToPreempt`,
+    all Microsoft-owned.
+  - 2026-08-28, `P1=1` (`DPC_QUEUE_EXECUTION_TIMEOUT_EXCEEDED`, cumulative across the DPC queue) —
+    `nt!KeAccumulateTicks`, the clock-interrupt handler that itself does the watchdog check, sitting
+    on top of `MiResolveProtoPteFault` (a page fault being resolved). Also entirely kernel, no
+    driver frame at all.
+  - **Neither dump contains a third-party driver frame.** Specifically checked for and did not find:
+    `PawnIO.sys` (GPD Forge's own EC-access driver), `inpoutx64.sys` (installed 2026-07-22, unrelated
+    to this project, still running with automatic startup — flagged below as a separate finding),
+    or `vgk.sys` (Riot Vanguard, the original prime suspect — not even loaded in either dump).
+  - 2026-08-05 predates GPD Forge's existence by three weeks (first commit 2026-08-25), which was
+    already enough to clear this project on its own; the module lists confirm it directly instead of
+    by inference.
+  - Disk (`WD Blue SN580 2TB`) reports `HealthStatus: Healthy`; no Warning/Error events from any
+    storage-related provider in the two hours around either bugcheck. No evidence of failing
+    hardware — this reads as a Windows 24H2 storage/memory-manager interaction under memory
+    pressure, not a GPD Forge or third-party-driver defect. Not re-opening unless it recurs.
+  - **Separate, smaller finding surfaced along the way:** `inpoutx64.sys` (Highresolution
+    Enterprises / Red Fox UK, signed) has run with automatic startup since 2026-07-22, installed
+    alongside `wintun.sys` the same night. Not implicated in either crash and not this project's
+    concern to remove, but worth knowing it's there with kernel-mode hardware access.
+- **Failed resume, 2026-08-29.** Still open. The sleep study's "5-hour hibernate → abnormal
+  shutdown" maps to one of *two* `Kernel-Power` id 41 events that day: 01:59 (`PowerButtonTimestamp
+  = 0`, spontaneous) and 08:44 (`PowerButtonTimestamp` non-zero, i.e. the power button was held).
+  The 08:44 one is plausibly Alex forcing a shutdown after a hang, which would make it operator
+  action rather than a standby defect — but that mapping was not verified against the sleep study's
+  internal timestamp, and the 01:59 event has no explanation either way. No crash dump for either,
+  which places whatever happened before Windows took control. Unowned.
 
 ## Dropped — and why, so it is not re-proposed
 
