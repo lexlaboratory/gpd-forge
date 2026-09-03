@@ -102,9 +102,17 @@ backlight** (it sits under `LCD._BCL`/`_BCM`), and **`BTH0` is Bluetooth** (`_HI
   charge and can hold a cooler ceiling, attacking the temperature half of lithium ageing — the half
   that is reachable from here.
 - 🔓 **What would reopen this**, specifically:
-  1. **A BIOS setup option** for a charge limit (hold `DEL` at boot). Not yet checked, ~10 minutes,
-     and the cheapest remaining lead by a wide margin. If it exists, the firmware has a path ACPI
-     does not expose, and then the EC dump-and-diff in alternative 2 becomes worth building.
+  1. ✅ **A BIOS setup option** for a charge limit (hold `DEL` at boot). **Checked 2026-09-03 — it
+     exists, and it does not work.** There is a "Battery Charge Limit" / eco-charge option in setup;
+     it was set to 85 %. Battery telemetry logged at 60 s resolution through the next full charge
+     cycle crossed 85 % with zero pause — `09:15:15 85% charging=True` straight through to
+     `10:56:21 100% charging=False`, no plateau, no drop in charge current, nothing. This is the same
+     shape as finding 4: a label in the UI with nothing behind it. **Does not reopen this ADR — it
+     closes the one lead that was still open**, and by the strongest kind of evidence (observed
+     behavior under real load), not static analysis. `root\wmi:ecoChargeMode` was also checked
+     directly: the class exists but returns zero instances even elevated, and `Get-CimClass` reports
+     no properties or methods — consistent with a declared-but-unimplemented WMI surface, the same
+     species of dead end as `BCTH`/`BCTL`.
   2. A firmware update that adds `_BMC`/`_BMD`. Re-run the table dump after any BIOS update.
   3. A vendor tool release that gains the feature — then diff the EC against it.
 - The ACPI dump procedure is worth keeping: tables live under `HKLM\HARDWARE\ACPI`, are readable
