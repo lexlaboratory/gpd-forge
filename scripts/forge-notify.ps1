@@ -22,10 +22,20 @@ $appExe = Join-Path $env:ProgramFiles 'GPD Forge\GPD Forge.exe'
 
 # The desktop shell cannot be handed a route, so a deep link has to go through the browser, which
 # the daemon serves the same UI to.
+#
+# Defaults to the browser (Via 0: served by the signed daemon, never blocked by Smart App
+# Control) rather than the native .exe. The native shell has no signed release yet — SAC judges
+# each unsigned build individually and inconsistently (see docs/signing.md), so making it the
+# default click target means the tray's own "open" action can dead-end in a SAC block. Opening
+# the native window is still available, deliberately, from its own menu item below.
 function Open-Forge {
   param([string]$Hash = '')
-  if ($Hash) { Start-Process "$Api/#$Hash"; return }
-  if (Test-Path $appExe) { Start-Process $appExe } else { Start-Process $Api }
+  Start-Process "$Api$(if ($Hash) { "/#$Hash" })"
+}
+
+function Open-ForgeNative {
+  if (Test-Path $appExe) { Start-Process $appExe }
+  else { $ni.ShowBalloonTip(4000, 'GPD Forge', 'Native window not found - is GPD Forge installed?', [System.Windows.Forms.ToolTipIcon]::Warning) }
 }
 
 $ni = New-Object System.Windows.Forms.NotifyIcon
@@ -38,6 +48,7 @@ $ni.Visible = $true
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 ($menu.Items.Add('Open GPD Forge')).Add_Click({ Open-Forge })
 ($menu.Items.Add('Alerts')).Add_Click({ Open-Forge -Hash 'alerts' })
+($menu.Items.Add('Open native window (unsigned, may be blocked)')).Add_Click({ Open-ForgeNative })
 $menu.Items.Add('-') | Out-Null
 # Panic cool is here because the moment you want it is the moment you do not want to go looking for
 # a window: floor the TDP and max the fan from the tray, in one click.
