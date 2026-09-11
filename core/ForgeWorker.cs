@@ -52,6 +52,11 @@ public sealed class ForgeWorker(
     private string? _lastFanMode;
     private int _lastFanDuty;
 
+    // Smooths the temperature fed to the curve, not the curve's own rise/hold decision — see
+    // TempSmoother.cs. Reset alongside _lastFanDuty so a stale average never leaks into the next
+    // curve-mode session.
+    private readonly TempSmoother _fanTempSmoother = new();
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("GPD Forge service starting.");
@@ -209,13 +214,23 @@ public sealed class ForgeWorker(
                             fanControl.SetAuto();
                             _lastFanDuty = 0;
                             _lastFanMode = "Auto";
+                            _fanTempSmoother.Reset();
                             break;
                         }
                         var curve = FanCurve.ForMode(fanState.Mode) ?? FanCurve.Balanced;
                         // `.Value` is safe and deliberate: IsUsableTemperature above already refused
                         // null and handed the fan back to firmware. Unwrapping here rather than
                         // defaulting keeps the guard as the single place that decides.
-                        _lastFanDuty = FanCurve.DutyForTemp(snapshot.CpuTempC!.Value, curve, FanCurve.DefaultHysteresisC, _lastFanDuty);
+                        //
+                        // Fed through _fanTempSmoother rather than raw: RAPL-derived CPU temp swings
+                        // ten-plus degrees tick to tick under a bursty light load, and DutyForTemp
+                        // never delays a rise (by design — a safety choice, see FanCurve.cs), so a
+                        // raw reading turns every noise spike into an audible duty jump. The average
+                        // still reflects a genuine sustained rise within a few ticks; the thermal
+                        // guardian above reacts to the raw reading regardless, so this never dilutes
+                        // the real safety margin.
+                        double smoothedTempC = _fanTempSmoother.Add(snapshot.CpuTempC!.Value);
+                        _lastFanDuty = FanCurve.DutyForTemp(smoothedTempC, curve, FanCurve.DefaultHysteresisC, _lastFanDuty);
                         _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
                         _lastFanMode = fanState.Mode;
                         break;
@@ -225,6 +240,7 @@ public sealed class ForgeWorker(
                         fanControl.SetAuto();
                         _lastFanDuty = 0;
                         _lastFanMode = "Auto";
+                        _fanTempSmoother.Reset();
                         break;
                 }
 
