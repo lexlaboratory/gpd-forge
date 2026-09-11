@@ -83,6 +83,42 @@ when needed.
 The `release` workflow always builds the Via-0 portable bundle. The signed native job is **gated** and
 skipped until you activate signing below.
 
+## Activate SignPath Foundation (the recommended real-signing route for this project)
+
+The `signed-native` job in `.github/workflows/release.yml` is already wired for SignPath (verified
+against their official docs, `docs.signpath.io/integrations`). When `SIGN_RELEASE=true` and a
+`vX.Y.Z` tag is pushed, it builds the Tauri app, uploads the unsigned bundle as a workflow artifact,
+submits it with `signpath/github-action-submit-signing-request@v2`, waits for completion, and
+attaches the signed `*.exe` + `*.msi` to the Release.
+
+Do these once (in the SignPath portal, then in the GitHub repo):
+
+1. **Install the SignPath GitHub App** on this repository. It is required for source/build
+   fulfillment (it is how SignPath verifies the artifact was built by a real workflow, not by
+   someone holding the token). For OSS projects it also enforces that all build jobs run on
+   GitHub-hosted runners — this repo does (`windows-latest`).
+2. **In SignPath, set up the project** under the sponsor organization (SignPath Foundation):
+   - a **project** for `lexlaboratory/gpd-forge`,
+   - a **signing policy** (release policy),
+   - an **Artifact Configuration** whose root element is `<zip-file>`, with
+     `<signable-file recurse="true">` matching `*.exe` and `*.msi`, so the uploaded bundle ZIP is
+     unpacked and both binaries signed.
+   - an **API token** for a user with *submitter* permissions on that project/policy.
+3. **Set these in the GitHub repo** (Settings → Secrets and variables → Actions):
+   - secret `SIGNPATH_API_TOKEN` = the API token
+   - variables `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
+     `SIGNPATH_SIGNING_POLICY_SLUG`, `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`
+   - variable `SIGN_RELEASE = true`
+
+### Verify before the first signed release
+- Confirm your `npm --prefix ui run tauri -- build` produces the bundle (the job fails fast with
+  `if-no-files-found: error` if `ui/src-tauri/target/release/bundle` is empty).
+- Push a `vX.Y.Z` tag; the `signed-native` job must run (not skip), sign via SignPath, and attach
+  the artifacts to the Release.
+- On a SAC machine: download the signed installer and confirm it launches without a SAC/SmartScreen
+  block. SignPath Foundation's OV certs carry accumulated reputation from signing many projects, so
+  it should not need the usual brand-new-OV ramp — **verify, don't promise**.
+
 ## Activate Azure Trusted Signing (only if the eligibility check above passes)
 
 ⚠️ Kept for completeness and for anyone forking this project from an eligible country. **It does not
