@@ -109,6 +109,14 @@ What is open, blocked, dropped, or awaiting triage is tracked in one place:
 [`docs/ROADMAP.md` § *Open, blocked, and dropped*](docs/ROADMAP.md#open-blocked-and-dropped).
 Decisions that constrain future work: [`docs/adr/`](docs/adr/README.md).
 
+## Releases
+
+Download from [GitHub Releases](https://github.com/lexlaboratory/gpd-forge/releases). The portable
+bundle (service + browser UI) always runs signed-host under Windows Smart App Control with no
+certificate of its own — see [`docs/signing.md`](docs/signing.md). Code signing for the native desktop
+app is provided free of charge by [SignPath Foundation](https://signpath.org/) for qualifying
+open-source projects.
+
 ## License
 
 [GPL-3.0-or-later](LICENSE). © 2026 lexlaboratory.
