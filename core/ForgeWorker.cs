@@ -133,9 +133,12 @@ public sealed class ForgeWorker(
 
                 if (g.ThrottleToW is int throttleW)
                 {
-                    // Hard cool-down: hold a flat sustained ceiling. Skips auto-FPS this tick.
-                    await tdp.ApplyAsync(new TdpProfile(throttleW, throttleW, throttleW, (int)guardian.Config.TempCriticalC),
-                            TdpOwner.ThermalGuardian, stoppingToken);
+                    // Hard cool-down: a ceiling that never raises any limit of the active mode (see
+                    // GuardianThrottle.cs — it used to lift `windows` from 15 W to 25 W). Skips
+                    // auto-FPS this tick.
+                    var throttle = GuardianThrottle.Profile(throttleW, ModeProfiles.For(mode.Active),
+                        (int)guardian.Config.TempCriticalC);
+                    await tdp.ApplyAsync(throttle, TdpOwner.ThermalGuardian, stoppingToken);
                 }
                 else
                 {

@@ -11,8 +11,8 @@
 // an exponential moving average weighted by the real elapsed time, and it is asymmetric: it follows
 // heating faster than cooling, so the fan answers a real load promptly but does not chase every dip.
 //
-// This smooths only the READING handed to the curve. The thermal guardian keeps its own input and
-// never sees this average, so it does not dilute the safety margin.
+// The fan's instance smooths only the READING handed to the curve. The thermal guardian runs its
+// own, much shorter instance (GuardianService) and bypasses it entirely at the critical limit.
 
 namespace GpdForge.Fan;
 

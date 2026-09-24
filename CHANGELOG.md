@@ -26,6 +26,14 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 - **EC access is atomic.** Addressing an EC cell takes five port writes, and the fan controller,
   the RPM reader and LibreHardwareMonitor all drive the same Super I/O ports. Each access now holds
   an in-process lock and the machine-wide `Access_ISABUS.HTP.Method` mutex those tools honour.
+- **A thermal throttle could raise power.** Its ramp starts at an absolute 25 W chosen for
+  `gaming`, and it was applied flat with Tctl 96 whatever the mode: in `windows` (15/20/17 W,
+  Tctl 92) it applied 25/25/25 W at Tctl 96 to a device that was already hot (seen in `/audit` on
+  2026-09-24). Every limit is now the lower of the throttle and the active mode's.
+- **The guardian no longer throttles on a single Tctl spike.** The throttle band reacts to a 2 s
+  time-weighted average instead of the raw reading, so one tick past 90 °C neither flattens the
+  boost limits nor holds them until the raw reading happens to dip. A sustained excursion still
+  throttles within seconds, and the critical limit (96 °C) still reacts to the raw reading.
 
 ## [0.3.0] — 2026-09-01
 
