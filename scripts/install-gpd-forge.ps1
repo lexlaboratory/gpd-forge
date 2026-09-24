@@ -241,7 +241,16 @@ $dllBefore = if (Test-Path $dll) { (Get-Item $dll).LastWriteTimeUtc } else { [Da
 dotnet publish "$RepoDir\core\GpdForge.Service.csproj" -c Release -o "$InstallDir\service" --nologo
 
 if (-not (Test-Path $dll)) { Write-Host "Publish failed (need the .NET 9 SDK)." -ForegroundColor Red; return }
-if ((Get-Item $dll).LastWriteTimeUtc -le $dllBefore) {
+# An unchanged timestamp is not always a lock: re-running after a publish that already succeeded
+# (say, the UI step failed the first time) leaves nothing to copy, so publish rightly skips the dll.
+# What matters is that the installed dll IS this build — compare it with the compiler's output.
+$built = "$RepoDir\core\obj\Release\net9.0-windows\GpdForge.Service.dll"
+$alreadyCurrent = (Test-Path $built) -and
+    ((Get-FileHash $dll -Algorithm SHA256).Hash -eq (Get-FileHash $built -Algorithm SHA256).Hash)
+if ($alreadyCurrent -and (Get-Item $dll).LastWriteTimeUtc -le $dllBefore) {
+    Write-Host "  service dll already matches this build (publish had nothing to copy)" -ForegroundColor DarkGray
+}
+if (-not $alreadyCurrent -and (Get-Item $dll).LastWriteTimeUtc -le $dllBefore) {
     Write-Host "Publish did NOT replace $dll - it still dates from $dllBefore (UTC)." -ForegroundColor Red
     Write-Host "Refusing to continue: the service would keep running the previous build while this" -ForegroundColor Red
     Write-Host "installer reported success. Usual cause: the file is locked by a running process." -ForegroundColor Red
