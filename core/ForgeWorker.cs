@@ -47,15 +47,30 @@ public sealed class ForgeWorker(
     private bool? _lastAcConnected;
 
     // Gated fan (PWM duty) control state — see the tick block below. _lastFanMode lets Auto restore
-    // fire only ONCE per transition (not every tick); _lastFanDuty feeds FanCurve's hysteresis and
-    // starts at 0 so a cold start simply adopts the curve's first reading with no holdback.
+    // fire only ONCE per transition (not every tick); _lastFanDuty is the duty last written.
     private string? _lastFanMode;
     private int _lastFanDuty;
 
-    // Smooths the temperature fed to the curve, not the curve's own rise/hold decision — see
-    // TempSmoother.cs. Reset alongside _lastFanDuty so a stale average never leaks into the next
-    // curve-mode session.
+    // Curve mode is a three-stage pipeline: TempSmoother (what temperature to react to) →
+    // FanCurve.DutyForTemp (what duty that calls for, with hysteresis) → FanDutyRamp (how fast the
+    // fan may get there). _lastFanTarget is the curve's own last answer, which is what its
+    // hysteresis must compare against; _lastFanDuty is what was actually written. All of it resets
+    // together (ResetFanCurveState) so a stale average or ramp never leaks into the next session.
     private readonly TempSmoother _fanTempSmoother = new();
+    private readonly FanDutyRamp _fanRamp = new();
+    private int _lastFanTarget;
+
+    // Elapsed time between fan ticks, measured rather than assumed: a slow TDP apply earlier in the
+    // tick can stretch one loop to several seconds, and both the smoother and the ramp are rates.
+    private readonly System.Diagnostics.Stopwatch _fanClock = System.Diagnostics.Stopwatch.StartNew();
+    private double _lastFanTickSeconds;
+
+    // A single missed sensor read must not hand the fan back to firmware: that SetAuto is followed
+    // by a MAX safety write when curve mode resumes, which is an audible burst. The last usable
+    // reading is reused for up to this long before giving up.
+    private const double FanSensorGraceSeconds = 3.0;
+    private double? _lastUsableTempC;
+    private double _lastUsableTempAtSeconds;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -199,48 +214,60 @@ public sealed class ForgeWorker(
                 {
                     case "Auto":
                         // Only write on the transition INTO Auto, not every tick.
-                        if (_lastFanMode != "Auto") { fanControl.SetAuto(); _lastFanMode = "Auto"; }
+                        if (_lastFanMode != "Auto") { fanControl.SetAuto(); _lastFanMode = "Auto"; ResetFanCurveState(); }
                         break;
                     case "Manual":
+                        if (_lastFanMode != "Manual") ResetFanCurveState();
                         _lastFanDuty = fanState.ManualDuty;
                         _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
                         _lastFanMode = "Manual";
                         break;
                     case "Quiet" or "Balanced" or "Aggressive":
+                    {
+                        double nowS = _fanClock.Elapsed.TotalSeconds;
+                        double dtS = _lastFanMode == fanState.Mode ? nowS - _lastFanTickSeconds : 0;
+                        _lastFanTickSeconds = nowS;
+
                         // Zero/non-finite means telemetry is unavailable, not that the CPU is cold.
-                        // Never take firmware control without a trustworthy temperature sensor.
-                        if (!FanControlPolicy.IsUsableTemperature(snapshot.CpuTempC))
+                        // Never take firmware control without a trustworthy temperature sensor —
+                        // but a single missed read is reused briefly rather than bouncing the fan
+                        // through firmware and back (see FanSensorGraceSeconds).
+                        double tempC;
+                        if (FanControlPolicy.IsUsableTemperature(snapshot.CpuTempC))
+                        {
+                            tempC = snapshot.CpuTempC!.Value;
+                            _lastUsableTempC = tempC;
+                            _lastUsableTempAtSeconds = nowS;
+                        }
+                        else if (_lastUsableTempC is double held && nowS - _lastUsableTempAtSeconds <= FanSensorGraceSeconds)
+                        {
+                            tempC = held;
+                        }
+                        else
                         {
                             fanControl.SetAuto();
-                            _lastFanDuty = 0;
                             _lastFanMode = "Auto";
-                            _fanTempSmoother.Reset();
+                            ResetFanCurveState();
                             break;
                         }
+
                         var curve = FanCurve.ForMode(fanState.Mode) ?? FanCurve.Balanced;
-                        // `.Value` is safe and deliberate: IsUsableTemperature above already refused
-                        // null and handed the fan back to firmware. Unwrapping here rather than
-                        // defaulting keeps the guard as the single place that decides.
-                        //
-                        // Fed through _fanTempSmoother rather than raw: RAPL-derived CPU temp swings
-                        // ten-plus degrees tick to tick under a bursty light load, and DutyForTemp
-                        // never delays a rise (by design — a safety choice, see FanCurve.cs), so a
-                        // raw reading turns every noise spike into an audible duty jump. The average
-                        // still reflects a genuine sustained rise within a few ticks; the thermal
-                        // guardian above reacts to the raw reading regardless, so this never dilutes
-                        // the real safety margin.
-                        double smoothedTempC = _fanTempSmoother.Add(snapshot.CpuTempC!.Value);
-                        _lastFanDuty = FanCurve.DutyForTemp(smoothedTempC, curve, FanCurve.DefaultHysteresisC, _lastFanDuty);
+                        // Smoothed, not raw: Tctl swings ten-plus degrees tick to tick under a bursty
+                        // load, and DutyForTemp never delays a rise. The guardian above reacts on its
+                        // own input regardless, so this never dilutes the safety margin.
+                        double smoothedTempC = _fanTempSmoother.Add(tempC, dtS);
+                        _lastFanTarget = FanCurve.DutyForTemp(smoothedTempC, curve, FanCurve.DefaultHysteresisC, _lastFanTarget);
+                        _lastFanDuty = _fanRamp.Step(_lastFanTarget, dtS);
                         _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
                         _lastFanMode = fanState.Mode;
                         break;
+                    }
                     default:
                         // Defense in depth for imported/legacy state: invalid state can never leave
                         // a previous manual duty pinned. The HTTP API rejects it before this point.
                         fanControl.SetAuto();
-                        _lastFanDuty = 0;
                         _lastFanMode = "Auto";
-                        _fanTempSmoother.Reset();
+                        ResetFanCurveState();
                         break;
                 }
 
@@ -258,5 +285,14 @@ public sealed class ForgeWorker(
             try { fanControl.SetAuto(); } catch { /* best effort */ }
             logger.LogInformation("GPD Forge service stopping.");
         }
+    }
+
+    private void ResetFanCurveState()
+    {
+        _lastFanDuty = 0;
+        _lastFanTarget = 0;
+        _fanTempSmoother.Reset();
+        _fanRamp.Reset();
+        _lastUsableTempC = null;
     }
 }

@@ -16,6 +16,16 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 - **The hotkey logon shortcuts pointed at a path that does not exist**: `WindowsPowerShell\v1.0`
   had become `WindowsPowerShell<0x0B>1.0` (a `\v` read as a vertical tab). A test now rejects
   control bytes in any script.
+- **The fan curve no longer hunts.** The temperature it reacts to is now an exponential average
+  weighted by real elapsed time (τ 3 s heating, 10 s cooling) instead of a 4-sample average that
+  one hot Tctl tick could still move, and whose window stretched whenever a TDP apply stalled the
+  loop. After the curve, a new `FanDutyRamp` limits how fast the duty moves (up ~10 %/s, down
+  ~2.4 %/s) and holds 8 s after any increase before it may fall, so a target wobbling around a
+  level gives a steady fan. One missed sensor read (up to 3 s) no longer hands the fan to firmware
+  and back, which used to end in a full-speed burst.
+- **EC access is atomic.** Addressing an EC cell takes five port writes, and the fan controller,
+  the RPM reader and LibreHardwareMonitor all drive the same Super I/O ports. Each access now holds
+  an in-process lock and the machine-wide `Access_ISABUS.HTP.Method` mutex those tools honour.
 
 ## [0.3.0] — 2026-09-01
 

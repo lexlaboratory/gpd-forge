@@ -18,8 +18,22 @@ public interface IEcPort : IDisposable
 }
 
 /// <summary>Reads/writes 16-bit EC RAM addresses via the indexed Super I/O sequence.</summary>
+/// <remarks>
+/// Every access is atomic across the whole machine, not just this instance. Addressing a cell is
+/// five port writes, and more than one caller drives the same ports: the fan controller and the RPM
+/// reader each hold their own EcRam, telemetry reads come from HTTP threads as well as the worker,
+/// and LibreHardwareMonitor probes the Super I/O chip itself. An interleaved sequence addresses the
+/// wrong cell — for a write, a stray byte in EC RAM. So each access takes an in-process lock AND the
+/// machine-wide ISA-bus mutex that LibreHardwareMonitor, HWiNFO and similar tools already honour.
+/// </remarks>
 public sealed class EcRam(IEcPort port)
 {
+    // The name every Super I/O tool on Windows agrees on; see LibreHardwareMonitor's Mutexes.cs.
+    private const string IsaBusMutexName = @"Global\Access_ISABUS.HTP.Method";
+    private static readonly TimeSpan IsaBusTimeout = TimeSpan.FromMilliseconds(250);
+    private static readonly Lock InProcess = new();
+    private static readonly Mutex? IsaBus = TryOpenIsaBusMutex();
+
     public void SelectSlot(int slot) => port.SelectSlot(slot);
 
     // Select the 16-bit EC-RAM address, then read/write the data register (0x2F).
@@ -33,10 +47,40 @@ public sealed class EcRam(IEcPort port)
     }
 
     /// <summary>PURE READ: addresses the register and reads a word. No control-register writes.</summary>
-    public ushort ReadWord(ushort ecAddress) { Address(ecAddress); return port.Inw(0x2F); }
+    public ushort ReadWord(ushort ecAddress) => Exclusive(() => { Address(ecAddress); return port.Inw(0x2F); });
 
-    public byte ReadByte(ushort ecAddress) { Address(ecAddress); return port.Inb(0x2F); }
+    public byte ReadByte(ushort ecAddress) => Exclusive(() => { Address(ecAddress); return port.Inb(0x2F); });
 
     /// <summary>WRITE: only used by init/enable paths — NOT part of the read-only probe.</summary>
-    public void WriteByte(ushort ecAddress, byte value) { Address(ecAddress); port.Outb(0x2F, value); }
+    public void WriteByte(ushort ecAddress, byte value) =>
+        Exclusive(() => { Address(ecAddress); port.Outb(0x2F, value); return 0; });
+
+    private static T Exclusive<T>(Func<T> access)
+    {
+        lock (InProcess)
+        {
+            bool held = false;
+            try
+            {
+                if (IsaBus is not null)
+                {
+                    try { held = IsaBus.WaitOne(IsaBusTimeout); }
+                    catch (AbandonedMutexException) { held = true; }   // previous owner died; the bus is ours
+                    if (!held)
+                        throw new TimeoutException("Another tool held the ISA bus for over 250 ms; EC access skipped.");
+                }
+                return access();
+            }
+            finally
+            {
+                if (held) IsaBus!.ReleaseMutex();
+            }
+        }
+    }
+
+    private static Mutex? TryOpenIsaBusMutex()
+    {
+        try { return new Mutex(false, IsaBusMutexName); }
+        catch (Exception) { return null; }   // no rights to the Global namespace: in-process lock only
+    }
 }
