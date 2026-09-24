@@ -65,8 +65,11 @@ $toggle = {
     try { $script:proc.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 200; if (-not $script:proc.HasExited) { $script:proc.Kill() } } catch {}
     $script:proc = $null
   } else {
-    $script:proc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
-      "-ExecutionPolicy", "Bypass", "-File", $launch, "-Url", $Url, "-Width", $Width
+    # Headless conhost, not a bare powershell: this fires mid-game, and a console that exists even
+    # for a frame is enough to knock a fullscreen game out of focus.
+    $script:proc = Start-Process "$env:SystemRoot\System32\conhost.exe" -PassThru -ArgumentList @(
+      "--headless", "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+      "-File", "`"$launch`"", "-Url", $Url, "-Width", $Width
     )
   }
 }

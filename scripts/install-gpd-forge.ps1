@@ -474,9 +474,18 @@ $startLink = $wsh.CreateShortcut("$StartMenu\GPD Forge.lnk")
 $startLink.TargetPath = "$InstallDir\GPD Forge.exe"; $startLink.Arguments = ''; $startLink.WorkingDirectory = $InstallDir
 $startLink.IconLocation = "$InstallDir\icon.ico"; $startLink.Description = 'Open GPD Forge dashboard'; $startLink.Save()
 New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
+# Every logon shortcut is hosted by `conhost.exe --headless`. powershell.exe and dotnet.exe are
+# console programs: launched directly, Windows draws their console BEFORE `-WindowStyle Hidden` can
+# hide it, and that flash steals focus from a fullscreen game. A headless conhost never creates a
+# window at all. It is Microsoft-signed too, so Smart App Control has nothing new to refuse.
+$Conhost    = "$env:SystemRoot\System32\conhost.exe"
+$PowerShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+function Get-HeadlessScriptArgs([string]$Script) {
+    "--headless `"$PowerShell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\$Script`""
+}
 $trayLink = $wsh.CreateShortcut("$StartupDir\GPD Forge Tray.lnk")
-$trayLink.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$trayLink.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\forge-notify.ps1`""
+$trayLink.TargetPath = $Conhost
+$trayLink.Arguments = Get-HeadlessScriptArgs 'forge-notify.ps1'
 $trayLink.WorkingDirectory = $InstallDir; $trayLink.IconLocation = "$InstallDir\icon.ico"; $trayLink.Description = 'GPD Forge premium tray icon'; $trayLink.Save()
 
 # The GPU agent, in the USER'S session. It is not optional plumbing: ADLX cannot be reached from the
@@ -485,8 +494,8 @@ $trayLink.WorkingDirectory = $InstallDir; $trayLink.IconLocation = "$InstallDir\
 # service uses, so Smart App Control has nothing new to refuse.
 # Resident hotkeys, in the USER'S session. The daemon runs in session 0 and cannot register a
 # user-session hotkey at all, so this is not a convenience wrapper — it is the only place the
-# mechanism can live. Both scripts are hosted by the Microsoft-signed powershell.exe, so Smart App
-# Control has no unsigned binary of ours to refuse.
+# mechanism can live. Both scripts are hosted by the Microsoft-signed powershell.exe (itself hosted
+# headless, see the tray above), so Smart App Control has no unsigned binary of ours to refuse.
 $hotkeyLinks = @(
     @{ Path = "$StartupDir\GPD Forge Overlay Hotkey.lnk"; Script = 'overlay-hotkey.ps1'; Desc = 'GPD Forge overlay hotkey (Ctrl+Alt+Home)' },
     @{ Path = "$StartupDir\GPD Forge Hotkeys.lnk";        Script = 'forge-hotkeys.ps1';  Desc = 'GPD Forge hotkeys (TDP and mode)' }
@@ -494,12 +503,11 @@ $hotkeyLinks = @(
 foreach ($hk in $hotkeyLinks) {
     if ($EnableHotkeys) {
         $l = $wsh.CreateShortcut($hk.Path)
-        $l.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell1.0\powershell.exe"
-        $l.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\$($hk.Script)`""
+        $l.TargetPath = $Conhost
+        $l.Arguments = Get-HeadlessScriptArgs $hk.Script
         $l.WorkingDirectory = $InstallDir
         $l.IconLocation = "$InstallDir\icon.ico"
         $l.Description = $hk.Desc
-        $l.WindowStyle = 7
         $l.Save()
     } elseif (Test-Path $hk.Path) {
         # Installing without the flag must not leave a listener behind still holding those chords.
@@ -512,12 +520,12 @@ $agentLink = "$StartupDir\GPD Forge GPU Agent.lnk"
 if ($EnableGpuProfiles) {
     $dotnetPath = (Get-Command dotnet).Source
     $gpuLink = $wsh.CreateShortcut($agentLink)
-    $gpuLink.TargetPath = $dotnetPath
-    $gpuLink.Arguments = "`"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent"
+    # Headless, not minimised: a minimised console is still a console window for the whole session.
+    $gpuLink.TargetPath = $Conhost
+    $gpuLink.Arguments = "--headless `"$dotnetPath`" `"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent"
     $gpuLink.WorkingDirectory = "$InstallDir\service"
     $gpuLink.IconLocation = "$InstallDir\icon.ico"
     $gpuLink.Description = 'GPD Forge GPU agent (applies Radeon profiles; must run in your session)'
-    $gpuLink.WindowStyle = 7   # minimised: it is a background agent, not something to look at
     $gpuLink.Save()
     Write-Host "  GPU agent will start at logon (Radeon profiles)." -ForegroundColor DarkGray
 } elseif (Test-Path $agentLink) {

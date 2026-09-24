@@ -14,6 +14,8 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, Shutdown};
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::thread;
 use std::time::Duration;
 
@@ -119,10 +121,17 @@ fn resolve_daemon() -> Option<(PathBuf, PathBuf)> {
     None
 }
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Spawn `dotnet <dll>` with the right env for SAC-safe hosting. Returns the PID; never panics.
 fn spawn_daemon(dotnet: &PathBuf, dll: &PathBuf) -> Option<u32> {
-    Command::new(dotnet)
-        .arg(dll)
+    let mut cmd = Command::new(dotnet);
+    // dotnet.exe is a console program; without this it opens a console window that stays up for
+    // the daemon's whole lifetime and can steal focus from a fullscreen game.
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.arg(dll)
         .env("GPDFORGE_AUTO_PROFILES", "1")
         // No GPDFORGE_ENABLE_HARDWARE here — that flag must be set by the installer (HKLM write),
         // which we cannot reach from a non-elevated Tauri shell. Driverless WMI telemetry still

@@ -5,6 +5,18 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **No more console flashes over a fullscreen game.** Every logon shortcut the installer creates
+  (tray, hotkeys, GPU agent) and the overlay hotkey's launch are now hosted by `conhost.exe
+  --headless` instead of launching `powershell.exe`/`dotnet.exe` directly. A console program draws
+  its window before `-WindowStyle Hidden` can hide it, and that one frame was enough to pull a game
+  out of fullscreen. The GPU agent no longer keeps a minimised console open for the whole session.
+- **The Tauri shell spawns the daemon with `CREATE_NO_WINDOW`**, so opening the app while the
+  service is down no longer leaves a `dotnet` console behind.
+- **The hotkey logon shortcuts pointed at a path that does not exist**: `WindowsPowerShell\v1.0`
+  had become `WindowsPowerShell<0x0B>1.0` (a `\v` read as a vertical tab). A test now rejects
+  control bytes in any script.
+
 ## [0.3.0] — 2026-09-01
 
 If 0.2.0 was about the app no longer claiming things it had not verified, this one is about the app
