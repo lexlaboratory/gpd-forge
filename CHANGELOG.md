@@ -5,6 +5,19 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **The UI is sized for the handheld it runs on.** The two smallest text sizes were 9.6 px and
+  11 px, used for HUD labels across the app; they are now 12 px and 13 px. The desktop window opens
+  at the panel's native 1280×800 instead of 1024×720. Density detection uses `any-pointer: coarse`,
+  because on the Win 4 the touchpad is the primary pointer and the touchscreen alone did not count,
+  so the handheld booted into 32 px mouse targets.
+- **Sidebar icons are inline SVG** (Lucide shapes) instead of emoji, so they follow the theme's
+  colour and sit on one grid on every system.
+
+### Added
+- **LB / RB switch sections** from a gamepad, wrapping at either end. Alerts was ten D-pad presses
+  from the Dashboard; it is now one.
+
 ### Fixed
 - **No more console flashes over a fullscreen game.** Every logon shortcut the installer creates
   (tray, hotkeys, GPU agent) and the overlay hotkey's launch are now hosted by `conhost.exe

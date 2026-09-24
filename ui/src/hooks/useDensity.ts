@@ -15,8 +15,10 @@ export type Density = 'pad' | 'mouse'
 
 const STORAGE_KEY = 'forge-density'
 
-/** Coarse pointer means a touchscreen, which wants the same targets a thumbstick does. */
-const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+/** A touchscreen wants the same targets a thumbstick does. `any-pointer`, not `pointer`: on the
+ *  handheld the touchpad counts as the PRIMARY pointer, so `(pointer: coarse)` is false on a device
+ *  whose screen is touch, and it booted into 32px mouse targets. */
+const coarse = () => typeof matchMedia === 'function' && matchMedia('(any-pointer: coarse)').matches
 const padConnected = () => Array.from(navigator.getGamepads?.() ?? []).some(Boolean)
 const detect = (): Density => (padConnected() || coarse() ? 'pad' : 'mouse')
 

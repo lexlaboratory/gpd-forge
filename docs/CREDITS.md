@@ -25,6 +25,9 @@ learn from, reuse, or derive — and under which license — so GPL-3 compliance
 - **[GPD-LinuxControls](https://github.com/Cryolitia/GPD-LinuxControls)** (MIT) / **[pyWinControls](https://github.com/pelrun/pyWinControls)** —
   HID `SET_REPORT`/`GET_REPORT` button/deadzone protocol (VID 0x2F24 / PID 0x0135, 1024-byte config blob).
 
+- **[Lucide](https://lucide.dev)** (ISC, © Lucide Contributors / Cole Bemis) — the navigation icon shapes in
+  `ui/src/components/NavIcon.tsx` follow Lucide's 24px stroke icons.
+
 ## Known EC register map (GPD Win 4, from gpd-fan) — to verify on real hardware in Phase 1
 | Model | Cmd addr / data | EC RAM | RPM | PWM write | PWM max |
 |---|---|---|---|---|---|

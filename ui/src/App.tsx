@@ -1,5 +1,5 @@
 // GPD Forge UI — app shell (multi-page). GPL-3.0-or-later.
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModeId, Telemetry } from './types'
 import { getTelemetry, getMode, setMode as apiSetMode, getAlertSummary } from './api'
 import { Toggle } from './ui'
@@ -14,21 +14,22 @@ import {
 import { Wizard, isSetupDone } from './Wizard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { CommandPalette } from './CommandPalette'
+import { NavIcon } from './components/NavIcon'
 
 const NAV = [
-  { id: 'dashboard',  label: 'Dashboard',  icon: '📊' },
-  { id: 'power',      label: 'Power',      icon: '⚡' },
-  { id: 'fan',        label: 'Fan',        icon: '🌀' },
+  { id: 'dashboard',  label: 'Dashboard' },
+  { id: 'power',      label: 'Power' },
+  { id: 'fan',        label: 'Fan' },
   // Replaces the old "Controller" entry, which was a whole top-level section of disabled sliders
   // advertising a feature that does not exist. Hardware reports what this board can and cannot do.
-  { id: 'hardware',   label: 'Hardware',   icon: '🔩' },
-  { id: 'display',    label: 'Display',    icon: '🔆' },
-  { id: 'profiles',   label: 'Profiles',   icon: '🗂️' },
-  { id: 'monitor',    label: 'Monitor',    icon: '📈' },
-  { id: 'sessions',   label: 'Sessions',   icon: '🎮' },
-  { id: 'system',     label: 'System',     icon: '🩺' },
-  { id: 'settings',   label: 'Settings',   icon: '⚙️' },
-  { id: 'alerts',     label: 'Alerts',     icon: '🔔' },
+  { id: 'hardware',   label: 'Hardware' },
+  { id: 'display',    label: 'Display' },
+  { id: 'profiles',   label: 'Profiles' },
+  { id: 'monitor',    label: 'Monitor' },
+  { id: 'sessions',   label: 'Sessions' },
+  { id: 'system',     label: 'System' },
+  { id: 'settings',   label: 'Settings' },
+  { id: 'alerts',     label: 'Alerts' },
 ] as const
 type PageId = typeof NAV[number]['id']
 const PAGE_IDS = NAV.map((n) => n.id)
@@ -43,8 +44,17 @@ export function App() {
   // page redesign.
   useDensity()
   // Gamepad navigation now covers the whole app, not just the overlay. No cancel action: there is
-  // nothing to close in the main window, and B should not quit it by accident.
-  useSpatialNav(shellRef)
+  // nothing to close in the main window, and B should not quit it by accident. LB/RB step through
+  // the sections (wrapping), so Alerts is one press from the Dashboard instead of ten.
+  const pageNow = useRef(page)
+  pageNow.current = page
+  const stepPage = useCallback((delta: number) => {
+    const i = PAGE_IDS.indexOf(pageNow.current)
+    setPage(PAGE_IDS[(i + delta + PAGE_IDS.length) % PAGE_IDS.length])
+  }, [setPage])
+  const prevPage = useCallback(() => stepPage(-1), [stepPage])
+  const nextPage = useCallback(() => stepPage(1), [stepPage])
+  useSpatialNav(shellRef, { onPrevPage: prevPage, onNextPage: nextPage })
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
@@ -136,7 +146,7 @@ export function App() {
             <button key={n.id} type="button" className={`nav-item ${page === n.id ? 'active' : ''}`}
                     aria-current={page === n.id ? 'page' : undefined}
                     data-testid={`nav-${n.id}`} onClick={() => setPage(n.id)}>
-              <span className="nav-icon" aria-hidden>{n.icon}</span><span className="nav-label">{n.label}</span>
+              <NavIcon name={n.id} /><span className="nav-label">{n.label}</span>
               {n.id === 'alerts' && unreadAlerts > 0 && <span className="nav-badge" aria-label={`${unreadAlerts} unread alerts`}>{unreadAlerts > 99 ? '99+' : unreadAlerts}</span>}
             </button>
           ))}

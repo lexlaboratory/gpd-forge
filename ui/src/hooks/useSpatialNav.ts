@@ -48,10 +48,16 @@ export function pickNeighbour(from: Box, boxes: Box[], dir: Direction): HTMLElem
 interface Options {
   /** B / Escape. Omit in the main window, where there is nothing to close. */
   onCancel?: () => void
+  /** LB / RB (standard mapping buttons 4 and 5): step through pages. */
+  onPrevPage?: () => void
+  onNextPage?: () => void
   enabled?: boolean
 }
 
-export function useSpatialNav(rootRef: RefObject<HTMLElement | null>, { onCancel, enabled = true }: Options = {}) {
+export function useSpatialNav(
+  rootRef: RefObject<HTMLElement | null>,
+  { onCancel, onPrevPage, onNextPage, enabled = true }: Options = {},
+) {
   useEffect(() => {
     if (!enabled) return
     const root = rootRef.current
@@ -111,6 +117,8 @@ export function useSpatialNav(rootRef: RefObject<HTMLElement | null>, { onCancel
         if (edge(15, b(15))) move('right')
         if (edge(0, b(0))) activate()
         if (edge(1, b(1))) onCancel?.()
+        if (edge(4, b(4))) onPrevPage?.()
+        if (edge(5, b(5))) onNextPage?.()
         const ax = gp.axes[0] ?? 0
         const ay = gp.axes[1] ?? 0
         if (ay > 0.6 && axis.y <= 0.6) move('down')
@@ -123,5 +131,5 @@ export function useSpatialNav(rootRef: RefObject<HTMLElement | null>, { onCancel
     }
     raf = requestAnimationFrame(poll)
     return () => { window.removeEventListener('keydown', onKey); cancelAnimationFrame(raf) }
-  }, [rootRef, onCancel, enabled])
+  }, [rootRef, onCancel, onPrevPage, onNextPage, enabled])
 }
