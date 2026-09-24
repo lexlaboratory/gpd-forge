@@ -672,7 +672,15 @@ builder.Services.AddSingleton(sp => new ChargeLimitService(
     sp.GetRequiredService<IChargeLimitBackend>(), enableHardware, sp.GetService<ILogger<ChargeLimitService>>()));
 builder.Services.AddSingleton(sp => new CurveOptimizerService(enableHardware, sp.GetService<ILogger<CurveOptimizerService>>()));
 
-builder.Services.AddSingleton<FanState>();
+// The fan preference is restored from disk: in memory only, every reboot or reinstall handed the
+// fan back to firmware. /panic's Aggressive is deliberately NOT saved — it is an emergency, not a
+// preference.
+builder.Services.AddSingleton(_ => new FanPreferenceStore(DataRoot.Current));
+builder.Services.AddSingleton(sp =>
+{
+    var saved = sp.GetRequiredService<FanPreferenceStore>().Read();
+    return new FanState { Mode = saved.Mode, ManualDuty = saved.ManualDuty };
+});
 builder.Services.AddSingleton<BatteryService>();
 builder.Services.AddSingleton<IProcessSuspender, NtProcessSuspender>();
 builder.Services.AddSingleton<FreezerService>(sp =>
@@ -1390,12 +1398,13 @@ app.MapPost("/power-source", (PowerSourceRequest r, PowerSourceState s) =>
 // GPDFORGE_ENABLE_FAN_CONTROL=1 AND a matched board) — see ForgeWorker.cs for the tick that applies
 // this, and core/Fan/GpdFanController.cs for the write path itself.
 app.MapGet("/fan", (FanState f, IGpdFanController controller) => Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available }));
-app.MapPost("/fan", (FanRequest r, FanState f, IGpdFanController controller) =>
+app.MapPost("/fan", (FanRequest r, FanState f, FanPreferenceStore store, IGpdFanController controller, ILogger<FanState> log) =>
 {
     if (r.Mode is not null && !FanControlPolicy.IsValidMode(r.Mode))
         return Results.BadRequest(new { error = new { code = "bad_mode", message = "mode must be one of Auto, Quiet, Balanced, Aggressive, Manual" } });
     if (r.Mode is not null) f.Mode = r.Mode;
     if (r.ManualDuty is int d) f.ManualDuty = Math.Clamp(d, 0, 255);
+    SaveFanPreference(store, f, log);
     return Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available });
 });
 
@@ -1708,7 +1717,7 @@ app.MapGet("/settings/export", (GuardianService guardian, FanState fan, DisplayS
         autoFps = new { enabled = autoFps.Enabled, targetFps = autoFps.TargetFps },
     }));
 
-app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
+app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, FanPreferenceStore fanStore, ILogger<FanState> fanLog, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
 {
     var applied = new List<string>();
 
@@ -1736,7 +1745,12 @@ app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guar
         });
         applied.Add("guardian");
     }
-    if (FanControlPolicy.IsValidMode(req.FanMode)) { fan.Mode = req.FanMode!; applied.Add("fanMode"); }
+    if (FanControlPolicy.IsValidMode(req.FanMode))
+    {
+        fan.Mode = req.FanMode!;
+        SaveFanPreference(fanStore, fan, fanLog);
+        applied.Add("fanMode");
+    }
     if (req.Brightness is int level) { display.SetBrightness(level); applied.Add("brightness"); }
     if (req.PowerSource is not null)
     {
@@ -1767,6 +1781,17 @@ app.Run();
 // The single shape every /app-rules response uses. `modes` and `autoProfiles` ride along because the
 // editor cannot be honest without them: it has to offer exactly the modes a rule may select, and it
 // has to be able to say "these are stored but nothing is applying them" when the gate is closed.
+// A preference that cannot be saved still applies for this run; it is logged, never thrown, so a
+// read-only data directory degrades to yesterday's behaviour instead of failing the request.
+static void SaveFanPreference(FanPreferenceStore store, FanState f, ILogger log)
+{
+    try { store.Write(new FanPreference(f.Mode, f.ManualDuty)); }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        log.LogWarning(ex, "Fan preference {Mode} applies now but could not be saved; it will not survive a restart.", f.Mode);
+    }
+}
+
 static object RulesPayload(IAppRuleStore rules, bool autoProfilesEnabled) => new
 {
     rules = rules.List(),

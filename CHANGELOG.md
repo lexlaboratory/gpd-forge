@@ -40,6 +40,10 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   Tctl's own wobble), is never raised within 10 s of its last change, and an unchanged ceiling is
   re-asserted every 30 s rather than every tick. A second load run with only a 2 W step still
   bounced 23 ↔ 25 W every few seconds; the step and dwell are sized from it.
+- **The fan preference survives a restart.** It lived only in memory, so every reboot, service
+  restart or reinstall silently handed the fan back to firmware. `POST /fan` and
+  `/settings/import` now save it to `%ProgramData%\GPD Forge\fan.json`, read back and validated at
+  startup. `/panic`'s Aggressive is deliberately not saved: an emergency is not a preference.
 
 ## [0.3.0] — 2026-09-01
 
