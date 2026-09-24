@@ -18,9 +18,13 @@ public sealed class GuardianService(Func<double>? secondsNow = null)
     // reacting to the raw reading instantly, and the firmware's own Tctl limit sits behind both.
     public const double ThrottleSmoothingTauSeconds = 2.0;
 
-    /// <summary>While throttling, the ceiling is raised only once it would go up by at least this
-    /// much (it is lowered by any amount, immediately).</summary>
-    public const int ThrottleRaiseStepW = 2;
+    /// <summary>While throttling, the ceiling changes only by at least this much, either way:
+    /// about 1.4 °C of smoothed temperature on the default ramp, above Tctl's own wobble.</summary>
+    public const int ThrottleStepW = 3;
+
+    /// <summary>While throttling, the ceiling is not raised within this long of its last change.</summary>
+    public const double ThrottleRaiseDwellSeconds = 10.0;
+    private double _throttleChangedAt;
 
     private readonly Func<double> _now = secondsNow ?? DefaultClock;
     private readonly GpdForge.Fan.TempSmoother _smoother =
@@ -66,13 +70,20 @@ public sealed class GuardianService(Func<double>? secondsNow = null)
             if (d.ClearThrottle) _throttleW = null;
             else if (Config.AutoThrottle && d.ThrottleToW is int w)
             {
-                // Lower at once; raise only by a real step. At the edge of the band the ramp flips
-                // ±1 W every tick, and each flip is a ryzenadj apply that stretches the loop.
-                if (_throttleW is int cur && w > cur && w < cur + ThrottleRaiseStepW)
+                // Change only by a real step (either way), and never raise within
+                // ThrottleRaiseDwellSeconds of the last change. The ramp moves ~2.2 W per °C and Tctl
+                // wobbles by about that much at the edge of the band; every flip is a ryzenadj apply.
+                // Holding a 1 W drop back is harmless: at the critical limit the evaluator jumps
+                // straight to the floor, and the firmware's own Tctl limit sits behind both.
+                double now = _lastObservedAt ?? 0;
+                if (_throttleW is int cur && w != cur &&
+                    (Math.Abs(w - cur) < ThrottleStepW ||
+                     (w > cur && now - _throttleChangedAt < ThrottleRaiseDwellSeconds)))
                 {
                     w = cur;
                     d = d with { ThrottleToW = cur };
                 }
+                if (w != _throttleW) _throttleChangedAt = now;
                 _throttleW = w;
             }
 

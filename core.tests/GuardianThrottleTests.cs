@@ -131,4 +131,23 @@ public class GuardianSmoothingTests
         for (int i = 0; i < 10; i++) { svc.Observe(Snap(93)); clock.Now += 1; }
         Assert.True(svc.ThrottledToW < before);
     }
+
+    [Fact]
+    public void While_throttling_a_one_degree_wobble_does_not_bounce_the_ceiling()
+    {
+        // Second 5-minute load run (2026-09-24): with a 2 W raise step alone the ceiling still went
+        // 23 -> 25 -> 23 every 2-8 s, because the ramp moves ~2.2 W per °C and Tctl wobbles by ~1 °C.
+        var clock = new Clock();
+        var svc = new GuardianService(clock.Read);
+        for (int i = 0; i < 30; i++) { svc.Observe(Snap(91)); clock.Now += 1; }
+        int changes = 0;
+        int? last = svc.ThrottledToW;
+        for (int i = 0; i < 30; i++)
+        {
+            svc.Observe(Snap(i % 4 < 2 ? 89.6 : 91.4));
+            clock.Now += 1;
+            if (svc.ThrottledToW != last) { changes++; last = svc.ThrottledToW; }
+        }
+        Assert.True(changes <= 4, $"ceiling changed {changes} times in 30 s");
+    }
 }
