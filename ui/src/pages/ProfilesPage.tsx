@@ -178,7 +178,7 @@ export function PerAppRulesCard() {
       <ul className="rules" aria-label="Per-app rules, highest precedence first">
         {info?.rules.length === 0 && <li className="rule" data-testid="rules-empty">No rules. Every app falls back to the AC/battery default.</li>}
         {info?.rules.map((r, i) => (
-          <li key={r.id} className="rule cap-row" data-testid="rule-row">
+          <li key={r.id} className="rule cap-row app-rule" data-testid="rule-row">
             {editing?.id === r.id ? (
               <RuleForm
                 testid="rule-edit" busy={busy} saveLabel="Save"

@@ -7,7 +7,6 @@ export type ModeId = 'gaming' | 'gaming-battery' | 'ai' | 'windows' | 'battery' 
 export interface Mode {
   id: ModeId
   label: string
-  icon: string
   blurb: string
 }
 

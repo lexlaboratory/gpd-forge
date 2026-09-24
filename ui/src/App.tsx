@@ -138,7 +138,7 @@ export function App() {
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="nav">
         <div className="nav-brand">
-          <img className="brand-logo" src="/logo.png" alt="" aria-hidden width={34} height={34} />
+          <img className="brand-logo" src="/logo.svg" alt="" aria-hidden width={36} height={36} />
           <span className="nav-name">GPD Forge</span>
         </div>
         <nav className="nav-list" aria-label="Sections">

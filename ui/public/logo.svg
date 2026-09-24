@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="GPD Forge">
+  <!-- GPD Forge app icon: a GPD Win 4 seen from the front. Master artwork; scripts/make-icons.mjs
+       renders it to every raster size. GPL-3.0-or-later. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2332"/>
+      <stop offset="1" stop-color="#0a0d13"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f7fb"/>
+      <stop offset="1" stop-color="#cfd6e1"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3cd6f5"/>
+      <stop offset="1" stop-color="#8a7cff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- squircle tile -->
+  <rect x="32" y="32" width="960" height="960" rx="232" fill="url(#bg)"/>
+
+  <!-- body: the Win 4's wide rounded slab -->
+  <rect x="96" y="300" width="832" height="424" rx="168" fill="url(#body)"/>
+
+  <!-- screen bezel + panel -->
+  <rect x="300" y="336" width="424" height="272" rx="30" fill="#141922"/>
+  <rect x="320" y="356" width="384" height="232" rx="18" fill="url(#screen)"/>
+  <!-- a hint of UI on the panel so it reads as a lit screen, not a coloured block -->
+  <rect x="348" y="384" width="128" height="16" rx="8" fill="#ffffff" fill-opacity="0.55"/>
+  <rect x="348" y="416" width="200" height="12" rx="6" fill="#ffffff" fill-opacity="0.3"/>
+
+  <!-- slide-out keyboard seam under the screen -->
+  <rect x="340" y="636" width="344" height="20" rx="10" fill="#9aa5b6"/>
+
+  <!-- left: analog stick over D-pad -->
+  <circle cx="200" cy="426" r="62" fill="#1c2230"/>
+  <circle cx="200" cy="426" r="36" fill="#323b50"/>
+  <path d="M184 546h32v32h32v32h-32v32h-32v-32h-32v-32h32z" fill="#1c2230"/>
+
+  <!-- right: ABXY over analog stick -->
+  <circle cx="824" cy="370" r="22" fill="#1c2230"/>
+  <circle cx="778" cy="416" r="22" fill="#1c2230"/>
+  <circle cx="870" cy="416" r="22" fill="#3cd6f5"/>
+  <circle cx="824" cy="462" r="22" fill="#1c2230"/>
+  <circle cx="824" cy="596" r="62" fill="#1c2230"/>
+  <circle cx="824" cy="596" r="36" fill="#323b50"/>
+</svg>

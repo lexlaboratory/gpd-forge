@@ -394,3 +394,22 @@ test.describe('density: pad, collapsed sidebar', () => {
     await expect(page).toHaveScreenshot('dashboard-pad-dark-720x600.png', { fullPage: true })
   })
 })
+
+// The overlay's real window: scripts/overlay-launch.ps1 opens it 380px wide. Every capture above is
+// 720px or wider, so the one size the overlay actually runs at was never looked at. Pad density,
+// because the overlay is opened mid-game with a controller in hand.
+for (const theme of THEMES) {
+  test.describe(`overlay window 380x800 — ${theme}`, () => {
+    test.use({ viewport: { width: 380, height: 800 }, colorScheme: theme })
+
+    test(`overlay — ${theme} — 380x800 pad`, async ({ page }) => {
+      await prepare(page, { theme, density: 'pad' })
+      await page.addInitScript(([t]) => { document.documentElement.dataset.theme = t }, [theme])
+      await page.goto('/overlay.html', { waitUntil: 'domcontentloaded' })
+      await expect(page.getByTestId('qam')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByTestId('qam-budget')).not.toHaveText('—')
+      await settle(page)
+      await expect(page).toHaveScreenshot(`overlay-${theme}-380x800-pad.png`, { fullPage: true })
+    })
+  })
+}

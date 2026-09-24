@@ -4,7 +4,7 @@ import type { AiInfo, InferenceHold, TuneGoal, TunerInfo } from '../types'
 import {
   setTdp as apiSetTdp, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
 } from '../api'
-import { Badge, Button, Frame, Readout, Segmented, Slider, Toggle, type Tone } from '../components'
+import { Badge, Button, Frame, Icon, Readout, Segmented, Slider, Toggle, type Tone } from '../components'
 import { useToast } from '../Toast'
 import { JobsPanel } from '../JobsPanel'
 import { StandbyPanel } from '../StandbyPanel'
@@ -56,7 +56,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
             <button key={m.id} role="option" aria-selected={active === m.id} data-testid={`mode-${m.id}`}
               className={`mode-card ${active === m.id ? 'active' : ''}`} onClick={() => pickMode(m.id)}>
               {auto && active === m.id && <span className="mode-auto" data-testid="mode-auto">AUTO</span>}
-              <span className="mode-icon" aria-hidden>{m.icon}</span>
+              <span className="mode-icon"><Icon name={m.id} size={22} /></span>
               <span className="mode-label">{m.label}</span>
               <span className="mode-blurb">{m.blurb}</span>
             </button>

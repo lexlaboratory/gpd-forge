@@ -1,7 +1,12 @@
 /* GPD Forge — design tokens. GPL-3.0-or-later.
  *
- * The HUD look is built entirely from this file: styles.css consumes tokens and never hardcodes a
- * colour, size or duration. Retheming (phosphor hue, density, motion) happens here alone.
+ * The whole look is built from this file: styles.css and overlay.css consume tokens and never
+ * hardcode a colour, size or duration.
+ *
+ * Direction (2026-09-24): "modern console" — soft layered dark surfaces that get their depth from
+ * luminance rather than from borders, generous radii, a single vivid accent, large tabular numbers,
+ * and sentence-case chrome. It replaced a retro HUD (monospace caps, bracket corners, scanlines,
+ * phosphor glow) that read as dated and was hard to scan on a 6" panel at arm's length.
  *
  * Three axes, all driven by data-attributes on <html>:
  *   data-theme      dark | light      — the two palettes
@@ -11,61 +16,74 @@
 
 :root {
   /* ---- Type -------------------------------------------------------------
-   * Deliberately DUAL. A HUD reads as a HUD because of its chrome — labels,
-   * readouts, buttons — not because its paragraphs are monospaced. Setting long
-   * prose in a mono face is exactly what makes these designs tiring, so body
-   * copy stays in the system sans.
-   * Cascadia ships with Windows 11, so nothing is bundled and nothing is
-   * fetched — the Tauri CSP forbids external origins anyway. */
-  --font-hud: "Cascadia Mono", Consolas, ui-monospace, SFMono-Regular, monospace;
-  --font-body: "Segoe UI", system-ui, -apple-system, sans-serif;
+   * Segoe UI Variable ships with Windows 11 (nothing bundled, nothing fetched — the Tauri CSP
+   * forbids external origins). "Display" optical size for big numbers and titles, "Text" for the
+   * rest. The mono face survives only for small technical strings: paths, commands, ids. */
+  --font-body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, SFMono-Regular, monospace;
+  /* Legacy alias: older rules and inline styles still say --font-hud. It is now the UI face. */
+  --font-hud: var(--font-body);
 
-  /* Everything sizes in rem off this root, so the "large text" toggle finally
-   * scales the whole interface instead of only running text. */
+  /* Everything sizes in rem off this root, so the "large text" toggle scales the whole interface. */
   font-size: 15px;
 
-  /* Floors sized for a 6" 1280x800 panel held at arm's length: 12px and 13px. They were 9.6px
-   * and 11px, used 24 times for HUD labels a handheld user could not read. */
+  /* 12 / 13 / 14 / 15 / 17 / 20 / 26 / 34 px at the default root — strictly increasing (the old
+   * scale had --text-sm smaller than --text-xs), and nothing under 12px on a handheld panel. */
   --text-2xs: 0.8rem;
-  --text-xs: 0.87rem;
-  --text-sm: 0.84rem;
-  --text-md: 0.94rem;
-  --text-lg: 1.1rem;
-  --text-xl: 1.4rem;
-  --text-2xl: 1.85rem;
-  --text-3xl: 2.4rem;
+  --text-xs: 0.867rem;
+  --text-sm: 0.933rem;
+  --text-md: 1rem;
+  --text-lg: 1.133rem;
+  --text-xl: 1.333rem;
+  --text-2xl: 1.733rem;
+  --text-3xl: 2.267rem;
 
-  --leading-tight: 1.2;
-  --leading-normal: 1.55;
+  --leading-tight: 1.15;
+  --leading-normal: 1.5;
 
-  --tracking-hud: 0.08em;   /* label caps */
-  --tracking-wide: 0.16em;  /* section rules */
+  --weight-regular: 400;
+  --weight-medium: 550;
+  --weight-semibold: 620;
+  --weight-bold: 700;
+
+  /* Tracking is for the one place caps survive — tiny eyebrow labels — never for body chrome. */
+  --tracking-eyebrow: 0.06em;
+  --tracking-hud: 0;
+  --tracking-wide: var(--tracking-eyebrow);
 
   /* ---- Space ------------------------------------------------------------ */
-  --space-1: 0.27rem;
-  --space-2: 0.53rem;
+  --space-1: 0.267rem;
+  --space-2: 0.533rem;
   --space-3: 0.8rem;
-  --space-4: 1.07rem;
+  --space-4: 1.067rem;
   --space-5: 1.6rem;
-  --space-6: 2.13rem;
+  --space-6: 2.133rem;
   --space-7: 3.2rem;
 
-  /* ---- Shape ------------------------------------------------------------
-   * A HUD is built from cut corners and hairlines, not pills. Radii stay small
-   * on purpose; `--radius-pill` survives only for status badges. */
-  --radius-sm: 2px;
-  --radius-md: 3px;
-  --radius-lg: 4px;
+  /* ---- Shape ------------------------------------------------------------ */
+  --radius-sm: 8px;    /* badges, inputs, small chips */
+  --radius-md: 10px;   /* buttons, steppers, list rows */
+  --radius-lg: 16px;   /* cards, tiles, panels */
   --radius-pill: 999px;
   --hairline: 1px;
   --rule: 2px;
-  --corner: 10px; /* length of the bracket drawn at frame corners */
+  --corner: 0px;       /* legacy: bracket corners are gone */
 
-  /* ---- Motion ----------------------------------------------------------- */
-  --dur-fast: 90ms;
-  --dur-base: 160ms;
-  --dur-slow: 280ms;
-  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* ---- Motion -----------------------------------------------------------
+   * Strong custom curves (Emil Kowalski): the built-in ease is too weak to feel intentional.
+   * ease-out for anything entering or responding, ease-in-out for things moving on screen, the
+   * drawer curve for panels. Nothing UI-facing runs longer than ~250ms, and nothing that fires tens
+   * of times a minute (page switches, d-pad focus, keyboard palette) animates at all. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease: var(--ease-out);
+  --dur-press: 120ms;
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+  --press-scale: 0.97;
 
   /* ---- Layers ----------------------------------------------------------- */
   --z-base: 0;
@@ -75,74 +93,74 @@
   --z-toast: 2000;
 
   /* ---- Focus ------------------------------------------------------------
-   * Not decoration. On a handheld driven by a d-pad, the focus ring IS the
-   * cursor: if it is not unmistakable the device is unusable. */
+   * On a handheld driven by a d-pad the focus ring IS the cursor: it must be unmistakable. */
   --focus-width: 2px;
   --focus-offset: 2px;
 }
 
-/* ---- Dark: phosphor on near-black (default) ----------------------------- */
+/* ---- Dark (default) ------------------------------------------------------ */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #05080c;
-  --bg-grid: rgba(57, 224, 255, 0.045); /* faint alignment grid behind everything */
-  --bg-elev: #0a1016;
-  --bg-elev-2: #101a22;
-  --bg-sunken: #04070a;
+  --bg: #0b0e13;
+  --bg-elev: #141922;
+  --bg-elev-2: #1c2230;
+  --bg-sunken: #080a0e;
+  --bg-hover: #222938;
 
-  --border: #1b2b38;
-  --border-bright: #2b4a5e;
+  --border: #242b39;
+  --border-bright: #36405a;
 
-  --text: #d7e6ee;
-  --text-dim: #86a0b0;
-  --text-faint: #536878;
+  --text: #eef2f7;
+  --text-dim: #aab3c2;
+  --text-faint: #8a95a8;
 
-  /* Swap these two lines for #ffb000 / #2a1c00 to get an amber phosphor HUD.
-   * Nothing else in the stylesheet needs to change. */
-  --accent: #39e0ff;
-  --accent-ink: #04141b; /* text drawn ON an accent fill */
-  --accent-2: #8b7dff;
+  --accent: #3cd6f5;
+  --accent-ink: #03171d;          /* text drawn ON an accent fill */
+  --accent-soft: rgba(60, 214, 245, 0.14);
+  --accent-2: #9a8cff;
 
-  --good: #46eda2;
-  --good-ink: #032016;
-  --warn: #ffb84d;
+  --good: #42dc9a;
+  --good-ink: #02180e;
+  --warn: #ffbb55;
   --warn-ink: #241600;
-  --danger: #ff6070;
+  --danger: #ff6b7a;
   --danger-ink: #2b0308;
 
-  --glow-accent: 0 0 0.5rem rgba(57, 224, 255, 0.45);
-  --glow-good: 0 0 0.5rem rgba(70, 237, 162, 0.45);
-  --glow-danger: 0 0 0.5rem rgba(255, 96, 112, 0.45);
-  --shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.55);
+  /* Depth: a hairline of light on the top edge plus a soft drop, instead of heavy borders. */
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.32);
+  --shadow-pop: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 64px rgba(0, 0, 0, 0.55);
+  --scrim: rgba(4, 6, 10, 0.62);
 
-  --scanline: rgba(255, 255, 255, 0.014);
+  /* Legacy tokens, neutralised: the phosphor glow and scanlines are gone. */
+  --glow-accent: none;
+  --glow-good: none;
+  --glow-danger: none;
+  --scanline: transparent;
+  --bg-grid: transparent;
 }
 
-/* ---- Light: the same HUD readable in daylight ---------------------------
- * The previous stylesheet only overrode backgrounds and text, leaving the
- * accent and semantic colours at their dark-mode values — cyan #4cc2ff on white
- * fails contrast badly, and chips rendered dark ink on a light fill. Every
- * colour token is redefined here. */
+/* ---- Light --------------------------------------------------------------- */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #eef3f6;
-  --bg-grid: rgba(0, 74, 105, 0.05);
+  --bg: #f2f4f8;
   --bg-elev: #ffffff;
-  --bg-elev-2: #e7eef2;
-  --bg-sunken: #dde7ec;
+  --bg-elev-2: #eef1f6;
+  --bg-sunken: #e5e9f0;
+  --bg-hover: #e8ecf3;
 
-  --border: #bccdd6;
-  --border-bright: #7fa3b4;
+  --border: #dce1ea;
+  --border-bright: #c3cad7;
 
-  --text: #08161d;
-  --text-dim: #4a6472;
-  --text-faint: #6e8794;
+  --text: #0d1320;
+  --text-dim: #465062;
+  --text-faint: #5d6879;
 
-  --accent: #006f96;
+  --accent: #0077a2;
   --accent-ink: #ffffff;
+  --accent-soft: rgba(0, 119, 162, 0.1);
   --accent-2: #4b3fc4;
 
   --good: #0a7a4d;
@@ -152,40 +170,36 @@
   --danger: #b3132a;
   --danger-ink: #ffffff;
 
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 6px 18px rgba(16, 24, 40, 0.06);
+  --shadow-pop: 0 2px 4px rgba(16, 24, 40, 0.08), 0 24px 56px rgba(16, 24, 40, 0.18);
+  --scrim: rgba(13, 19, 32, 0.32);
+
   --glow-accent: none;
   --glow-good: none;
   --glow-danger: none;
-  --shadow: 0 0.35rem 1.2rem rgba(16, 44, 60, 0.14);
-
   --scanline: transparent;
+  --bg-grid: transparent;
 }
 
 /* ---- Density -----------------------------------------------------------
- * Chosen by INPUT, not by viewport width: a 1920px screen driven by a gamepad
- * still needs thumb-sized targets, and a 1024px window driven by a mouse does
- * not. App.tsx sets data-density from gamepadconnected / pointerType, falling
- * back to (pointer: coarse).
- *
- * Only tokens change — never structure — so there is exactly one layout to
- * maintain. `--tap-min` stays in px on purpose: it is a physical finger size,
- * not a typographic measure, so it must not shrink when text is made smaller. */
+ * Chosen by INPUT, not by viewport width: a gamepad or a finger needs 44px targets whatever the
+ * window size. Only tokens change — never structure — so there is exactly one layout. `--tap-min`
+ * stays in px on purpose: it is a physical finger size, not a typographic measure. */
 :root,
 :root[data-density="mouse"] {
-  --tap-min: 32px;
+  --tap-min: 36px;
   --control-pad-y: var(--space-2);
-  --control-pad-x: var(--space-3);
+  --control-pad-x: var(--space-4);
   --gap-tight: var(--space-2);
   --gap-base: var(--space-3);
-  --gap-loose: var(--space-4);
+  --gap-loose: var(--space-5);
 }
 
 :root[data-density="pad"] {
-  /* 44px is the accessibility floor for touch; every control in the old build
-   * was under it (steppers 34px, chips 31px, switch 22px tall). */
   --tap-min: 44px;
   --control-pad-y: var(--space-3);
   --control-pad-x: var(--space-4);
-  --gap-tight: var(--space-3);
+  --gap-tight: var(--space-2);
   --gap-base: var(--space-4);
   --gap-loose: var(--space-5);
 }
@@ -194,12 +208,15 @@
 :root[data-textscale="large"] { font-size: 17.5px; }
 
 /* ---- Reduced motion -----------------------------------------------------
- * Previously honoured only inside Toast.tsx. Now global. */
+ * Motion is decorative everywhere in this app (nothing explains itself through movement), so the
+ * reduced setting removes it outright rather than trying to keep a subset. */
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --dur-press: 0ms;
     --dur-fast: 0ms;
     --dur-base: 0ms;
     --dur-slow: 0ms;
+    --press-scale: 1;
   }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

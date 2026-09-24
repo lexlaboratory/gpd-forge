@@ -19,16 +19,17 @@ import { useSpatialNav } from './hooks/useSpatialNav'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
 // nullable on 2026-09-01 because an unreadable sensor used to arrive as a confident zero.
 import { reading } from './pages/shared'
+import { Icon } from './components/Icon'
 
-const QMODES: { id: ModeId; icon: string; label: string }[] = [
-  { id: 'gaming', icon: '🎮', label: 'Gaming' },
+const QMODES: { id: ModeId; label: string }[] = [
+  { id: 'gaming', label: 'Gaming' },
   // The mode most worth having HERE: it is chosen mid-session, away from a desk, at the moment
   // someone notices the battery — which is exactly the situation the overlay exists for.
-  { id: 'gaming-battery', icon: '🔌', label: 'Gaming (batt)' },
-  { id: 'ai', icon: '🤖', label: 'AI' },
-  { id: 'windows', icon: '🪟', label: 'Windows' },
-  { id: 'battery', icon: '🔋', label: 'Battery' },
-  { id: 'standby', icon: '🩺', label: 'Standby' },
+  { id: 'gaming-battery', label: 'Gaming (batt)' },
+  { id: 'ai', label: 'AI' },
+  { id: 'windows', label: 'Windows' },
+  { id: 'battery', label: 'Battery' },
+  { id: 'standby', label: 'Standby' },
 ]
 const FAN_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive']
 // Two different things, and the overlay used to show only the first under the second's name.
@@ -138,7 +139,7 @@ export function OverlayApp() {
     <div className="qam" ref={rootRef} data-testid="qam">
       <header className="qam-head">
         <div className="qam-brand">
-          <span className="qam-logo" aria-hidden>⚡</span>
+          <img className="qam-logo" src="/logo.svg" alt="" aria-hidden width={20} height={20} />
           <span>GPD Forge</span>
           <span className={`qam-dot ${tele ? 'on' : ''}`} title="live" />
         </div>
@@ -164,7 +165,7 @@ export function OverlayApp() {
         {QMODES.map((m) => (
           <button key={m.id} className={`qam-mode ${mode === m.id ? 'on' : ''}`} data-testid={`qam-mode-${m.id}`}
             onClick={() => pickMode(m.id)} title={m.label} aria-pressed={mode === m.id}>
-            <span className="qam-mode-i" aria-hidden>{m.icon}</span>
+            <span className="qam-mode-i"><Icon name={m.id} size={22} /></span>
             <span className="qam-mode-k">{m.label}</span>
           </button>
         ))}
@@ -211,9 +212,9 @@ export function OverlayApp() {
       </div>
 
       <footer className="qam-foot">
-        <button className="qam-action" data-testid="qam-restore" onClick={doRestore}>🩺 Restore standby</button>
-        <button className="qam-action" data-testid="qam-full" onClick={openFull}>⧉ Full UI</button>
-        <button className="qam-action qam-close" data-testid="qam-close" onClick={closeOverlay}>✕ Close</button>
+        <button className="qam-action" data-testid="qam-restore" onClick={doRestore}><Icon name="restore" />Restore standby</button>
+        <button className="qam-action" data-testid="qam-full" onClick={openFull}><Icon name="expand" />Full UI</button>
+        <button className="qam-action qam-close" data-testid="qam-close" onClick={closeOverlay}><Icon name="close" />Close</button>
       </footer>
     </div>
   )

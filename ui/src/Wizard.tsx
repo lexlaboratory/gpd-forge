@@ -11,6 +11,7 @@ import type { IncumbentsInfo, ModeId } from './types'
 import { getIncumbents, setMode as apiSetMode } from './api'
 import { useFocusTrap } from './hooks/useFocusTrap'
 import { MODES } from './pages'
+import { Icon } from './components/Icon'
 
 export const SETUP_DONE_KEY = 'forge-setup-done'
 
@@ -102,7 +103,7 @@ export function Wizard({ onClose }: { onClose: () => void }) {
               {MODES.map((m) => (
                 <button key={m.id} type="button" className={`chip-btn ${defaultMode === m.id ? 'on' : ''}`}
                   onClick={() => setDefaultMode(m.id)} data-testid={`wizard-mode-${m.id}`}>
-                  <span aria-hidden="true">{m.icon}</span> {m.label}
+                  <Icon name={m.id} size={18} /> {m.label}
                 </button>
               ))}
             </div>
