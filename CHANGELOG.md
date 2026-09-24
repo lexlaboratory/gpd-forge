@@ -34,6 +34,10 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   time-weighted average instead of the raw reading, so one tick past 90 °C neither flattens the
   boost limits nor holds them until the raw reading happens to dip. A sustained excursion still
   throttles within seconds, and the critical limit (96 °C) still reacts to the raw reading.
+- **A steady throttle no longer re-runs ryzenadj every tick.** Under a 5-minute full load the
+  ceiling flipped 23 ↔ 24 W each tick and every flip was an apply, stretching the worker loop to
+  ~1.7 s. While throttling, the ceiling is now lowered at once but raised only by ≥ 2 W, and an
+  unchanged ceiling is re-asserted every 30 s rather than every tick.
 
 ## [0.3.0] — 2026-09-01
 

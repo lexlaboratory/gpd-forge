@@ -18,6 +18,10 @@ public sealed class GuardianService(Func<double>? secondsNow = null)
     // reacting to the raw reading instantly, and the firmware's own Tctl limit sits behind both.
     public const double ThrottleSmoothingTauSeconds = 2.0;
 
+    /// <summary>While throttling, the ceiling is raised only once it would go up by at least this
+    /// much (it is lowered by any amount, immediately).</summary>
+    public const int ThrottleRaiseStepW = 2;
+
     private readonly Func<double> _now = secondsNow ?? DefaultClock;
     private readonly GpdForge.Fan.TempSmoother _smoother =
         new(ThrottleSmoothingTauSeconds, ThrottleSmoothingTauSeconds);
@@ -60,7 +64,17 @@ public sealed class GuardianService(Func<double>? secondsNow = null)
             if (d.Alert is not null) { LastAlert = d.Alert; LastSeverity = d.Severity; }
 
             if (d.ClearThrottle) _throttleW = null;
-            else if (Config.AutoThrottle && d.ThrottleToW is int w) _throttleW = w;
+            else if (Config.AutoThrottle && d.ThrottleToW is int w)
+            {
+                // Lower at once; raise only by a real step. At the edge of the band the ramp flips
+                // ±1 W every tick, and each flip is a ryzenadj apply that stretches the loop.
+                if (_throttleW is int cur && w > cur && w < cur + ThrottleRaiseStepW)
+                {
+                    w = cur;
+                    d = d with { ThrottleToW = cur };
+                }
+                _throttleW = w;
+            }
 
             return Config.AutoThrottle ? d : d with { ThrottleToW = null, ClearThrottle = false };
         }

@@ -96,4 +96,39 @@ public class GuardianSmoothingTests
         Assert.False(d.ClearThrottle);
         Assert.True(svc.Throttling);
     }
+
+    [Fact]
+    public void While_throttling_a_one_watt_upward_wobble_is_not_applied()
+    {
+        // Measured under a 5-minute full load on 2026-09-24: Tctl sat at 90-91°C and the ramp
+        // flipped 23 W <-> 24 W every tick, re-running ryzenadj each time and stretching the loop.
+        var clock = new Clock();
+        var svc = new GuardianService(clock.Read);
+        for (int i = 0; i < 30; i++) { svc.Observe(Snap(92)); clock.Now += 1; }   // settle at 92
+        int settled = svc.ThrottledToW!.Value;
+        for (int i = 0; i < 3; i++) { svc.Observe(Snap(91.2)); clock.Now += 1; } // ~1 W higher ceiling
+        Assert.Equal(settled, svc.ThrottledToW);
+    }
+
+    [Fact]
+    public void While_throttling_a_real_cool_down_still_raises_the_ceiling()
+    {
+        var clock = new Clock();
+        var svc = new GuardianService(clock.Read);
+        for (int i = 0; i < 30; i++) { svc.Observe(Snap(94)); clock.Now += 1; }
+        int hot = svc.ThrottledToW!.Value;
+        for (int i = 0; i < 30; i++) { svc.Observe(Snap(90.2)); clock.Now += 1; }
+        Assert.True(svc.ThrottledToW >= hot + 2, $"expected a raise from {hot}, got {svc.ThrottledToW}");
+    }
+
+    [Fact]
+    public void While_throttling_a_lower_ceiling_is_applied_immediately()
+    {
+        var clock = new Clock();
+        var svc = new GuardianService(clock.Read);
+        for (int i = 0; i < 30; i++) { svc.Observe(Snap(91)); clock.Now += 1; }
+        int before = svc.ThrottledToW!.Value;
+        for (int i = 0; i < 10; i++) { svc.Observe(Snap(93)); clock.Now += 1; }
+        Assert.True(svc.ThrottledToW < before);
+    }
 }

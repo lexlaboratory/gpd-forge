@@ -72,6 +72,11 @@ public sealed class ForgeWorker(
     private double? _lastUsableTempC;
     private double _lastUsableTempAtSeconds;
 
+    // The guardian's last applied ceiling, so a steady throttle is not re-applied every tick.
+    private const double ThrottleReassertSeconds = 30.0;
+    private TdpProfile? _lastThrottleApplied;
+    private double _lastThrottleAppliedAt;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("GPD Forge service starting.");
@@ -138,10 +143,21 @@ public sealed class ForgeWorker(
                     // auto-FPS this tick.
                     var throttle = GuardianThrottle.Profile(throttleW, ModeProfiles.For(mode.Active),
                         (int)guardian.Config.TempCriticalC);
-                    await tdp.ApplyAsync(throttle, TdpOwner.ThermalGuardian, stoppingToken);
+                    // An unchanged ceiling is re-asserted every ThrottleReassertSeconds, not every
+                    // tick: each apply runs ryzenadj twice, and under a sustained throttle that
+                    // stretched the loop to ~1.7 s per tick (measured 2026-09-24).
+                    double nowS = _fanClock.Elapsed.TotalSeconds;
+                    if (throttle != _lastThrottleApplied || nowS - _lastThrottleAppliedAt >= ThrottleReassertSeconds)
+                    {
+                        await tdp.ApplyAsync(throttle, TdpOwner.ThermalGuardian, stoppingToken);
+                        _lastThrottleApplied = throttle;
+                        _lastThrottleAppliedAt = nowS;
+                    }
                 }
                 else
                 {
+                    _lastThrottleApplied = null;   // a new episode applies its first ceiling at once
+
                     // Charge guard — evaluated only when the THERMAL guardian is not throttling.
                     // Safety outranks battery longevity: the thermal ceiling is always the lower and
                     // more urgent of the two, and letting a charge-health ceiling contend with it
