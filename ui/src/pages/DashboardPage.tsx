@@ -67,7 +67,14 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
       <Frame title="Sustained TDP" hint={<Badge tone={verified ? 'ok' : 'warn'} testid="tdp-badge">{verified ? 'verified' : 'unverified'}</Badge>}>
         <div className="tdp-row">
           <input type="range" min={5} max={MAX_TDP_W} step={1} value={tdp} data-testid="tdp-slider" aria-label="Sustained TDP in watts" onChange={(e) => onTdp(Number(e.target.value))} />
-          <output className="tdp-value" data-testid="tdp-value">{tdp} W</output>
+          {/* ±1 W buttons beside the slider: a d-pad can press a button but cannot drag a range. */}
+          <div className="stepper">
+            <button type="button" className="stepper-btn" aria-label="Sustained TDP down" data-testid="tdp-dec"
+              disabled={tdp <= 5} onClick={() => onTdp(Math.max(5, tdp - 1))}>&minus;</button>
+            <output className="tdp-value" data-testid="tdp-value">{tdp} W</output>
+            <button type="button" className="stepper-btn" aria-label="Sustained TDP up" data-testid="tdp-inc"
+              disabled={tdp >= MAX_TDP_W} onClick={() => onTdp(Math.min(MAX_TDP_W, tdp + 1))}>+</button>
+          </div>
         </div>
         <p className="muted">Applied with a closed loop — GPD Forge re-reads the PM table and warns if the firmware reverts it.</p>
       </Frame>

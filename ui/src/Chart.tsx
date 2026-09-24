@@ -188,28 +188,16 @@ export function Sparkline({
   return (
     <div
       className={['gf-spark', className].filter(Boolean).join(' ')}
-      style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, minWidth: 0, ...style }}
+      style={style}
       data-testid={testid}
     >
       {(label || showValue) && (
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-          {label && (
-            <span style={{
-              fontSize: 12, fontWeight: 700, letterSpacing: '.6px', textTransform: 'uppercase',
-              color: 'var(--text-dim, #8a93a6)',
-            }}>
-              {label}
-            </span>
-          )}
+        <div className="gf-spark-head">
+          {label && <span className="gf-spark-label">{label}</span>}
           {showValue && (
-            <span style={{
-              fontSize: 15, fontWeight: 700, color: 'var(--text, #e6e9f0)',
-              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-            }}>
+            <span className="gf-spark-value">
               {formattedLast}
-              {unit && (
-                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim, #8a93a6)', marginLeft: 3 }}>{unit}</span>
-              )}
+              {unit && <span className="gf-spark-unit">{unit}</span>}
             </span>
           )}
         </div>
@@ -247,7 +235,7 @@ export function Sparkline({
 
             {points.length > 1 && <path d={fillPath} fill={`url(#${gradientId})`} stroke="none" />}
             {points.length > 1 && (
-              <path d={linePath} fill="none" stroke={color} strokeWidth={strokeW} strokeLinecap="round" strokeLinejoin="round" />
+              <path d={linePath} fill="none" stroke={color} strokeWidth={strokeW} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
             )}
 
             {/* Last value — always highlighted, the headline reading. */}

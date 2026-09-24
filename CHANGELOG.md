@@ -6,6 +6,22 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Changed
+- **A modern redesign.** The retro HUD (monospace caps everywhere, bracket corners, scanlines,
+  phosphor glow, 2–4 px radii) became soft layered surfaces with depth from luminance, 10–16 px
+  radii, Segoe UI Variable, large tabular numbers and one accent colour, in both themes. Hover
+  styles apply only to a real hovering pointer, so a tap on the touchscreen never leaves a control
+  stuck; pressable controls scale slightly on press; nothing that fires tens of times a minute
+  (page switches, the Ctrl+K palette) animates. Emoji icons are gone: modes, overlay actions and
+  toasts share one inline-SVG set. Destructive buttons are tonal rather than solid red.
+- **Below 1100 px the sidebar is a fixed icon rail** instead of a strip that scrolled away with the
+  page; the unread-alerts count becomes a dot on the bell.
+- **The Quick Access Menu fits its 380 px window.** It was a fixed 23 rem, which with large text
+  measured 402 px and pushed the right-hand controls out of the window.
+- **New app icon: a GPD Win 4**, drawn as SVG (`ui/public/logo.svg`) and used for the sidebar, the
+  overlay, the favicon, the tray and the installer shortcuts. `scripts/make-icons.mjs` rebuilds
+  every raster size from it; before, the icon was a lone PNG nothing in the repo could regenerate.
+- **The dashboard's TDP has −/+ 1 W buttons** beside the slider: a d-pad can press a button but
+  cannot drag a range.
 - **The UI is sized for the handheld it runs on.** The two smallest text sizes were 9.6 px and
   11 px, used for HUD labels across the app; they are now 12 px and 13 px. The desktop window opens
   at the panel's native 1280×800 instead of 1024×720. Density detection uses `any-pointer: coarse`,

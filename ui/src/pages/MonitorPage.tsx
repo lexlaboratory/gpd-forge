@@ -4,7 +4,7 @@ import type { Telemetry, HealthReport } from '../types'
 import {
   getFrozen, freeze, thaw, getHistory, historyExportUrl, getHealthCheck, panicCool,
 } from '../api'
-import { Frame, Badge, Button, Chip, Readout } from '../components'
+import { Frame, Badge, Button, Chip, Icon, Readout } from '../components'
 import { Sparkline, useHistory } from '../Chart'
 import { useToast } from '../Toast'
 
@@ -103,7 +103,7 @@ export function HealthCard() {
       {!report ? (
         <p className="muted">Evaluating the daemon's rule set…</p>
       ) : report.issues.length === 0 ? (
-        <p className="health-ok-msg" data-testid="health-ok">✓ All good — no anomalies detected.</p>
+        <p className="health-ok-msg" data-testid="health-ok"><Icon name="check" size={16} /> All good — no anomalies detected.</p>
       ) : (
         <ul className="rules" data-testid="health-issues">
           {report.issues.map((i) => (

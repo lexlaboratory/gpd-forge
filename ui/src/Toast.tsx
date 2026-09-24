@@ -28,6 +28,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { Icon, type IconName } from './components/Icon'
 
 export type ToastKind = 'info' | 'success' | 'warn' | 'error'
 
@@ -55,13 +56,14 @@ interface ToastRecord {
 const ToastContext = createContext<ToastContextValue | null>(null)
 
 const DEFAULT_DURATION_MS = 4000
-const EXIT_ANIMATION_MS = 220
+// Exit faster than entry: the system is responding, the user is not waiting to read anything.
+const EXIT_ANIMATION_MS = 150
 
-const KIND_META: Record<ToastKind, { icon: string; label: string }> = {
-  info: { icon: 'ℹ', label: 'Info' },
-  success: { icon: '✓', label: 'Success' },
-  warn: { icon: '⚠', label: 'Warning' },
-  error: { icon: '✕', label: 'Error' },
+const KIND_META: Record<ToastKind, { icon: IconName; label: string }> = {
+  info: { icon: 'info', label: 'Info' },
+  success: { icon: 'check', label: 'Success' },
+  warn: { icon: 'warn', label: 'Warning' },
+  error: { icon: 'close', label: 'Error' },
 }
 
 let seq = 0
@@ -151,7 +153,7 @@ function ToastViewport({ toasts, onClose }: { toasts: ToastRecord[]; onClose: (i
             data-testid={`toast-${t.kind}`}
             className={`gpd-toast gpd-toast-${t.kind} ${t.leaving ? 'gpd-toast-leaving' : 'gpd-toast-entering'}`}
           >
-            <span className="gpd-toast-icon" aria-hidden="true">{KIND_META[t.kind].icon}</span>
+            <span className="gpd-toast-icon"><Icon name={KIND_META[t.kind].icon} size={18} /></span>
             <p className="gpd-toast-msg">
               <span className="gpd-toast-sr-only">{KIND_META[t.kind].label}: </span>
               {t.message}
@@ -162,7 +164,7 @@ function ToastViewport({ toasts, onClose }: { toasts: ToastRecord[]; onClose: (i
               aria-label="Dismiss notification"
               onClick={() => onClose(t.id)}
             >
-              <span aria-hidden="true">×</span>
+              <Icon name="close" size={16} />
             </button>
           </div>
         ))}
@@ -171,71 +173,56 @@ function ToastViewport({ toasts, onClose }: { toasts: ToastRecord[]; onClose: (i
   )
 }
 
+// Inline rather than in styles.css because the overlay (a separate entry that does not load
+// styles.css) renders toasts too. Every value is a token from tokens.css, which both entries load.
 const TOAST_CSS = `
 .gpd-toast-viewport {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-  max-width: min(360px, calc(100vw - 40px));
+  position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: var(--z-toast);
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2);
+  width: min(24rem, calc(100vw - 2 * var(--space-4)));
   pointer-events: none;
 }
 .gpd-toast {
-  pointer-events: auto;
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: var(--bg-elev, #131824);
-  border: 1px solid var(--border, #232b3d);
-  border-left: 3px solid var(--accent, #4cc2ff);
-  border-radius: var(--radius, 14px);
-  box-shadow: var(--shadow, 0 6px 24px rgba(0, 0, 0, 0.35));
-  padding: 12px 12px 12px 14px;
-  color: var(--text, #e6e9f0);
-  font: 13.5px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  pointer-events: auto; width: 100%;
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  background: var(--bg-elev-2);
+  border: var(--hairline) solid var(--border-bright);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  color: var(--text);
+  font: var(--text-sm) / var(--leading-normal) var(--font-body);
 }
-.gpd-toast-entering { animation: gpd-toast-in 200ms ease-out; }
-.gpd-toast-leaving { animation: gpd-toast-out 220ms ease-in forwards; }
-.gpd-toast-success { border-left-color: var(--good, #37d67a); }
-.gpd-toast-warn { border-left-color: var(--warn, #ffb020); }
-.gpd-toast-error { border-left-color: var(--danger, #ff5c6c); }
-.gpd-toast-info { border-left-color: var(--accent, #4cc2ff); }
-.gpd-toast-icon { flex: 0 0 auto; font-size: 14px; line-height: 1.4; }
-.gpd-toast-success .gpd-toast-icon { color: var(--good, #37d67a); }
-.gpd-toast-warn .gpd-toast-icon { color: var(--warn, #ffb020); }
-.gpd-toast-error .gpd-toast-icon { color: var(--danger, #ff5c6c); }
-.gpd-toast-info .gpd-toast-icon { color: var(--accent, #4cc2ff); }
-.gpd-toast-msg { flex: 1 1 auto; margin: 0; word-break: break-word; }
+.gpd-toast-entering { animation: gpd-toast-in var(--dur-base) var(--ease-out); }
+.gpd-toast-leaving { animation: gpd-toast-out ${EXIT_ANIMATION_MS}ms var(--ease-out) forwards; }
+.gpd-toast-icon { flex: none; display: inline-flex; margin-top: 0.1rem; }
+.gpd-toast-success .gpd-toast-icon { color: var(--good); }
+.gpd-toast-warn .gpd-toast-icon { color: var(--warn); }
+.gpd-toast-error .gpd-toast-icon { color: var(--danger); }
+.gpd-toast-info .gpd-toast-icon { color: var(--accent); }
+.gpd-toast-msg { flex: 1 1 auto; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .gpd-toast-sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .gpd-toast-close {
-  flex: 0 0 auto;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  color: var(--text-dim, #8a93a6);
-  font-size: 16px;
-  line-height: 1;
-  padding: 2px;
-  margin: -2px -2px 0 0;
-  border-radius: 4px;
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; margin: -0.25rem -0.25rem 0 0;
+  cursor: pointer; border: none; background: transparent; color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  -webkit-tap-highlight-color: transparent;
 }
-.gpd-toast-close:hover { color: var(--text, #e6e9f0); }
-.gpd-toast-close:focus-visible { outline: 2px solid var(--accent, #4cc2ff); outline-offset: 2px; }
+.gpd-toast-close:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .gpd-toast-close:hover { color: var(--text); background: var(--bg-hover); }
+}
 @keyframes gpd-toast-in {
-  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  from { opacity: 0; transform: translateY(0.5rem) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes gpd-toast-out {
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to { opacity: 0; transform: translateY(6px) scale(.98); }
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(0.25rem); }
 }
 @media (prefers-reduced-motion: reduce) {
   .gpd-toast-entering, .gpd-toast-leaving { animation: none; }

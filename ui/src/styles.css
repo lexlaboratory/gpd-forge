@@ -204,7 +204,7 @@ button { user-select: none; font: inherit; }
    READOUTS
    ======================================================================== */
 
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr)); gap: var(--gap-base); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr)); gap: var(--gap-base); }
 .tile {
   position: relative; min-width: 0;
   background: var(--bg-elev);
@@ -380,7 +380,7 @@ input[type="range"]::-webkit-slider-thumb {
 .job-status-queued { color: var(--accent); }
 .job-status-done { color: var(--text-faint); }
 .bb-chip { color: var(--text-dim); font-variant-numeric: tabular-nums; border-radius: var(--radius-sm); }
-.health-ok-msg { margin: 0; background: none; padding: 0; font-size: var(--text-sm); }
+.health-ok-msg { margin: 0; background: none; padding: 0; font-size: var(--text-sm); display: inline-flex; align-items: center; gap: var(--space-2); }
 .health-issue-critical .rule-app { color: var(--danger); }
 .health-issue-warn .rule-app { color: var(--warn); }
 
@@ -445,7 +445,7 @@ input[type="range"]::-webkit-slider-thumb {
 .tdp-row input[type="range"] { flex: 1 1 auto; min-width: 0; }
 .tdp-value {
   font-family: var(--font-display); font-size: var(--text-2xl); font-weight: var(--weight-semibold);
-  min-width: 4.5rem; text-align: right; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  min-width: 4.5rem; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
   color: var(--text);
 }
 
@@ -502,6 +502,14 @@ input[type="range"]::-webkit-slider-thumb {
 .bb-proj { display: flex; flex-wrap: wrap; gap: var(--gap-tight); }
 
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--gap-loose); }
+.gf-spark { display: inline-flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.gf-spark-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.gf-spark-label {
+  font-size: var(--text-2xs); font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--text-faint);
+}
+.gf-spark-value { font-family: var(--font-display); font-size: var(--text-md); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gf-spark-unit { font-size: var(--text-2xs); font-weight: var(--weight-medium); color: var(--text-faint); margin-left: 0.2rem; }
 .charts .gf-spark { width: 100%; min-width: 0; }
 .charts .gf-spark svg { width: 100%; height: auto; }
 
@@ -683,12 +691,19 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 @media (max-width: 640px) {
+  /* The TDP card stacks: full-width slider, then the stepper centred beneath it. */
+  .tdp-row { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+  .tdp-row .stepper { justify-content: center; }
   .app-rule { grid-template-areas: "app" "mode" "actions"; grid-template-columns: minmax(0, 1fr); }
   .app-rule > .row { justify-content: flex-start; margin-top: var(--space-2); }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 480px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .tile { padding: var(--space-3); }
   .rule { grid-template-columns: minmax(0, 1fr); }
   .rule-arrow { display: none; }
   .rule-mode { text-align: left; }

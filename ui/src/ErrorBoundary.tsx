@@ -5,6 +5,7 @@
 // and the app looked dead rather than broken. A tuning tool must degrade to "this panel failed"
 // while the sidebar, live telemetry and every other page keep working.
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Button } from './components/Button'
 
 interface Props {
   children: ReactNode
@@ -41,10 +42,9 @@ export class ErrorBoundary extends Component<Props, State> {
           Your device is not at risk: the daemon keeps running independently of this window.
         </p>
         <pre className="mono" data-testid="panel-error-detail">{error.message}</pre>
-        <button type="button" className="btn" data-testid="panel-error-retry"
-                onClick={() => this.setState({ error: null })}>
+        <Button testid="panel-error-retry" onClick={() => this.setState({ error: null })}>
           Try again
-        </button>
+        </Button>
       </section>
     )
   }

@@ -3,6 +3,7 @@
 // (we report the last fetch error verbatim when the daemon didn't come up on its own) so the user
 // knows whether to re-run the installer or whether the service is just slow to start.
 import { useState } from 'react'
+import { Button } from './components/Button'
 
 export interface DaemonOfflineBannerProps {
   reason?: string | null
@@ -30,9 +31,9 @@ export function DaemonOfflineBanner({ reason, onRetry, busy }: DaemonOfflineBann
       </p>
       {reason && <p className="daemon-offline-reason" data-testid="daemon-offline-reason">Último error: <code>{reason}</code></p>}
       <div className="daemon-offline-actions">
-        <button type="button" className="btn" onClick={onRetry} disabled={busy} data-testid="daemon-offline-retry">
+        <Button onClick={onRetry} disabled={busy} testid="daemon-offline-retry">
           {busy ? 'Reintentando…' : 'Reintentar'}
-        </button>
+        </Button>
         <a className="link" href="https://github.com/lexlaboratory/gpd-forge#installation" target="_blank" rel="noreferrer">
           Ver instrucciones →
         </a>

@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { Job } from './types'
 import { getJobs, createJob } from './api'
+import { Button } from './components/Button'
 
 export function JobsPanel() {
   const [jobs, setJobs] = useState<Job[]>([])
@@ -37,7 +38,7 @@ export function JobsPanel() {
           <input type="checkbox" data-testid="job-requireac" checked={requireAC} onChange={(e) => setRequireAC(e.target.checked)} />
           require AC
         </label>
-        <button type="submit" className="btn" data-testid="job-submit">Queue</button>
+        <Button type="submit" variant="accent" testid="job-submit">Queue</Button>
       </form>
 
       <ul className="job-list" data-testid="job-list">

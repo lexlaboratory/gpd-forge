@@ -11,6 +11,7 @@ import type { IncumbentsInfo, ModeId } from './types'
 import { getIncumbents, setMode as apiSetMode } from './api'
 import { useFocusTrap } from './hooks/useFocusTrap'
 import { MODES } from './pages'
+import { Button } from './components/Button'
 import { Icon } from './components/Icon'
 
 export const SETUP_DONE_KEY = 'forge-setup-done'
@@ -121,11 +122,11 @@ export function Wizard({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="row-end wizard-actions">
-          <button type="button" className="btn" data-testid="wizard-skip" onClick={skip}>Skip</button>
-          {idx > 0 && <button type="button" className="btn" data-testid="wizard-back" onClick={goBack}>Back</button>}
+          <Button variant="ghost" testid="wizard-skip" onClick={skip}>Skip</Button>
+          {idx > 0 && <Button testid="wizard-back" onClick={goBack}>Back</Button>}
           {step !== 'finish'
-            ? <button type="button" className="btn btn-accent" data-testid="wizard-next" onClick={goNext}>Next</button>
-            : <button type="button" className="btn btn-accent" data-testid="wizard-finish" onClick={finish}>Finish</button>}
+            ? <Button variant="accent" testid="wizard-next" onClick={goNext}>Next</Button>
+            : <Button variant="accent" testid="wizard-finish" onClick={finish}>Finish</Button>}
         </div>
       </div>
     </div>

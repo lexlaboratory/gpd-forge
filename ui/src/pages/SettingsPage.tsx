@@ -1,6 +1,6 @@
 // GPD Forge UI — Settings page. GPL-3.0-or-later.
 import { useEffect, useState } from 'react'
-import { Frame, Toggle, Segmented, Readout } from '../components'
+import { Frame, Icon, Toggle, Segmented, Readout } from '../components'
 import { useDensity } from '../hooks/useDensity'
 import { PowerSourceCard, GuardianCard, BackupRestoreCard, UpdateNote } from './SystemPage'
 import { getVersion } from '../api'
@@ -87,7 +87,7 @@ export function VersionCard() {
       </div>
       {mismatch && (
         <p className="muted" data-testid="version-mismatch">
-          ⚠️ The app window ({shell}) and the daemon ({daemon!.version}) are from different builds. One of
+          <Icon name="warn" size={16} /> The app window ({shell}) and the daemon ({daemon!.version}) are from different builds. One of
           them is stale — reinstall so both come from the same source, before trusting either about what
           is fixed.
         </p>

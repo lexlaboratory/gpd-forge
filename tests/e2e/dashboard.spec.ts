@@ -34,6 +34,18 @@ test.describe('Dashboard', () => {
     }
   })
 
+  test('the TDP stepper moves the value one watt at a time, within bounds', async ({ page }) => {
+    // The d-pad path: a gamepad can press these, it cannot drag the slider beside them.
+    await expect(dash.tdpValue).toHaveText('20 W')
+    await page.getByTestId('tdp-inc').click()
+    await expect(dash.tdpValue).toHaveText('21 W')
+    await page.getByTestId('tdp-dec').click()
+    await page.getByTestId('tdp-dec').click()
+    await expect(dash.tdpValue).toHaveText('19 W')
+    await dash.tdpSlider.fill('5')
+    await expect(page.getByTestId('tdp-dec')).toBeDisabled()
+  })
+
   test('selecting a mode marks it active', async () => {
     await dash.pickMode('ai')
     await expect(dash.mode('ai')).toHaveAttribute('aria-selected', 'true')

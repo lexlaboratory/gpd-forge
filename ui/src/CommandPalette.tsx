@@ -8,6 +8,7 @@
 // read, and a command that takes an argument (`tdp 25`) parses it rather than making you pick from a
 // submenu.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Icon } from './components/Icon'
 import type { ModeId } from './types'
 import { setMode, setTdp, setBrightness, panicCool, setFan } from './api'
 import { useToast } from './Toast'
@@ -149,11 +150,13 @@ export function CommandPalette({ navigate, pages }: { navigate: (page: string) =
   }
 
   return (
-    <div className="palette-scrim" data-testid="palette" onClick={() => setOpen(false)}>
+    // data-instant: the palette only opens from Ctrl+K, a keyboard action repeated many times a
+    // day, so it appears with no animation at all (see styles.css, COMMAND PALETTE).
+    <div className="palette-scrim" data-instant data-testid="palette" onClick={() => setOpen(false)}>
       <div className="palette" ref={boxRef} role="dialog" aria-modal="true" aria-label="Command palette"
            onClick={(e) => e.stopPropagation()}>
         <div className="palette-input-row">
-          <span className="palette-prompt" aria-hidden>&gt;</span>
+          <span className="palette-prompt"><Icon name="search" size={20} /></span>
           <input
             ref={inputRef} className="palette-input" value={input} disabled={busy}
             data-testid="palette-input" aria-label="Command"
