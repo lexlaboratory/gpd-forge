@@ -124,7 +124,10 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 - **A restart keeps your mode.** The daemon applies the active mode's TDP when it starts, but the
   active mode was held only in memory and began as `windows` — so rebooting while in `gaming`
   actively wrote windows' 15/20/17 W. The mode you pick is now saved and is what the next start
-  applies.
+  applies. Auto-profiles keep it too: they used to count the first foreground with no rule as a
+  switch away from the restored mode, so about 4.5 s after the start they wrote windows' TDP anyway
+  and saved `windows` over your pick. Now only a real change — a ruled app coming to the front, the
+  power source flipping — switches.
 - **The TDP reassert also catches a slow limit or Tctl put back behind its back.** It compared only
   STAPM and the fast limit; `ryzenadj --info` prints the slow limit and Tctl too, and they are now
   judged whenever the table has them — by the same rule that decides whether any write verified.
@@ -225,7 +228,9 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   presenting, else an app your rules name (the game rather than `steamwebhelper`, which the shipped
   `steam` rule also matches), else the game it was already reading, which keeps the FPS on the game
   while the overlay or the Steam menu has focus. With the foreground known and nothing matching it
-  is "n/a", never the busiest app.
+  is "n/a", never the busiest app. A browser, launcher or overlay in front never takes the reading
+  from a game still rendering: the Ctrl+Alt+Home overlay is an Edge window that repaints once a
+  second, and opening it over a game read ~1 fps — which auto-FPS answered by raising the TDP.
 - **Frames are timed by PresentMon's own clock.** They were stamped when their line reached the
   daemon, and PresentMon's output arrives in bursts, so a flush looked like hundreds of frames at
   once. Each row's own time (`TimeInMs` in the bundled 2.5.1, `TimeInSeconds` in 1.x) now places it.

@@ -119,13 +119,16 @@ reporting `0` would assert the first when only the second is known. A probe that
 frames reports `0`.
 
 `fps` / `fps1PctLow` describe ONE process, the target (`core/Telemetry/FrameTarget.cs`): the
-foreground app when it is presenting; else the app-rule-matched app presenting the most frames,
+foreground app when it is presenting and is not a known non-game presenter; else the app-rule-matched app presenting the most frames,
 never counting a known non-game presenter (the compositor, browsers, launchers such as
 `steamwebhelper` — which the shipped `steam` rule also names — overlays, GPD Forge itself); else the
 previous target while it keeps presenting (the overlay or the Steam menu has focus, the game renders
 underneath). Only when the foreground is **unknown** — the service in session 0 with no user-session
 agent reporting (`GET /session/foreground`) — does it fall back to the busiest presenter that is not a
-known non-game one, so a Steam game no rule names still reads as the game rather than as Steam. With
+known non-game one, so a Steam game no rule names still reads as the game rather than as Steam. The
+same fallback applies when the foreground is a non-game presenter that is itself presenting: the
+overlay (an Edge `--app` window repainting at ~1 fps) or the Steam menu in front of a game never takes
+the reading from it; that foreground is the target only when nothing that could be a game presents. With
 a known foreground and none of those, it is `null` — never "whichever process presents most". Frames are placed by
 PresentMon's own row time, not by when their line reached the daemon, so a burst of buffered output
 does not read as a burst of frames. The same probe keeps the target's last 10 s of frame times

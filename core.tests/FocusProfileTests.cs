@@ -55,6 +55,18 @@ public class FocusProfileEngineTests
     }
 
     [Fact]
+    public void An_adopted_mode_is_not_switched_away_from_until_the_resolution_changes()
+    {
+        // Audit round 2 (2026-09-25): a mode restored at start resolves differently from the first
+        // foreground (gaming vs windows); adopting what the first tick resolves to keeps it.
+        var e = new FocusProfileEngine("gaming", null, stabilityTicks: 1);
+        e.Adopt(e.Resolve("notepad", acConnected: true));
+        Assert.Null(e.Tick("notepad", true));
+        Assert.Null(e.Tick(null, true));
+        Assert.Equal("ai", e.Tick("ollama", true));
+    }
+
+    [Fact]
     public void Switches_back_to_battery_on_unknown_app_on_dc()
     {
         var e = new FocusProfileEngine("ai", null, stabilityTicks: 1);

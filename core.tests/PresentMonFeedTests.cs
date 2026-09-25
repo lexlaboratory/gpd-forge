@@ -67,7 +67,11 @@ public class FrameTargetTests
         var apps = new[] { A("steamwebhelper.exe", 4), A("game.exe", 280), A("dwm.exe", 400) };
         Assert.Equal("game.exe", FrameTarget.Choose(apps, "game", NoRules, previous: null));
         // ...even when it presents the fewest frames: foreground is the user's statement of intent.
-        Assert.Equal("steamwebhelper.exe", FrameTarget.Choose(apps, "steamwebhelper", NoRules, previous: null));
+        var slow = new[] { A("game.exe", 4), A("retroarch.exe", 280) };
+        Assert.Equal("game.exe", FrameTarget.Choose(slow, "game", NoRules, previous: null));
+        // But not a launcher or overlay in front of a game still rendering (audit round 2, 2026-09-25):
+        // that is the Steam QAM over the game, and its 2 fps is not the game's.
+        Assert.Equal("game.exe", FrameTarget.Choose(apps, "steamwebhelper", NoRules, previous: null));
     }
 
     [Fact]
@@ -103,6 +107,30 @@ public class FrameTargetTests
         // it; the FPS readout must stay on the game rather than go blank.
         var apps = new[] { A("dwm.exe", 400), A("game.exe", 280) };
         Assert.Equal("game.exe", FrameTarget.Choose(apps, "GPD Forge", NoRules, previous: "game.exe"));
+    }
+
+    [Fact]
+    public void The_shipped_overlay_in_front_does_not_take_the_reading_from_the_game()
+    {
+        // Audit round 2 (2026-09-25): the overlay Ctrl+Alt+Home opens is an Edge/Chrome --app window
+        // (scripts/overlay-launch.ps1), so with it in front the foreground is "msedge" — and msedge
+        // PRESENTS, repainting on the overlay's 1 Hz telemetry poll. The foreground step took it, the
+        // FPS read ~1 against a 60 fps target, and auto-FPS stepped STAPM up for as long as the overlay
+        // stayed open. A non-game foreground must not win while something that could be the game presents.
+        var apps = new[] { A("game.exe", 180), A("msedge.exe", 2), A("dwm.exe", 400) };
+        Assert.Equal("game.exe", FrameTarget.Choose(apps, "msedge", NoRules, previous: "game.exe"));
+        // No previous target (the daemon started with the overlay already open): still the game.
+        Assert.Equal("game.exe", FrameTarget.Choose(apps, "msedge", NoRules, previous: null));
+        // A browser that was the reading before the game started does not hold it over the game.
+        Assert.Equal("game.exe", FrameTarget.Choose(apps, "msedge", NoRules, previous: "msedge.exe"));
+    }
+
+    [Fact]
+    public void A_non_game_foreground_is_the_reading_only_when_nothing_that_could_be_a_game_presents()
+    {
+        // Browsing with no game running: the browser in front is still what the user is looking at.
+        var apps = new[] { A("msedge.exe", 60), A("dwm.exe", 400) };
+        Assert.Equal("msedge.exe", FrameTarget.Choose(apps, "msedge", NoRules, previous: null));
     }
 
     [Fact]
@@ -188,12 +216,25 @@ public class PresentMonFeedTests
     }
 
     [Fact]
-    public void Reports_the_launcher_when_the_launcher_is_what_the_user_is_looking_at()
+    public void Keeps_the_game_while_the_steam_qam_is_in_front()
     {
+        // Audit round 2 (2026-09-25): this used to assert the launcher's 2 fps as intended. The Steam
+        // QAM is steamwebhelper presenting on top of a game that keeps rendering, and a 2 fps reading
+        // there made auto-FPS raise the TDP. The launcher is the reading only with no game presenting.
         var rows = PresentMonFixtures.Interleave(
             PresentMonFixtures.Stream("steamwebhelper.exe", fps: 2, seconds: 5),
             PresentMonFixtures.Stream("game.exe", fps: 140, seconds: 5));
         var feed = Live(PresentMonFixtures.Header251, rows);
+
+        Assert.True(feed.TryRead(T0.AddSeconds(5), "steamwebhelper", NoRules, out var s));
+        Assert.Equal("game.exe", s.Process);
+        Assert.Equal(140.0, s.Fps, 0);
+    }
+
+    [Fact]
+    public void Reports_the_launcher_when_no_game_is_presenting()
+    {
+        var feed = Live(PresentMonFixtures.Header251, PresentMonFixtures.Stream("steamwebhelper.exe", fps: 2, seconds: 5));
 
         Assert.True(feed.TryRead(T0.AddSeconds(5), "steamwebhelper", NoRules, out var s));
         Assert.Equal("steamwebhelper.exe", s.Process);
@@ -286,6 +327,21 @@ public class PresentMonFeedTests
         Assert.True(feed.TryRead(T0.AddSeconds(4), "game", NoRules, out _));          // game in front
         Assert.True(feed.TryRead(T0.AddSeconds(4), "GPD Forge", NoRules, out var s)); // overlay opened
         Assert.Equal("game.exe", s.Process);
+    }
+
+    [Fact]
+    public void Keeps_reading_the_game_while_the_browser_overlay_repaints_in_front()
+    {
+        // The shipped overlay is an msedge --app window that repaints about once a second: it presents.
+        var rows = PresentMonFixtures.Interleave(
+            PresentMonFixtures.Stream("msedge.exe", fps: 1, seconds: 4),
+            PresentMonFixtures.Stream("game.exe", fps: 90, seconds: 4));
+        var feed = Live(PresentMonFixtures.Header251, rows);
+
+        Assert.True(feed.TryRead(T0.AddSeconds(4), "game", NoRules, out _));          // game in front
+        Assert.True(feed.TryRead(T0.AddSeconds(4), "msedge", NoRules, out var s));    // overlay opened
+        Assert.Equal("game.exe", s.Process);
+        Assert.Equal(90.0, s.Fps, 0);
     }
 
     [Fact]

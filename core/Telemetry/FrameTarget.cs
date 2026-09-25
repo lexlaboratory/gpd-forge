@@ -41,16 +41,21 @@ public static class FrameTarget
     /// <summary>
     /// Chooses the target among the applications presenting right now:
     /// <list type="number">
-    /// <item>the foreground process, when it is presenting — even at 2 fps, it is what is on screen;</item>
+    /// <item>the foreground process, when it is presenting and is not a known non-game presenter — even
+    /// at 2 fps, it is what is on screen. A non-game foreground (the Forge overlay, which ships as an
+    /// Edge <c>--app</c> window, or the Steam QAM) sits ON TOP of the game and repaints at a few fps;
+    /// it falls through to the steps below and is the reading only when nothing else qualifies;</item>
     /// <item>otherwise an app a user rule names (<paramref name="isRuleMatched"/>) that is not a known
     /// non-game presenter. Several can match, so among THOSE the one presenting the most frames wins;
     /// the launcher is excluded outright — the shipped "steam" rule also names steamwebhelper, and a
     /// game with no rule of its own must not lose to it;</item>
-    /// <item>otherwise the previous target, if it is still presenting: the Forge overlay or the Steam
-    /// QAM takes the foreground while the game keeps rendering underneath;</item>
-    /// <item>otherwise, ONLY when the foreground is unknown, the busiest presenter that is not a known
-    /// non-game one. With no statement of intent available, the app rendering the most frames that
-    /// could be a game is the best evidence there is;</item>
+    /// <item>otherwise the previous target, if it is still presenting and could be a game: the Forge
+    /// overlay or the Steam QAM takes the foreground while the game keeps rendering underneath;</item>
+    /// <item>otherwise, when the foreground is unknown OR is a non-game presenter that is presenting,
+    /// the busiest presenter that is not a known non-game one. With no statement of intent about a
+    /// game available, the app rendering the most frames that could be one is the best evidence;</item>
+    /// <item>otherwise a non-game previous target still presenting, then the non-game foreground itself
+    /// (browsing with no game running: the browser is what the user is looking at);</item>
     /// <item>otherwise nothing. When the foreground is known and is not presenting (the desktop, with
     /// the game minimised), "no reading" is honest; "whatever presents most" is not.</item>
     /// </list>
@@ -69,28 +74,38 @@ public static class FrameTarget
         if (candidates.Length == 0) return null;
 
         string fg = AppRulePolicy.Normalize(foreground);
-        if (fg.Length > 0)
-        {
-            foreach (var a in candidates)
-                if (AppRulePolicy.Normalize(a.Application) == fg) return a.Application;
-        }
+        string? front = fg.Length > 0
+            ? FirstNamed(candidates, a => AppRulePolicy.Normalize(a) == fg)
+            : null;
+        // Until audit round 2 (2026-09-25) any presenting foreground won here. The shipped overlay is an
+        // msedge window repainting on its 1 Hz poll, so opening it over a 60 fps game made the reading
+        // ~1 fps — and auto-FPS in gaming mode answered by stepping STAPM up towards 30 W.
+        if (front is not null && !IsNonGame(front)) return front;
 
         var ruled = Busiest(candidates.Where(a => !IsNonGame(a.Application) && isRuleMatched(a.Application)));
         if (ruled is not null) return ruled;
 
-        if (previous is not null)
+        string? held = previous is null
+            ? null
+            : FirstNamed(candidates, a => string.Equals(a, previous, StringComparison.Ordinal));
+        if (held is not null && !IsNonGame(held)) return held;
+
+        if (fg.Length == 0 || front is not null)
         {
-            foreach (var a in candidates)
-                if (string.Equals(a.Application, previous, StringComparison.Ordinal)) return a.Application;
+            var game = Busiest(candidates.Where(a => !IsNonGame(a.Application)));
+            if (game is not null) return game;
         }
 
-        return fg.Length == 0 ? Busiest(candidates.Where(a => !IsNonGame(a.Application))) : null;
+        return held ?? front;
     }
 
     /// <summary>Whether <paramref name="application"/> (any case, with or without ".exe") is on
     /// <see cref="NonGamePresenters"/>.</summary>
     public static bool IsNonGame(string application) =>
         NonGamePresenters.Contains(AppRulePolicy.Normalize(application));
+
+    private static string? FirstNamed(IEnumerable<AppActivity> apps, Func<string, bool> match) =>
+        apps.Select(a => a.Application).FirstOrDefault(match);
 
     private static string? Busiest(IEnumerable<AppActivity> apps) =>
         apps.OrderByDescending(a => a.Frames)

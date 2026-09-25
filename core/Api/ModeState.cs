@@ -28,8 +28,15 @@ public sealed class ModeState
     {
         _store = store;
         _logger = logger;
-        _active = store?.Read() ?? ModeCatalogue.Windows;
+        var saved = store?.Read();
+        Restored = saved is not null;
+        _active = saved ?? ModeCatalogue.Windows;
     }
+
+    /// <summary>True when the starting mode was read back from the store — a choice the user made
+    /// before the restart, which the auto-profile engine must not treat as a mode to switch away from
+    /// (audit round 2, 2026-09-25; see FocusProfileLoop).</summary>
+    public bool Restored { get; }
 
     public string Active
     {

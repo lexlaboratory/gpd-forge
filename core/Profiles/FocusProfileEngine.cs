@@ -25,6 +25,18 @@ public sealed class FocusProfileEngine
     public string Resolve(string? foregroundProcess, bool acConnected)
         => _rules.ModeFor(foregroundProcess) ?? (acConnected ? "windows" : "battery");
 
+    /// <summary>Takes <paramref name="mode"/> as the engine's own starting point without switching to
+    /// it: later ticks switch only when the resolution moves away from it. Used for a mode restored at
+    /// start (see FocusProfileLoop), which the engine did not choose and must not undo on its first
+    /// ticks just because the foreground has no rule.</summary>
+    public void Adopt(string mode)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+        _active = mode;
+        _candidate = null;
+        _candidateTicks = 0;
+    }
+
     /// <summary>Feed one sample. Returns the new mode if a switch happened this tick, else null.</summary>
     public string? Tick(string? foregroundProcess, bool acConnected)
     {
