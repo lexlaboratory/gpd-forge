@@ -440,6 +440,27 @@ ruleset the daemon used to hardcode (`ModeRules.DefaultRuleSet`), so turning rul
 silently change day-one behaviour. A corrupt file is quarantined rather than taking the daemon down,
 and rows the matcher could not honour (blank match, unknown mode, a duplicate) are dropped on load.
 
+### `GET /frames`  (frame pacing of the FPS target, plan F2)
+`GET /frames → { available: boolean, process: string | null, frametimesMs: number[], metrics: FramePacing | null }`
+
+The target's frame times over the last 10 s, oldest first by present time, capped to the newest 1000
+(a 380 px graph needs no more, and 240 FPS would be 2 400 per poll). `metrics` is computed over the
+whole 10 s before the cap, and is `null` with fewer than two frames. `available: false` (with
+`process: null`, `frametimesMs: []`, `metrics: null`) when the FPS gate is closed, PresentMon is
+absent or nothing is presenting — "no data", never zeros.
+
+```
+FramePacing = { frames: number, spanSeconds: number, fpsAvg: number, fps1PctLow: number,
+                fps01PctLow: number, frameTimeStdDevMs: number, stutters: number, stuttersPerMin: number }
+```
+
+The lows are 1000 / the mean of the slowest 1 % / 0.1 % of frames (at least one frame, as the
+telemetry `fps1PctLow`). A **stutter** is a frame slower than both **2x the rolling median** (31 frames
+centred on it, so a scene change from 60 to 30 FPS moves the median rather than reading as a run of
+stutters) **and 25 ms** (below that a doubled frame is not a visible hitch). `stuttersPerMin` divides
+by the time the frames cover. The overlay draws the graph and shows "Steady pacing" or
+"Stutters: N/min".
+
 ### `GET /sessions` · `GET /sessions/games` · `GET|DELETE /sessions/:id`  (play-session history)
 A session is one continuous stretch during which a single application presented frames. The only
 trustworthy evidence a game is running is that it is *presenting*, and that evidence comes from the
@@ -471,7 +492,11 @@ GameSession = { id: guid, app: string, startedUtc, endedUtc, durationSeconds: nu
                 samples: number, samplesWithoutFps: number,
                 fpsAvg, fps1PctLow, fpsMax, cpuTempAvgC, cpuTempMaxC, packageAvgW: number | null,
                 onBattery: boolean, batteryStartPct, batteryEndPct, batteryUsedPct: number | null,
-                fpsTrend: number[] }
+                fpsTrend: number[],
+                // F2 (2026-09-25); null on sessions stored before it and whenever unmeasured
+                fps01PctLow, stuttersPerMin, energyWh: number | null,
+                energySource: "battery" | "package" | null, mode: string | null,
+                frameCapFps: number | null }
 GameSummary = { app: string, sessions: number, totalSeconds: number, lastPlayedUtc,
                 fpsAvg, fpsBest, fps1PctLow, cpuTempMaxC, packageAvgW: number | null }
 ```
@@ -483,6 +508,14 @@ qualified instead of implying full coverage. `onBattery` is true only when the s
 *entirely* on battery — a session that saw the charger has no meaningful drain figure, so its
 battery fields are `null`. `fpsTrend` is downsampled to at most 120 points at close time (a 3-hour
 session at 1 Hz would otherwise put megabytes of JSON on the system drive for a 120 px graph).
+
+F2 (2026-09-25) adds frame pacing and cost per session. `fps01PctLow` is the worst per-second 0.1 %
+low (the same percentile-of-windows rule as `fps1PctLow`); `stuttersPerMin` is the mean of the
+per-second readings, each already a rate over the last 10 s (see `GET /frames`). `energyWh` integrates
+power over the session's ticks, each step capped at 5 s so a sleep/resume gap is not billed at the
+last reading: `energySource: "battery"` is the whole-machine drain and is used only when the session
+ran entirely on battery; otherwise `"package"`, the APU's power. `mode` and `frameCapFps` (the
+requested driver cap; `null` = uncapped) are the ones the session spent most of its ticks in.
 
 Sessions persist to `%ProgramData%\GPD Forge\sessions.json`, capped at 200 rows / 90 days, with the
 same atomic-write + quarantine-on-corrupt handling as the alert store. A session shorter than 60 s is

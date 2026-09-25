@@ -18,7 +18,12 @@ public sealed class SessionRecorder(
     SessionStore store,
     IFrameRateProbe? probe = null,
     SessionPolicy? policy = null,
-    ILogger<SessionRecorder>? logger = null)
+    ILogger<SessionRecorder>? logger = null,
+    // Plan F2: the 10 s frame buffer for the per-session 0.1 % low and stutter rate, and what the session
+    // ran under (active mode, requested frame cap). All optional: without them those fields stay null.
+    IFrameTimeSource? frameTimes = null,
+    Func<string?>? mode = null,
+    Func<int?>? frameCap = null)
 {
     private readonly SessionTracker _tracker = new(policy);
     // Observe runs on the sampler's thread, Flush on ForgeWorker's at shutdown; the tracker is not
@@ -40,8 +45,21 @@ public sealed class SessionRecorder(
         FpsSample? frames = null;
         if (probe is not null && probe.TryRead(out var sample)) frames = sample;
         GameSession? closed;
-        lock (_gate) closed = _tracker.Observe(SessionTick.From(snapshot, frames, now));
+        var tick = SessionTick.From(snapshot, frames, now, Pacing(frames), mode?.Invoke(), frameCap?.Invoke());
+        lock (_gate) closed = _tracker.Observe(tick);
         return Record(closed);
+    }
+
+    // Only the frames of the app the FPS reading named: the buffer and the summary pick their target
+    // the same way, but a target switch between the two reads must not credit one game's hitches to
+    // another.
+    private FramePacingMetrics? Pacing(FpsSample? frames)
+    {
+        if (frames is not FpsSample f || f.Process is null || frameTimes is null) return null;
+        if (!frameTimes.TryGetFrameTimes(out var series)) return null;
+        return string.Equals(series.Process, f.Process, StringComparison.OrdinalIgnoreCase)
+            ? FramePacing.Compute(series.FrameTimesMs)
+            : null;
     }
 
     /// <summary>Files the in-flight session, if any — call on shutdown so quitting the service does

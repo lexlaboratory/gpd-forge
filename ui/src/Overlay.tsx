@@ -7,9 +7,9 @@
 // button but cannot meaningfully drag an input[type=range], which is why TDP and brightness
 // are steppers and never sliders.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ModeId, Telemetry, BatteryBudget } from './types'
+import type { ModeId, Telemetry, BatteryBudget, FramesResponse } from './types'
 import {
-  getTelemetry, getMode, setMode, setTdp, getTdp, getProfiles, getFan, setFan,
+  getTelemetry, getFrames, getMode, setMode, setTdp, getTdp, getProfiles, getFan, setFan,
   getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby, getGpu, setFrameCap,
   getAppRules, getSessions, getGpuDesired,
 } from './api'
@@ -29,6 +29,7 @@ import {
   reading, staleSeconds, unsampled, offlineSeconds, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type TdpWrite,
 } from './pages/shared'
 import { Icon } from './components/Icon'
+import { FramePacingGraph } from './FramePacingGraph'
 
 const QMODES: { id: ModeId; label: string }[] = [
   { id: 'gaming', label: 'Gaming' },
@@ -80,6 +81,9 @@ export function OverlayApp() {
   // density detection as the main window rather than a hardcoded size.
   useDensity()
   const [tele, setTele] = useState<Telemetry | null>(null)
+  // The last 10 s of frame times (plan F2). A failed poll clears it: a graph frozen on old frames would
+  // claim pacing the player is no longer getting.
+  const [frames, setFrames] = useState<FramesResponse | null>(null)
   // When the last poll succeeded, and when the last poll finished either way (browser clock, Unix ms).
   // A failed poll keeps the previous reading, whose `sampleAgeMs` was fresh when served and never ages
   // here — so without these a dead daemon left a green "live" dot over frozen numbers (audit round 1,
@@ -128,6 +132,7 @@ export function OverlayApp() {
     const tick = () => {
       setNowMs(Date.now())
       getTelemetry().then((t) => { if (alive) { setTele(t); setLastOkMs(Date.now()) } }).catch(() => {})
+      getFrames().then((f) => alive && setFrames(f)).catch(() => alive && setFrames(null))
     }
     tick(); const id = setInterval(tick, 1000)
     getBrightness().then((b) => alive && b != null && setBright(b)).catch(() => {})
@@ -370,6 +375,8 @@ export function OverlayApp() {
           </div>
         </div>
       </header>
+
+      <FramePacingGraph frames={frames} />
 
       <div className="qam-modes" role="group" aria-label="Mode">
         {QMODES.map((m) => (

@@ -51,6 +51,12 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Frame pacing (plan F2).** The overlay draws the game's last 10 s of frame times and says
+  "Steady pacing" or "Stutters: N/min" (a stutter is a frame slower than twice the rolling median
+  and 25 ms), with the 1 % and 0.1 % lows beside it. `GET /frames` serves the series and the
+  metrics. Each play session now also records its 0.1 % low, stutters per minute, the energy it
+  cost in Wh (the battery drain when it ran entirely on battery, otherwise the package power), and
+  the mode and frame cap it ran under; the Games page shows them under each recent session.
 - **Per-game profiles, in the daemon.** A rule in `/app-rules` can now carry `overrides` —
   `stapmW` (5–40 W), `frameCapFps` (`0` = cap off), `fanMode` (Auto / Quiet / Balanced /
   Aggressive), `gpu { antiLag, chill }` and `freeze` — and while that game is settled in front, in

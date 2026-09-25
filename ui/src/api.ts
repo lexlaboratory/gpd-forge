@@ -14,7 +14,7 @@ import type {
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, StandbyRestoreOutcome,
-  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, TdpInfo, RuleOverrides,
+  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, FramesResponse, TdpInfo, RuleOverrides,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -214,5 +214,7 @@ export const getActiveProfile = () => json<ActiveGameProfile>('/profiles/active'
 export const getSessions = (limit = 100, appFilter?: string) => json<SessionsResponse>(
   `/sessions?limit=${limit}${appFilter ? `&appFilter=${encodeURIComponent(appFilter)}` : ''}`)
 export const getSessionGames = () => json<GamesResponse>('/sessions/games')
+/** The FPS target's last 10 s of frame times and their pacing metrics (plan F2). */
+export const getFrames = () => json<FramesResponse>('/frames')
 export const getSession = (id: string) => json<GameSession>(`/sessions/${id}`)
 export const deleteSession = (id: string) => json<void>(`/sessions/${id}`, { method: 'DELETE' })

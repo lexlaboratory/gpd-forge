@@ -387,6 +387,39 @@ export interface GameSession {
   batteryEndPct: number | null
   batteryUsedPct: number | null
   fpsTrend: number[]
+  // F2 (2026-09-25). Null on sessions stored before F2 and whenever the reading was never taken.
+  /** The worst per-second 0.1 % low, in FPS. */
+  fps01PctLow: number | null
+  /** Mean stutters per minute (frames > 2x the rolling median and > 25 ms). */
+  stuttersPerMin: number | null
+  /** Energy the session cost; `energySource` says whether it is the battery drain or the APU package. */
+  energyWh: number | null
+  energySource: 'battery' | 'package' | null
+  /** The mode and requested frame cap (null = uncapped) the session spent most of its time in. */
+  mode: string | null
+  frameCapFps: number | null
+}
+
+/** GET /frames — the FPS target's frame pacing over the last 10 s (plan F2). */
+export interface FramePacing {
+  frames: number
+  spanSeconds: number
+  fpsAvg: number
+  fps1PctLow: number
+  fps01PctLow: number
+  frameTimeStdDevMs: number
+  stutters: number
+  stuttersPerMin: number
+}
+
+export interface FramesResponse {
+  /** False when there is no frame source or nothing is presenting: no data, never zeros. */
+  available: boolean
+  process: string | null
+  /** Oldest first, the newest 1000 of the last 10 s. */
+  frametimesMs: number[]
+  /** Over the whole 10 s; null with fewer than two frames. */
+  metrics: FramePacing | null
 }
 
 export interface GameSummary {

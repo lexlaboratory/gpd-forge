@@ -447,10 +447,40 @@
             "samples": "number",
             "fpsAvg": "number|null",
             "fps1PctLow": "number|null",
-            "onBattery": "boolean"
+            "onBattery": "boolean",
+            "fps01PctLow": "number|null",
+            "stuttersPerMin": "number|null",
+            "energyWh": "number|null",
+            "energySource": "string|null",
+            "mode": "string|null",
+            "frameCapFps": "number|null"
           }
         }
-      }
+      },
+      "$comment": "`fps01PctLow`, `stuttersPerMin`, `energyWh` (+ `energySource`: 'battery' drain or 'package' power), `mode` and `frameCapFps` added in F2 (2026-09-25). All null on sessions stored before F2 and whenever the reading behind them was never taken."
+    },
+    {
+      "method": "GET",
+      "path": "/frames",
+      "shape": {
+        "available": "boolean",
+        "process": "string|null",
+        "frametimesMs": "array",
+        "metrics": {
+          "type": "object|null",
+          "fields": {
+            "frames": "number",
+            "spanSeconds": "number",
+            "fpsAvg": "number",
+            "fps1PctLow": "number",
+            "fps01PctLow": "number",
+            "frameTimeStdDevMs": "number",
+            "stutters": "number",
+            "stuttersPerMin": "number"
+          }
+        }
+      },
+      "$comment": "F2 (2026-09-25): the target's frame times over the last 10 s, oldest first, capped to the newest 1000; metrics are computed over the whole 10 s before the cap. `available` false (and process/metrics null, frametimesMs empty) when the FPS gate is closed, PresentMon is absent, or nothing is presenting."
     },
     {
       "method": "GET",

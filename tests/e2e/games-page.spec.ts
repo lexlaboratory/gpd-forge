@@ -93,11 +93,16 @@ test.describe('Games page', () => {
     await expect(rows).toHaveCount(2)
     await expect(rows.nth(0)).toContainText('1 h 0 min · 61.8 FPS · 1% low 44.2')
     await expect(rows.nth(1)).toContainText('1 h 30 min · 52.4 FPS · 1% low 38.1')
+    // F2: per-session pacing, energy, mode and cap — the battery run integrates the drain.
+    await expect(rows.nth(0)).toContainText('0.1% low 21.7 · 4.2 stutters/min · 31.4 Wh (package) · Gaming · no cap')
+    await expect(rows.nth(1)).toContainText('0.1% low 33.5 · 0.6 stutters/min · 41.3 Wh (battery) · Battery · cap 45')
 
     // A session without an FPS reading shows dashes, never zeros.
     await page.getByTestId('game-sheet-close').click()
     await page.getByTestId('games-card-hades2').click()
     await expect(page.getByTestId('game-recent').locator('.game-recent')).toContainText('30 min · — FPS · 1% low —')
+    await expect(page.getByTestId('game-recent').locator('.game-recent'))
+      .toContainText('0.1% low — · — stutters/min · 9.6 Wh (battery) · Battery · no cap')
   })
 
   test('saving a profile stores it on the game\'s own rule and marks the game', async ({ page, request }) => {

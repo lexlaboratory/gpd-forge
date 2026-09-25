@@ -795,7 +795,10 @@ builder.Services.AddSingleton(_ => new SessionStore(DataRoot.Current));
 builder.Services.AddSingleton(sp => new SessionRecorder(
     sp.GetRequiredService<SessionStore>(),
     sp.GetService<IFrameRateProbe>(),
-    logger: sp.GetService<ILogger<SessionRecorder>>()));
+    logger: sp.GetService<ILogger<SessionRecorder>>(),
+    frameTimes: sp.GetService<IFrameTimeSource>(),
+    mode: () => sp.GetRequiredService<ModeState>().Active,
+    frameCap: () => sp.GetRequiredService<GpuDesiredState>().FrameCapFps));
 // /history and the session tracker are fed by the SAMPLER, one row per published sample
 // (core/History/SampleRecorder.cs). ForgeWorker fed them from its tick, which skips any sample
 // superseded while a ryzenadj write is in flight (audit round 3, 2026-09-24).
@@ -1025,6 +1028,26 @@ app.MapGet("/audit", (HardwareAuditLog audit, int? limit) =>
 // snapshot's fields come out exactly as they always have.
 app.MapGet("/telemetry", async (ITelemetrySource t, Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> json, CancellationToken ct) =>
     Results.Json(TelemetryWire.ToJson(await t.ReadAsync(ct), DateTimeOffset.UtcNow, json.Value.SerializerOptions)));
+
+// Frame pacing (plan F2): the target's last 10 s of frame times and their metrics. The source is
+// resolved per request rather than injected because it is optional — unregistered when the FPS gate is
+// closed or PresentMon is absent — and "no source" must answer available:false, not a 500.
+app.MapGet("/frames", (HttpContext ctx) =>
+{
+    if (ctx.RequestServices.GetService<IFrameTimeSource>() is IFrameTimeSource source
+        && source.TryGetFrameTimes(out var series))
+    {
+        return Results.Json(new
+        {
+            available = true,
+            process = series.Process,
+            // Capped for the wire (a 380 px graph), after the metrics saw the whole buffer.
+            frametimesMs = FramePacing.Latest(series.FrameTimesMs, 1000).Select(t => Math.Round(t, 2)),
+            metrics = FramePacing.Compute(series.FrameTimesMs),
+        });
+    }
+    return Results.Json(new { available = false, process = (string?)null, frametimesMs = Array.Empty<double>(), metrics = (FramePacingMetrics?)null });
+});
 
 // Telemetry history (ring buffer, filled once per worker tick) + CSV export.
 app.MapGet("/history", (int? minutes, TelemetryHistory history) =>

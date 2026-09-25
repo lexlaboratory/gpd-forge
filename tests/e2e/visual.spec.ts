@@ -179,6 +179,7 @@ const FIXTURES: Record<string, unknown> = {
         cpuTempAvgC: 81, cpuTempMaxC: 94.2, packageAvgW: 31.4,
         onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
         fpsTrend: Array.from({ length: 96 }, (_, i) => Math.round((61.8 + Math.sin(i / 3.1) * 4) * 10) / 10),
+        fps01PctLow: 21.7, stuttersPerMin: 4.2, energyWh: 31.4, energySource: 'package', mode: 'gaming', frameCapFps: null,
       },
       {
         // Ran entirely on battery — the one shape where a drain figure means anything.
@@ -189,6 +190,7 @@ const FIXTURES: Record<string, unknown> = {
         cpuTempAvgC: 78.3, cpuTempMaxC: 91.5, packageAvgW: 24.6,
         onBattery: true, batteryStartPct: 96, batteryEndPct: 31, batteryUsedPct: 65,
         fpsTrend: Array.from({ length: 120 }, (_, i) => Math.round((52.4 + Math.sin(i / 3.1) * 4) * 10) / 10),
+        fps01PctLow: 33.5, stuttersPerMin: 0.6, energyWh: 41.3, energySource: 'battery', mode: 'battery', frameCapFps: 45,
       },
       {
         // The frame probe never produced a reading: every FPS field null, empty trend. Pins the
@@ -200,6 +202,7 @@ const FIXTURES: Record<string, unknown> = {
         cpuTempAvgC: 64.2, cpuTempMaxC: 72.8, packageAvgW: 15.1,
         onBattery: true, batteryStartPct: 88, batteryEndPct: 61, batteryUsedPct: 27,
         fpsTrend: [],
+        fps01PctLow: null, stuttersPerMin: null, energyWh: 9.6, energySource: 'battery', mode: 'battery', frameCapFps: null,
       },
     ],
   },

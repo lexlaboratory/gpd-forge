@@ -82,6 +82,16 @@ for (const scale of ['normal', 'large'] as const) {
       expect(await noHorizontalScroll(page)).toBe(true)
       expect(await offscreen(page)).toEqual([])
       expect(await qam.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
+      // F2: the frame-time graph and its pacing line fit the panel's width, and the line does not
+      // wrap into a clipped second row at large text.
+      const pacing = page.getByTestId('qam-pacing')
+      await expect(pacing).toBeVisible()
+      const graph = await page.getByTestId('qam-pacing-graph').boundingBox()
+      expect(graph!.x).toBeGreaterThanOrEqual(box!.x)
+      expect(graph!.x + graph!.width).toBeLessThanOrEqual(box!.x + box!.width + 1)
+      for (const id of ['qam-pacing-state', 'qam-pacing-lows']) {
+        expect(await page.getByTestId(id).evaluate((el) => el.scrollWidth <= el.clientWidth + 1), id).toBe(true)
+      }
     })
   })
 }

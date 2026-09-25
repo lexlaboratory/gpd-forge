@@ -133,6 +133,38 @@ function trend(avg, points) {
     Math.round((avg + Math.sin(i / 3.1) * 4 - (i % 17 === 0 ? 9 : 0)) * 10) / 10)
 }
 
+/** GET /frames — a deterministic 10 s of a ~60 FPS game with two hitches, so the overlay's graph and
+ *  its "Stutters: N/min" line render the same every run. */
+const MOCK_FRAMETIMES = Array.from({ length: 600 }, (_, i) =>
+  i === 150 ? 48.2 : i === 420 ? 55.6 : Math.round((16.7 + Math.sin(i / 7) * 0.6) * 100) / 100)
+
+/** Port of core/Telemetry/FramePacing.cs — the mock computes its metrics the same way the daemon
+ *  does rather than hard-coding numbers that could drift from the series above. */
+function framePacing(times) {
+  const t = times.filter((x) => Number.isFinite(x) && x > 0)
+  if (t.length < 2) return null
+  const r1 = (x) => Math.round(x * 10) / 10
+  const total = t.reduce((a, b) => a + b, 0)
+  const mean = total / t.length
+  const sd = Math.sqrt(t.reduce((a, x) => a + (x - mean) ** 2, 0) / t.length)
+  const slow = [...t].sort((a, b) => b - a)
+  const slowestMean = (f) => { const n = Math.max(1, Math.floor(t.length * f)); return slow.slice(0, n).reduce((a, b) => a + b, 0) / n }
+  let stutters = 0
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] <= 25) continue
+    const w = t.slice(Math.max(0, i - 15), Math.min(t.length, i + 16)).sort((a, b) => a - b)
+    const n = w.length
+    const median = n % 2 ? w[(n - 1) / 2] : (w[n / 2 - 1] + w[n / 2]) / 2
+    if (t[i] > 2 * median) stutters++
+  }
+  const minutes = total / 60_000
+  return {
+    frames: t.length, spanSeconds: r1(total / 1000), fpsAvg: r1(1000 / mean),
+    fps1PctLow: r1(1000 / slowestMean(0.01)), fps01PctLow: r1(1000 / slowestMean(0.001)),
+    frameTimeStdDevMs: Math.round(sd * 100) / 100, stutters, stuttersPerMin: minutes > 0 ? r1(stutters / minutes) : 0,
+  }
+}
+
 const HOUR = 3_600_000
 const NOW = Date.now()
 const SAMPLE_SESSIONS = [
@@ -148,6 +180,9 @@ const SAMPLE_SESSIONS = [
     cpuTempAvgC: 64.2, cpuTempMaxC: 72.8, packageAvgW: 15.1,
     onBattery: true, batteryStartPct: 88, batteryEndPct: 61, batteryUsedPct: 27,
     fpsTrend: [],
+    // No frames, so no pacing — but the battery drain was read, so the cost is known.
+    fps01PctLow: null, stuttersPerMin: null, energyWh: 9.6, energySource: 'battery',
+    mode: 'battery', frameCapFps: null,
   },
   {
     // Plugged in for at least part of its life, so there is no meaningful drain figure: onBattery is
@@ -161,6 +196,8 @@ const SAMPLE_SESSIONS = [
     cpuTempAvgC: 81, cpuTempMaxC: 94.2, packageAvgW: 31.4,
     onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
     fpsTrend: trend(61.8, 96),
+    fps01PctLow: 21.7, stuttersPerMin: 4.2, energyWh: 31.4, energySource: 'package',
+    mode: 'gaming', frameCapFps: null,
   },
   {
     // Ran entirely on battery: the one shape where a drain figure means anything.
@@ -173,6 +210,8 @@ const SAMPLE_SESSIONS = [
     cpuTempAvgC: 78.3, cpuTempMaxC: 91.5, packageAvgW: 24.6,
     onBattery: true, batteryStartPct: 96, batteryEndPct: 31, batteryUsedPct: 65,
     fpsTrend: trend(52.4, 120),
+    fps01PctLow: 33.5, stuttersPerMin: 0.6, energyWh: 41.3, energySource: 'battery',
+    mode: 'battery', frameCapFps: 45,
   },
   {
     // The compositor and a browser present frames too, and the daemon records their sessions (on the
@@ -186,6 +225,7 @@ const SAMPLE_SESSIONS = [
     cpuTempAvgC: 52, cpuTempMaxC: 61, packageAvgW: 8.2,
     onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
     fpsTrend: trend(3.5, 60),
+    fps01PctLow: null, stuttersPerMin: null, energyWh: null, energySource: null, mode: null, frameCapFps: null,
   },
   {
     id: '6c1e8f47-2d9a-4b35-8e70-a4f2d6b1c953',
@@ -197,6 +237,7 @@ const SAMPLE_SESSIONS = [
     cpuTempAvgC: 55, cpuTempMaxC: 66, packageAvgW: 9.8,
     onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
     fpsTrend: trend(58.2, 60),
+    fps01PctLow: null, stuttersPerMin: null, energyWh: null, energySource: null, mode: null, frameCapFps: null,
   },
 ]
 
@@ -1017,6 +1058,15 @@ async function handle(req, res) {
     state.appRules = state.appRules.filter((r) => r.id !== id)
     if (state.appRules.length === before) return send(res, 404, { error: 'That rule no longer exists.' })
     return send(res, 200, appRulesInfo())
+  }
+
+  // Frame pacing (F2). `_test_frames=none` answers as a daemon with no frame source; `steady` drops the
+  // two hitches. Per request, like `_test_blind`, so no spec leaves state behind for the next.
+  if (method === 'GET' && path === '/frames') {
+    const knob = url.searchParams.get('_test_frames')
+    if (knob === 'none') return send(res, 200, { available: false, process: null, frametimesMs: [], metrics: null })
+    const times = knob === 'steady' ? MOCK_FRAMETIMES.map((x) => (x > 25 ? 16.7 : x)) : MOCK_FRAMETIMES
+    return send(res, 200, { available: true, process: 'cyberpunk2077.exe', frametimesMs: times, metrics: framePacing(times) })
   }
 
   // --- play sessions -------------------------------------------------------------------------

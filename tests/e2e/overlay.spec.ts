@@ -106,3 +106,40 @@ test.describe('Overlay frame rate controls', () => {
     expect(posts.some((p) => p.url.includes('/auto-fps'))).toBeFalsy()
   })
 })
+
+// Plan F2: the frame-time graph and the pacing line. The mock serves 10 s of ~60 FPS with two hitches;
+// `_test_frames` switches it to an even run or to "no frame source", per request.
+test.describe('Overlay frame pacing', () => {
+  const frames = (knob: string) => async (route: import('@playwright/test').Route) => {
+    const res = await route.fetch({ url: `${route.request().url()}?_test_frames=${knob}` })
+    await route.fulfill({ response: res })
+  }
+
+  test('draws the frame times and counts the hitches per minute', async ({ page, request }) => {
+    const served = await (await request.get('http://127.0.0.1:8799/frames')).json()
+    await page.goto('/overlay.html')
+    const pacing = page.getByTestId('qam-pacing')
+    await expect(pacing).toBeVisible()
+    await expect(page.getByTestId('qam-pacing-graph').locator('polyline')).toHaveAttribute('points', /\d/)
+    expect(served.metrics.stutters).toBe(2)
+    await expect(page.getByTestId('qam-pacing-state')).toHaveText(`Stutters: ${served.metrics.stuttersPerMin}/min`)
+    await expect(pacing).toHaveAttribute('data-stutters', 'true')
+    await expect(page.getByTestId('qam-pacing-lows'))
+      .toHaveText(`1% ${Math.round(served.metrics.fps1PctLow)} · 0.1% ${Math.round(served.metrics.fps01PctLow)} fps`)
+  })
+
+  test('an even run reads as steady pacing', async ({ page }) => {
+    await page.route('**/frames', frames('steady'))
+    await page.goto('/overlay.html')
+    await expect(page.getByTestId('qam-pacing-state')).toHaveText('Steady pacing')
+    await expect(page.getByTestId('qam-pacing')).not.toHaveAttribute('data-stutters', /.*/)
+  })
+
+  test('with no frame source the panel draws no graph at all', async ({ page }) => {
+    // A flat line would read as "perfectly even"; no data must read as no data.
+    await page.route('**/frames', frames('none'))
+    await page.goto('/overlay.html')
+    await expect(page.getByTestId('qam-tdp')).toBeVisible()
+    await expect(page.getByTestId('qam-pacing')).toHaveCount(0)
+  })
+})

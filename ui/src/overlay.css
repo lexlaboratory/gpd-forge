@@ -189,6 +189,24 @@ button { font: inherit; user-select: none; -webkit-tap-highlight-color: transpar
 .qam-chip.on { color: var(--accent-ink); background: var(--accent); font-weight: var(--weight-semibold); }
 .qam-chip:disabled { opacity: 0.4; cursor: default; }
 
+/* Frame pacing (F2): a short frame-time graph and one line under it. Kept compact — the panel is 380px
+   and the controls below it must not be pushed off screen by a readout. */
+.qam-pacing { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.qam-pacing-graph {
+  display: block; width: 100%; height: 2.75rem;
+  background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.qam-pacing-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.qam-pacing[data-stutters] .qam-pacing-line { stroke: var(--warn); }
+.qam-pacing-floor { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.qam-pacing-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap;
+  font-size: var(--text-xs); font-variant-numeric: tabular-nums;
+}
+.qam-pacing-state { font-weight: var(--weight-semibold); color: var(--good); }
+.qam-pacing-state.warn { color: var(--warn); }
+.qam-pacing-lows { color: var(--text-dim); }
+
 .qam-batt { display: flex; align-items: center; gap: var(--space-3); }
 .qam-batt-v { flex: none; font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--text); }
 
