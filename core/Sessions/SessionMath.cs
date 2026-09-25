@@ -83,6 +83,15 @@ public static class SessionMath
             .ToArray();
     }
 
+    /// <summary>The rollups that could be games: drops the known non-game presenters the FPS target
+    /// already ignores (<see cref="GpdForge.Telemetry.FrameTarget.NonGamePresenters"/> — dwm, browsers,
+    /// launchers). F1 audit round 1 (2026-09-25): dwm.exe headed the Games page on the device.</summary>
+    public static IReadOnlyList<GameSummary> GamesOnly(IEnumerable<GameSummary> summaries)
+    {
+        ArgumentNullException.ThrowIfNull(summaries);
+        return summaries.Where(g => !GpdForge.Telemetry.FrameTarget.IsNonGame(g.App)).ToArray();
+    }
+
     private static double? Weighted(IEnumerable<GameSession> sessions, Func<GameSession, double?> selector)
     {
         double weight = 0, total = 0;

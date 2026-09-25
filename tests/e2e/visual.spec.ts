@@ -66,7 +66,7 @@ const UI_VERSION: string = JSON.parse(
 
 const INACTIVE_PROFILE = {
   active: false, game: null, ruleId: null, match: null, mode: null,
-  applied: null, skipped: [], freeze: [], sinceUtc: null,
+  applied: null, skipped: [], superseded: [], freeze: [], sinceUtc: null,
 }
 
 // The Games page's own frozen state (F1): one game with a profile that is in force, one claimed by a
@@ -87,7 +87,7 @@ const GAMES_RULES = {
 const GAMES_ACTIVE = {
   active: true, game: 'cyberpunk2077.exe', ruleId: 'vis-r3', match: 'cyberpunk2077', mode: 'gaming',
   applied: { stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null } },
-  skipped: [], freeze: [], sinceUtc: '2026-08-28T09:00:00.000Z',
+  skipped: [], superseded: [], freeze: [], sinceUtc: '2026-08-28T09:00:00.000Z',
 }
 
 const ALERT_SEEN = '2026-08-28T09:12:00.000Z'
@@ -323,8 +323,16 @@ async function prepare(page: Page, { theme, density = 'mouse' }: Prep) {
     // Reads are frozen; anything else (there should be none in this spec) reaches the real mock, so
     // a stray write is not silently swallowed by a fake 200.
     if (req.method() !== 'GET') return route.continue()
-    const body = FIXTURES[new URL(req.url()).pathname]
+    const url = new URL(req.url())
+    const body = FIXTURES[url.pathname]
     if (body === undefined) return route.continue()
+    // The Games editor asks for one game's sessions (appFilter): answer from the same frozen list,
+    // filtered as the daemon filters, so its recent-sessions list is that game's and stable.
+    const app = url.searchParams.get('appFilter')
+    if (url.pathname === '/sessions' && app) {
+      const all = body as { sessions: { app: string }[] }
+      return route.fulfill({ json: { ...all, sessions: all.sessions.filter((x) => x.app.toLowerCase() === app.toLowerCase()) } })
+    }
     return route.fulfill({ json: body })
   })
   await page.addInitScript(([t, d]) => {
@@ -412,6 +420,7 @@ for (const vp of VIEWPORTS) {
           // The editor open on the stored profile: every row showing, TDP included.
           await page.getByTestId('games-card-cyberpunk2077').click()
           await expect(page.getByTestId('game-tdp')).toContainText('22')
+          await expect(page.getByTestId('game-recent-vis-s1')).toBeVisible()
           // Park the pointer: opening scrolls the page under it, and whatever it then rests on would be
           // captured in its hover state.
           await page.mouse.move(1, 1)
@@ -485,6 +494,25 @@ for (const theme of THEMES) {
       await expect(page.getByTestId('qam-budget')).not.toHaveText('—')
       await settle(page)
       await expect(page).toHaveScreenshot(`overlay-${theme}-380x800-pad.png`, { fullPage: true })
+    })
+
+    // F1 audit round 2: a profile with a refused field — the line wraps and takes the warning tone.
+    test(`overlay — ${theme} — 380x800 pad, profile with a refused field`, async ({ page }) => {
+      await prepare(page, { theme, density: 'pad' })
+      await page.route(`${API}/profiles/active`, (route) => route.fulfill({
+        json: {
+          active: true, game: 'eldenring.exe', ruleId: 'r', match: 'eldenring', mode: 'gaming',
+          applied: { stapmW: null, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: null, chill: null } },
+          skipped: [{ field: 'stapmW', reason: 'held at 18 W by the thermal guardian until the device cools down.' }],
+          superseded: [], freeze: [], sinceUtc: '2026-09-25T10:00:00Z',
+        },
+      }))
+      await page.addInitScript(([t]) => { document.documentElement.dataset.theme = t }, [theme])
+      await page.goto('/overlay.html', { waitUntil: 'domcontentloaded' })
+      await expect(page.getByTestId('qam-profile')).toHaveAttribute('data-skipped', 'true', { timeout: 15_000 })
+      await expect(page.getByTestId('qam-budget')).not.toHaveText('—')
+      await settle(page)
+      await expect(page).toHaveScreenshot(`overlay-${theme}-380x800-pad-skipped.png`, { fullPage: true })
     })
   })
 }

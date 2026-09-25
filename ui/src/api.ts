@@ -13,7 +13,7 @@ import type {
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
-  DaemonHealth, DaemonVersion, GpuInfo, StandbyRestoreOutcome,
+  DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, StandbyRestoreOutcome,
   AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, TdpInfo, RuleOverrides,
 } from './types'
 
@@ -132,6 +132,9 @@ export const setFrameCap = (fps: number | null) =>
 // Read live on every call: Adrenalin is a second writer to these settings, so reporting our last
 // write as the current state would be a stale claim dressed up as a reading.
 export const getGpu = () => json<GpuInfo>('/gpu')
+// What the daemon has asked the driver for (a game profile's cap, a cap set from any window), before
+// the agent has carried it out. See GpuDesired.
+export const getGpuDesired = () => json<GpuDesired>('/gpu/desired')
 
 // --- telemetry history + CSV export ---
 export const getHistory = (minutes?: number) => json<HistoryResponse>(`/history${minutes ? `?minutes=${minutes}` : ''}`)
@@ -208,7 +211,8 @@ export const moveAppRule = (id: string, delta: number) => rules(`/${id}/move`, s
 export const getActiveProfile = () => json<ActiveGameProfile>('/profiles/active')
 
 // --- play sessions (/sessions) ---
-export const getSessions = (limit = 100) => json<SessionsResponse>(`/sessions?limit=${limit}`)
+export const getSessions = (limit = 100, appFilter?: string) => json<SessionsResponse>(
+  `/sessions?limit=${limit}${appFilter ? `&appFilter=${encodeURIComponent(appFilter)}` : ''}`)
 export const getSessionGames = () => json<GamesResponse>('/sessions/games')
 export const getSession = (id: string) => json<GameSession>(`/sessions/${id}`)
 export const deleteSession = (id: string) => json<void>(`/sessions/${id}`, { method: 'DELETE' })

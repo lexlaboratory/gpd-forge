@@ -1085,6 +1085,10 @@ app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
 {
     var s = state.Last;
     int? manualStapmW = intent.Manual(m.Active)?.StapmW;
+    // What the user wants in force (manual ?? game profile ?? the mode's preset), as opposed to `stapmW`,
+    // the last write by ANY owner — mid-throttle that is the guardian's ceiling. The overlay's "save as
+    // profile" captures this, so a throttle cannot become a game's permanent watts (F1 audit round 1).
+    int? intentStapmW = intent.Resolve(m.Active)?.StapmW;
     if (s is not TdpSnapshot last)
         // Null, not a zeroed row: "nothing has written TDP since this daemon started" is a real
         // answer and must not be dressed up as 0 W applied by nobody.
@@ -1095,6 +1099,7 @@ app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
             attempts = (int?)null, atUtc = (DateTimeOffset?)null,
             note = "No TDP write has happened since the daemon started.",
             manualStapmW,
+            intentStapmW,
         });
 
     return Results.Json(new
@@ -1113,6 +1118,7 @@ app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
             ? "The hardware gate is closed: the stub backend echoes the request, so 'verified' means the echo matched, not the silicon."
             : null,
         manualStapmW,
+        intentStapmW,
     });
 });
 
@@ -1488,27 +1494,22 @@ app.MapPut("/app-rules/{id:guid}", (Guid id, AppRuleEdit e, IAppRuleStore rules)
 // 22 W · 60 FPS · Aggressive" notice. `applied` is what was actually layered, `skipped` what the rule
 // asked for and was refused (with why), `freeze` is stored only until F5. In memory: `active:false`
 // after a restart until the focus loop settles on the game again, and always with auto-profiles off.
-app.MapGet("/profiles/active", (ActiveGameProfileState state) =>
+app.MapGet("/profiles/active", (ActiveGameProfileState state, TdpIntent intent, FanOverride gameFan, GpuDesiredState gpu,
+    GuardianService guardian, IPowerControllerDetector detector, GpuAgentState agent) =>
 {
+    // Each field is checked against its owner as it is asked (ActiveGameProfileWire): the overlay shows
+    // this as a live line, and a record made when the game settled goes stale the moment the user acts.
     var p = state.Current;
-    return Results.Json(new
-    {
-        active = p is not null,
-        game = p?.Game,
-        ruleId = p?.RuleId,
-        match = p?.Match,
-        mode = p?.Mode,
-        applied = p is null ? null : new
-        {
-            stapmW = p.Applied.StapmW,
-            frameCapFps = p.Applied.FrameCapFps,
-            fanMode = p.Applied.FanMode,
-            gpu = new { antiLag = p.Applied.AntiLag, chill = p.Applied.Chill },
-        },
-        skipped = p?.Skipped.Select(s => new { field = s.Field, reason = s.Reason }).ToArray() ?? [],
-        freeze = p?.Freeze ?? [],
-        sinceUtc = p?.SinceUtc,
-    });
+    var live = new ProfileLiveState(
+        ManualStapmW: p is null ? null : intent.Manual(p.Mode)?.StapmW,
+        FanHeldByGame: gameFan.Active,
+        CapVersion: gpu.CapVersion,
+        GuardianThrottleW: guardian.ThrottledToW,
+        RivalsNow: () => detector.OthersRunning(out var names) ? names : [],
+        // The Radeon side is the agent's to carry out; its report is what says whether it did.
+        Agent: agent.Last,
+        Now: DateTimeOffset.UtcNow);
+    return Results.Json(ActiveGameProfileWire.From(p, live));
 });
 
 app.MapDelete("/app-rules/{id:guid}", (Guid id, IAppRuleStore rules) =>
@@ -1535,8 +1536,11 @@ app.MapGet("/sessions", (string? appFilter, int? limit, SessionStore sessions, S
         current = recorder.CurrentApp,
         sessions = sessions.List(appFilter, Math.Clamp(limit ?? 100, 1, 500)),
     }));
+// Only what could be a game: the compositor, browsers and launchers present frames too, and on the
+// device dwm.exe headed this list (37 sessions at 3.5 FPS, 2026-09-25) — as a "detected game" the Games
+// page offered to profile. Their sessions stay in GET /sessions; they are just not games.
 app.MapGet("/sessions/games", (SessionStore sessions, SessionRecorder recorder) =>
-    Results.Json(new { fpsAvailable = recorder.FpsAvailable, games = sessions.PerGame() }));
+    Results.Json(new { fpsAvailable = recorder.FpsAvailable, games = SessionMath.GamesOnly(sessions.PerGame()) }));
 app.MapGet("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>
     sessions.Get(id) is GameSession s ? Results.Json(s) : Results.NotFound(new { error = "session not found" }));
 app.MapDelete("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>

@@ -117,6 +117,61 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **"Save as profile for this game" no longer saves a profile for the overlay itself.** With a game
+  that had no rule yet in front, opening the overlay (an Edge window) made the button name `msedge`,
+  and pressing it wrote `msedge -> gaming` with the game's watts — applied to every browser from then
+  on. The overlay now takes the app presenting frames, else the app a rule decided on, and says "No
+  game in front" when there is neither.
+- **The overlay's save captures what you chose, not a passing write.** It stored the stepper's value,
+  seeded once when the panel opened from the last write by any owner — opened mid-throttle, the
+  guardian's ceiling became the game's watts. TDP and fan are now read from the daemon at the press,
+  TDP as your own intent (`GET /tdp` `intentStapmW`: manual, else the game's, else the preset); the
+  button waits until both are known, and a fan pick the daemon refuses is said and undone instead of
+  staying on screen to be saved.
+- **"Save as profile for this game" no longer offers the desktop or a browser as the game.** The
+  frame recorder's current app is whatever presents frames, which with no game running is `dwm` or
+  `chrome` — and the button offered to save `dwm -> gaming`. Known non-game presenters (the shell,
+  browsers, launchers, overlays, GPD Forge) are ignored; the button says "No game in front" instead.
+- **The overlay's save keeps the game's frame cap.** The cap was taken from the panel as it was when
+  it opened, so a profile that set 60 FPS a few seconds later was saved as "no FPS cap"; with the GPU
+  agent silent the stored cap was erased. The cap is now read when you press Save (what GPD Forge has
+  asked the driver for, else what the driver holds), and kept as stored when it cannot be read. The
+  mode for a new rule is read at the press too, not the one in force when the panel opened.
+- **The overlay's cap row and TDP stepper follow a game profile.** When a profile went on or off
+  after the overlay opened, the cap row still said Off under "60 FPS" and the stepper still showed the
+  preset under the game's watts — so + stepped down, to a manual value below what the device ran at.
+- **A Radeon setting the driver does not take is no longer reported as applied.** Anti-Lag or Chill
+  the driver does not support is skipped at apply, with the reason; and the frame cap, Anti-Lag and
+  Chill leave the notice's "applied" when the GPU agent's report shows the driver holding something
+  else, or when the agent stops reporting — they said "applied" for as long as the game ran.
+- **The overlay shows why a profile setting was not applied, whole.** The reason was cut off with an
+  ellipsis in the 380 px window and only readable in a tooltip a pad cannot open; with something not
+  applied the line now wraps and is marked as a warning.
+- **A game profile no longer wipes a TDP you set by hand.** Leaving a game for another app in the same
+  mode, or editing its profile mid-game, ended the manual override and wrote the preset or the game's
+  watts. The override now lasts until the mode changes, as it always should have; while it is set,
+  a game coming or going writes nothing.
+- **The profile notice only says what is true.** A rule that only picks a mode (the seeded `steam`)
+  is no longer announced as "Profile steam applied: mode settings". The fan is reported as not
+  applied while fan control is off, and the frame cap and Anti-Lag / Chill while Radeon control is
+  off (a default install, without `-EnableGpuProfiles`) or the GPU agent reports it unavailable. The
+  watts are reported as held while another power controller keeps TDP (named) or the thermal
+  guardian throttles below them. And what you change mid-game — TDP, fan, cap — is shown as "changed
+  by you" instead of the overlay's line still claiming the profile's values beside controls showing
+  yours.
+- **Leaving a game puts the frame cap back safely.** It could restore a cap below an auto-FPS target
+  switched on mid-game (the pairing every other path refuses; the cap is turned off instead), and it
+  turned off your own Adrenalin cap when the GPU agent had not reported yet at the game's start (the
+  value is now read from the agent's first report, or the request is withdrawn).
+- **One failed read no longer flips the Radeon settings.** A non-2xx from `/gpu/desired` made the GPU
+  agent write the mode's Anti-Lag / Chill over the game's and the game's back on the next tick; an
+  unreadable desired state now skips that tick.
+- **The Games page lists games only.** The compositor, browsers and launchers present frames too, and
+  on the device `dwm.exe` headed the list as a game to profile. `GET /sessions/games` leaves the known
+  non-game presenters out (their sessions stay in `GET /sessions`), and the profile editor now shows
+  the game's last five sessions — when, how long, FPS and 1 % low.
+- **The open game card's small labels meet AA contrast** in both themes (they measured 4.26:1 and
+  4.38:1 on its accent tint); the contrast check now measures that tint and the overlay's profile line.
 - **The first touchpad click after using the gamepad did nothing.** A mouse press switched the UI from
   pad to mouse density on `pointerdown`, which shrank every control (the rail's entries from 45 to
   37 px) before the release — so the release landed on a different element and the browser dropped

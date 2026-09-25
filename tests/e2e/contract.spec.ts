@@ -152,4 +152,26 @@ test.describe('API contract — the mock daemon', () => {
         undeclared.map((r) => `  - ${r}`).join('\n'),
     ).toEqual([])
   })
+
+  test('/profiles/active matches the declared shape with a profile IN FORCE', async ({ request }) => {
+    // F1 audit round 1 (2026-09-25): the loop above only ever sees the inactive answer — the seeded
+    // rules carry no overrides — and a null `applied` skips its field checks. Giving the `steam` rule
+    // (the mock's fixed foreground) a profile is what makes `applied.fields` be checked at all.
+    const rules = await (await request.get(`${API}/app-rules`)).json()
+    const steam = rules.rules.find((r: { match: string }) => r.match === 'steam')
+    const put = (overrides: unknown) => request.put(`${API}/app-rules/${steam.id}`,
+      { data: { match: 'steam', mode: steam.mode, enabled: true, overrides } })
+    try {
+      expect((await put({ stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null } })).ok()).toBeTruthy()
+      const body = await (await request.get(`${API}/profiles/active`)).json()
+      expect(body.active).toBe(true)
+      expect(body.applied).not.toBeNull()
+      const shape = contract.routes.find((r) => r.method === 'GET' && r.path === '/profiles/active')!.shape!
+      const problems: string[] = []
+      validate(body, shape, '/profiles/active', problems)
+      expect(problems).toEqual([])
+    } finally {
+      await put(null)
+    }
+  })
 })

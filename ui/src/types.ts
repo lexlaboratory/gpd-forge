@@ -60,6 +60,9 @@ export interface TdpInfo {
   atUtc: string | null
   note: string | null
   manualStapmW: number | null
+  /** What the user wants in force (manual, else the game profile, else the mode's preset) — unlike
+   *  `stapmW`, never a guardian / auto-FPS / charge-guard / tuner write. Optional: older daemons. */
+  intentStapmW?: number | null
 }
 
 // One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon
@@ -336,6 +339,9 @@ export interface ActiveGameProfile {
   } | null
   /** What the rule asked for and was refused, with why (e.g. a cap below the auto-FPS target). */
   skipped: { field: string; reason: string }[]
+  /** Fields the user changed since the profile went on (stapmW, fanMode, frameCapFps): no longer the
+   *  profile's, so they are not in `applied`. Optional: a daemon before F1 audit round 1 omits it. */
+  superseded?: string[]
   freeze: string[]
   sinceUtc: string | null
 }
@@ -417,6 +423,17 @@ export interface GpuSettings {
   boost: GpuFeature | null
   imageSharpening: GpuFeature | null
   frameRateCap: GpuFeature | null
+}
+
+// GET /gpu/desired: what the daemon has asked the agent to put on the driver, which the agent
+// reconciles a tick (3 s) later. `requested: false` = nobody asked, the driver keeps its own cap.
+// The overlay reads it to capture a cap a game profile set moments ago (F1 audit round 2).
+export interface GpuDesired {
+  requested: boolean
+  frameCapFps: number | null
+  requestedAtUtc: string | null
+  antiLag: boolean | null
+  chill: boolean | null
 }
 
 // What a mode will do to the GPU when it becomes active.

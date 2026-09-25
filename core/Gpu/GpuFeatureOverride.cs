@@ -35,5 +35,15 @@ public static class GpuFeatureOverride
     public static string Key(string mode, bool? antiLag, bool? chill) =>
         $"{mode}|{Tri(antiLag)}|{Tri(chill)}";
 
+    /// <summary>
+    /// The key to reconcile towards this tick, or null to leave the GPU alone for it: no mode, or the
+    /// desired state could not be read. F1 audit round 1 (2026-09-25): an unreadable /gpu/desired used
+    /// to mean "no game opinion", so one non-2xx wrote the mode's Anti-Lag over the game's Chill and the
+    /// next good read wrote it back — two ADLX writes and a visible flip for a hiccup. Only a desired
+    /// state that WAS read, with no features in it, means the mode alone decides.
+    /// </summary>
+    public static string? ReconcileKey(string? mode, bool desiredRead, bool? antiLag, bool? chill) =>
+        mode is null || !desiredRead ? null : Key(mode, antiLag, chill);
+
     private static string Tri(bool? b) => b is bool v ? (v ? "on" : "off") : "mode";
 }

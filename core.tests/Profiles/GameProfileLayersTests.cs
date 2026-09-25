@@ -171,4 +171,16 @@ public sealed class GpuFeatureOverrideTests
         Assert.NotEqual(plain, GpuFeatureOverride.Key("gaming", null, true));
         Assert.NotEqual(GpuFeatureOverride.Key("gaming", false, null), GpuFeatureOverride.Key("gaming", null, null));
     }
+
+    // F1 audit round 1 (2026-09-25): one non-2xx from /gpu/desired produced "gaming|mode|mode", which
+    // differs from a game's "gaming|off|on" — so the agent wrote the mode's profile over the game's and
+    // the next good read wrote it back. Unreadable is "skip this tick", not "no game opinion".
+    [Fact]
+    public void An_unreadable_desired_state_reconciles_nothing_this_tick()
+    {
+        Assert.Null(GpuFeatureOverride.ReconcileKey("gaming", desiredRead: false, null, null));
+        Assert.Null(GpuFeatureOverride.ReconcileKey(null, desiredRead: true, null, null));
+        Assert.Equal(GpuFeatureOverride.Key("gaming", null, null), GpuFeatureOverride.ReconcileKey("gaming", true, null, null));
+        Assert.Equal(GpuFeatureOverride.Key("gaming", false, true), GpuFeatureOverride.ReconcileKey("gaming", true, false, true));
+    }
 }

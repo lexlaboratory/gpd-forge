@@ -11,6 +11,10 @@ namespace GpdForge.Profiles;
 /// </summary>
 public enum ApplyOutcome { UnknownMode, SkippedConflict, AppliedVerified, AppliedUnverified, HeldByGuardian }
 
+/// <summary>An apply's outcome plus who it yielded to (<see cref="ApplyOutcome.SkippedConflict"/>), so a
+/// game profile's notice can say which controller kept its watts (F1 audit round 1, 2026-09-25).</summary>
+public sealed record ApplyReport(ApplyOutcome Outcome, IReadOnlyList<string> Rivals);
+
 public sealed class ProfileApplier(
     ITdpController tdp,
     IPowerControllerDetector detector,
@@ -42,35 +46,45 @@ public sealed class ProfileApplier(
     /// guardian's 30 s re-assert — true of a plain mode pick too, which had the same hole.
     /// </para>
     /// </summary>
-    public async Task<ApplyOutcome> ApplyAsync(string mode, CancellationToken ct)
+    public async Task<ApplyOutcome> ApplyAsync(string mode, CancellationToken ct) =>
+        (await ApplyWithReportAsync(mode, clearManual: true, ct)).Outcome;
+
+    /// <summary>
+    /// <see cref="ApplyAsync"/>, with the rivals it yielded to. <paramref name="clearManual"/> false is
+    /// for a write where only the GAME layer moved and the mode did not (F1 audit round 1, 2026-09-25):
+    /// ending the manual override there broke TdpIntent's rule that it lives until the mode changes —
+    /// alt-tabbing out of Elden Ring, or saving only its fan mode, dropped the 12 W set in the overlay.
+    /// </summary>
+    public async Task<ApplyReport> ApplyWithReportAsync(string mode, bool clearManual, CancellationToken ct)
     {
         var preset = ModeProfiles.For(mode);
-        if (preset is null) return ApplyOutcome.UnknownMode;
+        if (preset is null) return new ApplyReport(ApplyOutcome.UnknownMode, []);
 
-        intent?.ClearManual();
+        if (clearManual) intent?.ClearManual();
+        var manual = clearManual ? null : intent?.Manual(mode);
         var game = intent?.Game(mode);
-        var profile = game ?? preset.Value;
-        var owner = game is null ? TdpOwner.Mode : TdpOwner.GameProfile;
+        var profile = manual ?? game ?? preset.Value;
+        var owner = manual is not null ? TdpOwner.Manual : game is null ? TdpOwner.Mode : TdpOwner.GameProfile;
 
         if (detector.OthersRunning(out var names))
         {
             logger?.LogInformation("Yielding TDP for '{Mode}': another power controller is active ({Names}).",
                 mode, string.Join(", ", names));
             state?.MarkStale();
-            return ApplyOutcome.SkippedConflict;
+            return new ApplyReport(ApplyOutcome.SkippedConflict, names);
         }
 
         if (guardian is { Throttling: true })
         {
             logger?.LogInformation("'{Mode}' TDP (STAPM {W}W, {Owner}) held: the thermal guardian is throttling to {Ceiling}W and restores it when it clears.",
                 mode, profile.StapmW, owner, guardian.ThrottledToW);
-            return ApplyOutcome.HeldByGuardian;
+            return new ApplyReport(ApplyOutcome.HeldByGuardian, []);
         }
 
         var r = await tdp.ApplyAsync(profile, owner, ct);
         logger?.LogInformation("Applied '{Mode}' TDP ({Owner}): STAPM {W}W -> {Verdict}",
             mode, owner, profile.StapmW, r.Verified ? "verified" : "UNVERIFIED");
 
-        return r.Verified ? ApplyOutcome.AppliedVerified : ApplyOutcome.AppliedUnverified;
+        return new ApplyReport(r.Verified ? ApplyOutcome.AppliedVerified : ApplyOutcome.AppliedUnverified, []);
     }
 }

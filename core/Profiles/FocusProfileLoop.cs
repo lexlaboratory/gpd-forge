@@ -54,7 +54,8 @@ public sealed class FocusProfileLoop(
     IAppRuleStore rules,
     ILogger? logger = null,
     Func<string, bool>? isRunning = null,
-    GameProfileApplier? games = null)
+    GameProfileApplier? games = null,
+    TdpIntent? intent = null)
 {
     private readonly Func<string, bool> _isRunning = isRunning ?? IsProcessRunning;
     private FocusProfileEngine? _engine;
@@ -95,14 +96,20 @@ public sealed class FocusProfileLoop(
 
         if (switched is null)
         {
-            // Same mode, different game (or none): only the game layer moved, and only it is written.
-            if (gameTdpChanged) await applier.ApplyAsync(mode.Active, ct);
+            // Same mode, different game (or none): only the game layer moved, and only it is written —
+            // WITHOUT ending a manual override (F1 audit round 1): the mode did not change, and TdpIntent's
+            // rule is that the override lives until it does. While one is set nothing is written at all:
+            // Resolve would answer the manual value, which is already what the device holds.
+            if (gameTdpChanged && intent?.Manual(mode.Active) is null)
+                games!.RecordTdpOutcome(await applier.ApplyWithReportAsync(mode.Active, clearManual: false, ct));
             return null;
         }
 
         mode.SwitchAutomatically(switched);
         logger?.LogInformation("Auto-profile -> {Mode} (foreground={Proc})", switched, proc ?? "(none)");
-        await applier.ApplyAsync(switched, ct);   // the mode's TDP, or its game layer (yields if a rival is running)
+        // The mode's TDP, or its game layer (yields if a rival is running). A mode change ends the override.
+        var report = await applier.ApplyWithReportAsync(switched, clearManual: true, ct);
+        games?.RecordTdpOutcome(report);
         return switched;
     }
 
@@ -110,6 +117,7 @@ public sealed class FocusProfileLoop(
     /// True when the swap moved TDP in <paramref name="modeAfter"/> and the caller must write it.</summary>
     private bool LayerGameProfile(GameProfileApplier games, string? proc, string modeAfter)
     {
+        games.Observe();
         var inFront = rules.RuleFor(proc);
         if (inFront?.Id == _ruleCandidate) _ruleCandidateTicks++;
         else { _ruleCandidate = inFront?.Id; _ruleCandidateTicks = 1; }

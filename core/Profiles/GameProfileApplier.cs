@@ -15,6 +15,25 @@
 //
 // Restores are conditional: each one undoes ONLY what is still this profile's. A cap the user set
 // mid-game, a fan they changed, stay theirs — the game leaving is not a reason to undo them.
+//
+// F1 audit round 1 (2026-09-25) — the notice must be TRUE, so nothing is recorded as applied that
+// nothing can apply:
+//  - a rule that only picks a mode records no profile at all. It used to record an empty one, so the
+//    seeded steam -> gaming rule toasted "Profile steam applied: mode settings" on every settle;
+//  - the fan is skipped while fan control is off (the no-op controller: gates closed, unmatched board);
+//  - the cap and the Radeon features are skipped while the GPU agent can never apply them: the gate
+//    is closed (a default install, without -EnableGpuProfiles — the agent then never reads
+//    /gpu/desired), or the agent reported that ADLX is unavailable. An agent that is merely silent
+//    with the gate open (not started yet at logon) still gets the request: desired state converges;
+//  - leaving the game no longer restores a cap below an auto-FPS target switched on mid-game, and no
+//    longer turns off the user's own Adrenalin cap because the agent was not reporting when the game
+//    started (the value to restore is now read from its first report instead).
+//
+// F1 audit round 2: Anti-Lag and Chill are asked for one by one, and one the agent reports the driver
+// does NOT support is skipped with the reason — as the cap already was for FRTC. They used to be
+// recorded as applied the moment they were requested, while AdlxSettings.SetEnabled refused them and
+// the only trace was "Chill -> NOT applied" on the agent's hidden console. Whether a supported one was
+// actually taken is checked when the notice is read (ActiveGameProfileWire), against later reports.
 using GpdForge.Api;
 using GpdForge.Fan;
 using GpdForge.Gpu;
@@ -31,14 +50,23 @@ public sealed class GameProfileApplier(
     AutoFpsState autoFps,
     ActiveGameProfileState active,
     TimeProvider? time = null,
-    ILogger<GameProfileApplier>? logger = null)
+    ILogger<GameProfileApplier>? logger = null,
+    IGpdFanController? fanController = null,
+    Func<bool>? gpuGateOpen = null)
 {
+    public const string FanOffReason = "Fan control is not enabled on this device, so the fan keeps its own mode.";
+    public const string GpuGateOffReason = "Radeon control is off: install with -EnableGpuProfiles to let GPD Forge set it.";
+
     private readonly TimeProvider _time = time ?? TimeProvider.System;
+    private readonly Func<bool> _gpuGateOpen = gpuGateOpen
+        ?? (() => Environment.GetEnvironmentVariable(GpuProfileService.GateVariable) == "1");
 
     // What Begin changed, so End can undo exactly that. Only the focus loop's thread touches these.
     private AppRule? _rule;
     private long? _capVersion;
     private int? _capRestore;
+    private bool _capRestoreUnknown;
+    private DateTimeOffset _begunAt;
     private (bool? AntiLag, bool? Chill)? _features;
 
     /// <summary>The rule whose profile is layered now, or null.</summary>
@@ -53,40 +81,59 @@ public sealed class GameProfileApplier(
     {
         ArgumentNullException.ThrowIfNull(rule);
         ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+        _rule = rule;
         var o = rule.Overrides;
+        if (o is null || o.IsEmpty) return false;   // the mode did everything this rule asks for
+
         var skipped = new List<SkippedOverride>();
         var now = _time.GetUtcNow();
+        _begunAt = now;
 
-        int? stapm = o?.StapmW;
+        int? stapm = o.StapmW;
         if (stapm is int w) intent.SetGame(mode, TdpIntent.GameProfile(w, mode));
 
-        string? fanMode = o?.FanMode;
-        if (fanMode is not null) fanOverride.Apply(fan, fanMode);
-
-        int? capApplied = null;
-        if (o?.FrameCapFps is int fps)
+        string? fanMode = null;
+        if (o.FanMode is string f)
         {
-            if (CapRefusal(fps, now) is string why) skipped.Add(new SkippedOverride("frameCapFps", why));
+            if (fanController is { Available: false }) skipped.Add(new SkippedOverride("fanMode", FanOffReason));
+            else { fanOverride.Apply(fan, f); fanMode = f; }
+        }
+
+        var gpuOff = GpuRefusal(now);
+        int? capApplied = null;
+        if (o.FrameCapFps is int fps)
+        {
+            if ((gpuOff ?? CapRefusal(fps, now)) is string why) skipped.Add(new SkippedOverride("frameCapFps", why));
             else
             {
-                _capRestore = PreviousCap(now);
+                (_capRestore, _capRestoreUnknown) = PreviousCap(now);
                 gpu.RequestFrameCap(fps == RuleOverridesPolicy.FrameCapOff ? null : fps, now);
                 _capVersion = gpu.CapVersion;
                 capApplied = fps;
             }
         }
 
-        if (o?.Gpu is { IsEmpty: false } g)
+        bool? antiLag = null, chill = null;
+        if (o.Gpu is { IsEmpty: false } g)
         {
-            gpu.RequestFeatures(g.AntiLag, g.Chill);
-            _features = (g.AntiLag, g.Chill);
+            if (gpuOff is not null) skipped.Add(new SkippedOverride("gpu", gpuOff));
+            else
+            {
+                var settings = UsableSettings(now);
+                antiLag = Supported(g.AntiLag, settings?.AntiLag, "antiLag", "Anti-Lag", skipped);
+                chill = Supported(g.Chill, settings?.Chill, "chill", "Chill", skipped);
+                if (antiLag is not null || chill is not null)
+                {
+                    gpu.RequestFeatures(antiLag, chill);
+                    _features = (antiLag, chill);
+                }
+            }
         }
 
-        _rule = rule;
         active.Set(new ActiveGameProfile(
             game, rule.Id, rule.Match, mode,
-            new AppliedOverrides(stapm, capApplied, fanMode, o?.Gpu?.AntiLag, o?.Gpu?.Chill),
-            skipped, o?.Freeze ?? [], now));
+            new AppliedOverrides(stapm, capApplied, fanMode, antiLag, chill),
+            skipped, o.Freeze ?? [], now) { CapVersion = _capVersion });
 
         // ASCII separators: the service console writes in the OEM code page, where a middle dot became
         // byte 0xFA and turned the log into "binary" for grep (measured on the daemon, 2026-09-25).
@@ -98,6 +145,32 @@ public sealed class GameProfileApplier(
             skipped.Count == 0 ? "" : " (skipped: " + string.Join("; ", skipped.Select(x => $"{x.Field}: {x.Reason}")) + ")");
 
         return stapm is not null;
+    }
+
+    /// <summary>
+    /// Once per focus-loop tick. While the cap to restore is unknown (the agent was not reporting when
+    /// the game started), the agent's first report since then is read for it: the agent posts what the
+    /// driver holds BEFORE it reconciles the cap in the same tick, so that report is the user's own.
+    /// </summary>
+    public void Observe()
+    {
+        if (!_capRestoreUnknown) return;
+        var (report, usable, _) = agent.Current(_time.GetUtcNow());
+        if (!usable || report is null || report.AtUtc < _begunAt) return;
+        _capRestore = DriverCap(report);
+        _capRestoreUnknown = false;
+    }
+
+    /// <summary>What the TDP write that carried this profile's watts did. A yield or a guardian hold
+    /// is kept on the record, so the notice does not claim watts that were never written.</summary>
+    public void RecordTdpOutcome(ApplyReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        if (active.Current is not { Applied.StapmW: not null } p) return;
+        var hold = report.Outcome is ApplyOutcome.SkippedConflict or ApplyOutcome.HeldByGuardian
+            ? new TdpHold(report.Outcome, report.Rivals)
+            : null;
+        active.Set(p with { TdpHold = hold });
     }
 
     /// <summary>
@@ -116,17 +189,72 @@ public sealed class GameProfileApplier(
 
         fanOverride.Restore(fan);
 
-        if (_capVersion is long v && gpu.CapVersion == v) gpu.RequestFrameCap(_capRestore, now);
+        if (_capVersion is long v && gpu.CapVersion == v) RestoreCap(now);
         if (_features is var (antiLag, chill) && gpu.AntiLag == antiLag && gpu.Chill == chill)
             gpu.RequestFeatures(null, null);
 
-        logger?.LogInformation("Game profile '{Match}' removed; back to the mode's settings.", _rule.Match);
+        if (active.Current is not null)
+            logger?.LogInformation("Game profile '{Match}' removed; back to the mode's settings.", _rule.Match);
         _rule = null;
         _capVersion = null;
         _capRestore = null;
+        _capRestoreUnknown = false;
         _features = null;
         active.Clear();
         return tdpWasInForce;
+    }
+
+    private void RestoreCap(DateTimeOffset now)
+    {
+        if (_capRestoreUnknown)
+        {
+            // The agent never reported during the game, so it never applied the game's cap either (it
+            // reports before it reconciles). Forcing "off" here is what used to erase the user's own
+            // Adrenalin cap; withdrawing the request leaves the driver exactly as the user had it.
+            gpu.WithdrawFrameCap();
+            logger?.LogWarning("Game profile '{Match}': the cap before the game was never read (the GPU agent was silent); the request is withdrawn and the driver keeps its own.", _rule?.Match);
+            return;
+        }
+
+        // The same check every other path makes (POST /gpu/frame-cap, /mode, /auto-fps): auto-FPS may
+        // have been switched on mid-game, against the GAME's cap, and restoring a lower one under its
+        // target is the pairing that runs the machine hot. Off can never conflict.
+        if (FrameRateGovernance.Conflict(autoFps.Enabled, autoFps.TargetFps, _capRestore) is string clash)
+        {
+            logger?.LogInformation("Game profile '{Match}': the cap before the game ({Cap} FPS) is not restored, the cap is turned off instead: {Why}",
+                _rule?.Match, _capRestore, clash);
+            gpu.RequestFrameCap(null, now);
+            return;
+        }
+        gpu.RequestFrameCap(_capRestore, now);
+    }
+
+    /// <summary>Why no GPU override can take effect at all, or null: the gate is closed, or the agent
+    /// reported that ADLX is unavailable. A silent agent is not a refusal (see the header).</summary>
+    private string? GpuRefusal(DateTimeOffset now)
+    {
+        if (!_gpuGateOpen()) return GpuGateOffReason;
+        var (report, _, _) = agent.Current(now);
+        return report is { Available: false } && agent.IsFresh(now)
+            ? $"The GPU agent reports Radeon control unavailable: {report.Detail}"
+            : null;
+    }
+
+    /// <summary>The driver's settings as a fresh, usable agent report states them; null when there is
+    /// none (a silent agent refuses nothing: desired state converges once it starts).</summary>
+    private GpuSettingsSnapshot? UsableSettings(DateTimeOffset now)
+    {
+        var (report, usable, _) = agent.Current(now);
+        return usable ? report?.Settings : null;
+    }
+
+    /// <summary><paramref name="asked"/>, unless the agent reports the driver does not offer the
+    /// feature at all — then null, and the refusal is recorded. An unqueried feature is not refused.</summary>
+    private static bool? Supported(bool? asked, GpuFeatureState? state, string field, string name, List<SkippedOverride> skipped)
+    {
+        if (asked is null || state is not { Supported: false }) return asked;
+        skipped.Add(new SkippedOverride(field, $"The driver does not offer {name} on this GPU."));
+        return null;
     }
 
     /// <summary>Why this cap must not be requested, or null. The same checks POST /gpu/frame-cap
@@ -143,12 +271,15 @@ public sealed class GameProfileApplier(
     }
 
     /// <summary>The cap to go back to: the last one requested, else what the driver reported before the
-    /// game (the user's own Adrenalin setting), else off. Never "stop reconciling" — the agent would
-    /// then leave the game's cap in the driver for good.</summary>
-    private int? PreviousCap(DateTimeOffset now)
+    /// game (the user's own Adrenalin setting). Unknown when neither exists yet — Observe then reads it
+    /// from the agent's first report.</summary>
+    private (int? Cap, bool Unknown) PreviousCap(DateTimeOffset now)
     {
-        if (gpu.Requested) return gpu.FrameCapFps;
+        if (gpu.Requested) return (gpu.FrameCapFps, false);
         var (report, usable, _) = agent.Current(now);
-        return usable && report?.Settings?.FrameRateTargetControl is { Supported: true, Enabled: true, Value: int v } ? v : null;
+        return usable && report is not null ? (DriverCap(report), false) : (null, true);
     }
+
+    private static int? DriverCap(GpuAgentReport report) =>
+        report.Settings?.FrameRateTargetControl is { Supported: true, Enabled: true, Value: int v } ? v : null;
 }

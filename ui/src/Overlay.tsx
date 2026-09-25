@@ -11,7 +11,7 @@ import type { ModeId, Telemetry, BatteryBudget } from './types'
 import {
   getTelemetry, getMode, setMode, setTdp, getTdp, getProfiles, getFan, setFan,
   getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby, getGpu, setFrameCap,
-  getAppRules, getSessions,
+  getAppRules, getSessions, getGpuDesired,
 } from './api'
 import { Segmented, Stepper } from './components'
 import { useToast } from './Toast'
@@ -19,7 +19,8 @@ import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
 import { useActiveProfile } from './hooks/useActiveProfile'
 import {
-  captureOverrides, describeOverrides, displayName, exactRule, governingRule, noticeParts, noticeText, toRuleFanMode,
+  capInForce, captureOverrides, describeOverrides, displayName, exactRule, gameUnderOverlay, governingRule, noticeParts,
+  noticeText, profileKey, toRuleFanMode,
 } from './gameProfile'
 import { saveGameProfile } from './gameProfileSave'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
@@ -59,6 +60,11 @@ function closeOverlay() {
   window.close()
 }
 
+/** The driver cap in force now (capInForce): the daemon's request, else the driver's own. A failed read
+ *  is an unknown, not a refusal — the caller decides what unknown means for it. */
+const readCap = () =>
+  Promise.all([getGpu().catch(() => null), getGpuDesired().catch(() => null)]).then(([g, d]) => capInForce(g, d))
+
 function fmtBudget(b: BatteryBudget | null): string {
   if (!b) return '—'
   if (b.minutesRemaining == null) return `On AC · ${b.remainingWh.toFixed(0)} Wh`
@@ -96,7 +102,9 @@ export function OverlayApp() {
   const tdpTouched = useRef(false)
   // The last value the daemon accepted, to return to when a write is refused.
   const tdpApplied = useRef<number | null>(null)
-  const [fan, setFanS] = useState('Auto')
+  // Null until GET /fan answers. It was a hardcoded 'Auto' that a failed read left on screen — and the
+  // save button captured it as the game's fan (F1 audit round 1).
+  const [fan, setFanS] = useState<string | null>(null)
   const [fpsTarget, setFpsTarget] = useState(0)
   // Null while unknown. The cap row stays hidden until the daemon says the GPU can do it — a control
   // that cannot work is worse than an absent one.
@@ -104,9 +112,9 @@ export function OverlayApp() {
   const [capSupported, setCapSupported] = useState(false)
   const [bright, setBright] = useState(70)
   const [budget, setBudget] = useState<BatteryBudget | null>(null)
-  // The game under the overlay (F1): what the daemon's focus loop judged — `lastMatch.process`, which
-  // skips the overlay's own Edge window by design (FocusProfileLoop) — else the app presenting frames.
-  // Null when neither knows; the save button then says so rather than guessing.
+  // The game under the overlay (F1): the app presenting frames, else the app a rule decided on — never
+  // the overlay's own Edge window (gameUnderOverlay says why). Null when neither knows; the save button
+  // then says so rather than guessing.
   const [game, setGame] = useState<string | null>(null)
   const [savingProfile, setSavingProfile] = useState(false)
   // The profile in force, shown as one line in the header: the overlay is where a player looks mid-game.
@@ -121,28 +129,46 @@ export function OverlayApp() {
       getTelemetry().then((t) => { if (alive) { setTele(t); setLastOkMs(Date.now()) } }).catch(() => {})
     }
     tick(); const id = setInterval(tick, 1000)
-    getFan().then((f) => alive && setFanS(f)).catch(() => {})
     getBrightness().then((b) => alive && b != null && setBright(b)).catch(() => {})
-    // The cap row only appears when the driver actually offers one. Hidden rather than disabled: on a
-    // gamepad-first overlay an unusable row is one more thing to skip past with the D-pad.
-    getGpu().then((g) => {
-      if (!alive) return
-      const frtc = g.available ? g.settings?.frameRateCap : null
-      setCapSupported(Boolean(frtc?.supported))
-      setFrameCapS(frtc?.enabled ? frtc.value : null)
-    }).catch(() => {})
     getAutoFps().then((a) => alive && setFpsTarget(a.enabled ? a.targetFps : 0)).catch(() => {})
     const bt = () => getBudget().then((b) => alive && setBudget(b)).catch(() => {})
     bt(); const bid = setInterval(bt, 5000)
     const fg = async () => {
-      const inFront = await getAppRules().then((r) => r.lastMatch?.process ?? null).catch(() => null)
-      const presenting = inFront ?? await getSessions(1).then((s) => s.current).catch(() => null)
-      if (alive) setGame(presenting)
+      const [lastMatch, presenting] = await Promise.all([
+        getAppRules().then((r) => r.lastMatch).catch(() => null),
+        getSessions(1).then((s) => s.current).catch(() => null),
+      ])
+      if (alive) setGame(gameUnderOverlay(lastMatch, presenting))
     }
     fg(); const gid = setInterval(fg, 5000)
     return () => { alive = false; clearInterval(id); clearInterval(bid); clearInterval(gid) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // The fan row, the cap row and the TDP stepper follow the daemon: read at open, and again whenever a
+  // game profile goes on or comes off — it settles ~4.5 s after focus, often after the overlay opened,
+  // and sets or restores all three. Only the fan did until F1 audit round 2: the cap row kept showing
+  // "Off" under a header saying "60 FPS", and the stepper kept the preset's 20 W under "22 W", so its +
+  // stepped DOWN to a manual 21 W.
+  const profileNow = profileKey(activeProfile)
+  const seededFor = useRef<string | null | undefined>(undefined)   // undefined = the open's own seed
+  useEffect(() => {
+    let alive = true
+    getFan().then((f) => { if (alive) setFanS(f) }).catch(() => {})
+    // The cap row only appears when the driver actually offers one. Hidden rather than disabled: on a
+    // gamepad-first overlay an unusable row is one more thing to skip past with the D-pad.
+    readCap().then((c) => {
+      if (!alive) return
+      setCapSupported(c.supported)
+      if (c.fps != null) setFrameCapS(c.fps === 0 ? null : c.fps)
+    })
+    // A value the user set on the stepper outranks the game's (TdpIntent), so it stays.
+    if (seededFor.current !== undefined && seededFor.current !== profileNow && !tdpTouched.current) {
+      setSeedRound((r) => r + 1)
+    }
+    seededFor.current = profileNow
+    return () => { alive = false }
+  }, [profileNow])
 
   // The stepper opens on what is IN FORCE: the manual override the daemon remembers (TdpIntent), else
   // its last write, else the active mode's preset. It used to open on the preset of the initial
@@ -207,7 +233,18 @@ export function OverlayApp() {
       if (tdpApplied.current != null) setTdp_(tdpApplied.current)
     }
   }
-  const pickFan = async (f: string) => { setFanS(f); try { await setFan(f) } catch { /* ignore */ } }
+  const pickFan = async (f: string) => {
+    const previous = fan
+    setFanS(f)
+    try {
+      await setFan(f)
+    } catch (e) {
+      // Said, and undone, as pickMode and applyTdp do: a swallowed failure left the row on a mode the
+      // fan never took — and "save as profile" then captured it.
+      setFanS(previous)
+      toast.push({ kind: 'error', message: `Fan was not changed — ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const pickFps = async (v: number) => { setFpsTarget(v); try { await setAutoFps(v || 60, v > 0) } catch { /* ignore */ } }
   const pickCap = async (v: number) => {
     const previous = frameCap
@@ -224,23 +261,34 @@ export function OverlayApp() {
     setBright(next)
     try { const b = await setBrightness(next); setBright(b) } catch { /* ignore */ }
   }
-  // "Save as profile for this game": what is in force right now — the stepper's TDP, the driver cap
-  // (only when the GPU offers one; otherwise the mode keeps deciding it) and the fan — into the game's
-  // own rule. The Radeon toggles and the freeze list, which this panel cannot see, are kept as stored.
+  // "Save as profile for this game": what the user has in force right now — TDP, the driver cap (only
+  // when the GPU offers one; otherwise the mode keeps deciding it) and the fan — into the game's own
+  // rule. The Radeon toggles and the freeze list, which this panel cannot see, are kept as stored.
+  //
+  // Everything is read from the daemon at the press, not taken from this panel's state. TDP and fan
+  // since F1 audit round 1: the stepper was seeded once at open from the last write by ANY owner, so
+  // opening it mid-throttle and saving stored the guardian's ceiling as the game's watts. `intentStapmW`
+  // is the user's own intent — manual, else the game's, else the preset — whoever wrote last. The cap
+  // and the mode since round 2: a profile that set 60 FPS after the overlay opened was saved as "no FPS
+  // cap", and a mode picked in the main window saved a new rule under the old one. A cap that cannot be
+  // read (agent silent or stale) keeps the stored one (captureOverrides) instead of erasing it.
   const saveProfile = async () => {
     if (!game) return
     setSavingProfile(true)
     try {
-      const info = await getAppRules()
+      const [info, tdpNow, fanNow, modeNow, capNow] = await Promise.all([getAppRules(), getTdp(), getFan(), getMode(), readCap()])
+      setModeS(modeNow)   // the tiles follow too: the mode may have been changed from the main window
+      const stapmW = tdpNow.intentStapmW ?? tdpNow.manualStapmW
+      if (stapmW == null) throw new Error('the TDP you have in force is not known yet — try again in a moment')
       const own = exactRule(info.rules, game)
       // An existing rule keeps its mode; a new one takes the rule that claims the game today, else the
       // mode in force if a rule may select it, else gaming.
       const ruleMode = own?.mode ?? governingRule(info.rules, game)?.mode
-        ?? (info.modes.includes(mode) ? mode : 'gaming')
+        ?? (info.modes.includes(modeNow) ? modeNow : 'gaming')
       const overrides = captureOverrides(own?.overrides, {
-        stapmW: tdp,
-        frameCapFps: capSupported ? (frameCap ?? 0) : null,
-        fanMode: toRuleFanMode(fan),
+        stapmW,
+        frameCapFps: capNow.fps,
+        fanMode: toRuleFanMode(fanNow),
       })
       await saveGameProfile(game, ruleMode, overrides)
       toast.push({ kind: 'success', message: `Saved as the ${displayName(game)} profile: ${describeOverrides(overrides)}` })
@@ -291,8 +339,12 @@ export function OverlayApp() {
         </div>
         {activeProfile?.active && (() => {
           const { lead, detail } = noticeParts(activeProfile)
+          // Something refused: the reason is what the player most needs, so the line wraps rather than
+          // ending in an ellipsis (a pad cannot open the title tooltip) and takes the warning tone.
+          const refused = activeProfile.skipped.length > 0
           return (
-            <p className="qam-profile" data-testid="qam-profile" role="status" title={noticeText(activeProfile)}>
+            <p className={`qam-profile${refused ? ' warn' : ''}`} data-testid="qam-profile" data-skipped={refused || undefined}
+               role="status" title={noticeText(activeProfile)}>
               <span className="qam-profile-lead">{lead}</span>{' '}<span className="qam-profile-detail">{detail}</span>
             </p>
           )
@@ -335,7 +387,7 @@ export function OverlayApp() {
 
       <div className="qam-line stack">
         <span className="qam-label">Fan</span>
-        <Segmented flavour="qam" label="Fan" options={FAN_OPTIONS} value={fan} onChange={pickFan} />
+        <Segmented flavour="qam" label="Fan" options={FAN_OPTIONS} value={fan ?? ''} onChange={pickFan} />
       </div>
 
       <div className="qam-line stack">
@@ -367,7 +419,7 @@ export function OverlayApp() {
 
       <footer className="qam-foot">
         <button className="qam-action qam-save" data-testid="qam-save-profile" onClick={saveProfile}
-                disabled={!game || savingProfile}>
+                disabled={!game || savingProfile || tdp == null || fan == null}>
           <Icon name="save" />
           <span className="qam-action-text">
             <span>{savingProfile ? 'Saving…' : 'Save as profile for this game'}</span>

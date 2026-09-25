@@ -65,6 +65,20 @@ public sealed class GpuDesiredState
         }
     }
 
+    /// <summary>Back to "nobody has expressed one": the agent leaves the driver's cap alone again. For a
+    /// game profile whose cap was never applied and whose predecessor was never read (F1 audit round 1,
+    /// 2026-09-25) — "off" would have erased the user's own Adrenalin cap.</summary>
+    public void WithdrawFrameCap()
+    {
+        lock (_gate)
+        {
+            _frameCapFps = null;
+            _requested = false;
+            _requestedAtUtc = null;
+            _capVersion++;
+        }
+    }
+
     /// <summary>
     /// Whether a requested cap is within the range the driver reported. Checked before the request is
     /// accepted rather than after it fails, so a user who types 500 is told why instead of watching

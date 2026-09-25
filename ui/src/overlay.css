@@ -92,6 +92,15 @@ button { font: inherit; user-select: none; -webkit-tap-highlight-color: transpar
    proportion to each item's width. Only values longer than the whole line (a refusal reason) truncate. */
 .qam-profile-lead { flex: 1 1 0; color: var(--text-dim); }
 .qam-profile-detail { flex: 0 1 auto; font-weight: var(--weight-semibold); }
+/* Except when something was refused (F1 audit round 2): the reason ("TDP not applied: held at 18 W by
+   the thermal guardian until the device cools down.") is wider than the 380 px window, and truncated it
+   survived only in a title tooltip a pad or a thumb cannot open. Then the line flows as text over as
+   many lines as it needs, marked by a warning bar as the main window's warn toast is. */
+.qam-profile.warn {
+  display: block; white-space: normal;
+  background: var(--bg-elev-2); box-shadow: inset 3px 0 0 var(--warn);
+}
+.qam-profile.warn > span { overflow: visible; }
 
 .qam-live {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));

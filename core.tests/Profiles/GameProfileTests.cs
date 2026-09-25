@@ -14,7 +14,7 @@ using Xunit;
 
 namespace GpdForge.Core.Tests;
 
-public sealed class GameProfileTests : IDisposable
+public sealed partial class GameProfileTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "gpdforge-game-" + Guid.NewGuid().ToString("N"));
 
@@ -50,10 +50,12 @@ public sealed class GameProfileTests : IDisposable
     private sealed record Rig(
         FocusProfileLoop Loop, FakeForeground Fg, RecordingTdp Tdp, ModeState Mode, TdpIntent Intent,
         AppRuleStore Rules, AppRule Rule, FanState Fan, FanOverride FanOverride, GpuDesiredState Gpu,
-        ActiveGameProfileState Active, AutoFpsState AutoFps, ProfileApplier Applier);
+        ActiveGameProfileState Active, AutoFpsState AutoFps, ProfileApplier Applier, GpuAgentState Agent);
 
+    /// <param name="gpuGate">The GPU-profiles gate; open by default so the cap and Radeon paths run.</param>
     private Rig Build(string? foreground, RuleOverrides? overrides = null, GuardianService? guardian = null,
-        string fanMode = "Balanced", bool noOverrides = false)
+        string fanMode = "Balanced", bool noOverrides = false, bool gpuGate = true,
+        IGpdFanController? fanController = null, IPowerControllerDetector? detector = null)
     {
         var fg = new FakeForeground(foreground);
         var tdp = new RecordingTdp();
@@ -66,11 +68,13 @@ public sealed class GameProfileTests : IDisposable
         var gpu = new GpuDesiredState();
         var active = new ActiveGameProfileState();
         var autoFps = new AutoFpsState();
-        var games = new GameProfileApplier(intent, fan, fanOverride, gpu, new GpuAgentState(), autoFps, active);
-        var applier = new ProfileApplier(tdp, new NoRivals(), intent: intent, guardian: guardian);
+        var agent = new GpuAgentState();
+        var games = new GameProfileApplier(intent, fan, fanOverride, gpu, agent, autoFps, active,
+            fanController: fanController, gpuGateOpen: () => gpuGate);
+        var applier = new ProfileApplier(tdp, detector ?? new NoRivals(), intent: intent, guardian: guardian);
         var telemetry = new FixedTelemetrySource(TelemetrySnapshot.Unmeasured with { AcConnected = true, AcUnknown = false });
-        var loop = new FocusProfileLoop(fg, telemetry, mode, applier, rules, isRunning: _ => true, games: games);
-        return new Rig(loop, fg, tdp, mode, intent, rules, rule, fan, fanOverride, gpu, active, autoFps, applier);
+        var loop = new FocusProfileLoop(fg, telemetry, mode, applier, rules, isRunning: _ => true, games: games, intent: intent);
+        return new Rig(loop, fg, tdp, mode, intent, rules, rule, fan, fanOverride, gpu, active, autoFps, applier, agent);
     }
 
     private static async Task TickAsync(Rig rig, int times)
@@ -131,8 +135,10 @@ public sealed class GameProfileTests : IDisposable
     }
 
     [Fact]
-    public async Task A_rule_without_overrides_is_recorded_and_touches_nothing_else()
+    public async Task A_rule_without_overrides_records_no_profile_and_touches_nothing_else()
     {
+        // F1 audit round 1: it used to record an empty profile, so every mode-only rule (the seeded
+        // steam, yuzu...) announced "Profile steam applied: mode settings" — and the mock said inactive.
         var rig = Build("eldenring", noOverrides: true);
 
         await TickAsync(rig, 3);
@@ -140,7 +146,11 @@ public sealed class GameProfileTests : IDisposable
         Assert.Equal((ModeProfiles.For("gaming")!.Value, TdpOwner.Mode), Assert.Single(rig.Tdp.Writes));
         Assert.Equal("Balanced", rig.Fan.Mode);
         Assert.False(rig.Gpu.Requested);
-        Assert.Equal(new AppliedOverrides(null, null, null, null, null), rig.Active.Current!.Applied);
+        Assert.Null(rig.Active.Current);
+
+        rig.Tdp.Writes.Clear();
+        await TickAsync(rig, 3);   // and settling on it does not re-run anything tick after tick
+        Assert.Empty(rig.Tdp.Writes);
     }
 
     [Fact]

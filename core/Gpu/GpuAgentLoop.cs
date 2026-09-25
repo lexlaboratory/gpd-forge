@@ -122,10 +122,12 @@ public static class GpuAgentLoop
                 {
                     var mode = await ReadActiveModeAsync(http, ct);
                     // Read before the profile now: a game's Anti-Lag / Chill is part of what to apply.
-                    // Unreadable desired state means "no game opinion", never "turn them off".
-                    var desired = await ReadDesiredAsync(http, ct);
-                    var key = mode is null ? null : GpuFeatureOverride.Key(mode, desired?.AntiLag, desired?.Chill);
-                    if (mode is not null && key != lastAppliedKey)
+                    // Unreadable desired state skips the profile for this tick (ReconcileKey) — it is
+                    // neither "no game opinion" nor "turn them off" — and a failed read does not throw
+                    // past the profile either: it is the same "unreadable".
+                    var desired = await TryReadDesiredAsync(http, logger, ct);
+                    var key = GpuFeatureOverride.ReconcileKey(mode, desired is not null, desired?.AntiLag, desired?.Chill);
+                    if (mode is not null && key is not null && key != lastAppliedKey)
                     {
                         var profile = GpuFeatureOverride.Merge(GpuModeProfiles.For(mode), desired?.AntiLag, desired?.Chill);
                         if (profile is not null && profile.Conflict is null)
@@ -171,6 +173,17 @@ public static class GpuAgentLoop
         }
 
         return 0;
+    }
+
+    /// <summary><see cref="ReadDesiredAsync"/>, with a transport failure (timeout, refused) as null too.</summary>
+    private static async Task<DesiredGpuState?> TryReadDesiredAsync(HttpClient http, ILogger? logger, CancellationToken ct)
+    {
+        try { return await ReadDesiredAsync(http, ct); }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            logger?.LogDebug(e, "GPU agent: /gpu/desired unreadable this tick.");
+            return null;
+        }
     }
 
     /// <summary>What the daemon wants. Null when it could not be read — which must NOT be treated as

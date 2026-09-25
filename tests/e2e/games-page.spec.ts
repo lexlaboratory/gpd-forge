@@ -54,6 +54,34 @@ test.describe('Games page', () => {
     await expect(page.getByTestId('games-fps-hades2')).not.toContainText('0')
   })
 
+  // F1 audit round 1 (2026-09-25): on the device dwm.exe headed this page, profileable, with chrome.exe
+  // further down. The mock's history carries both, as the device's does.
+  test('known non-game windows are not listed as games', async ({ page, request }) => {
+    const history = await (await request.get(`${API}/sessions`)).json()
+    expect(history.sessions.map((s: { app: string }) => s.app)).toEqual(expect.arrayContaining(['dwm.exe', 'chrome.exe']))
+    await openGames(page)
+    await expect(page.getByTestId('games-card-hades2')).toBeVisible()
+    await expect(page.getByTestId('games-card-dwm.exe')).toHaveCount(0)
+    await expect(page.getByTestId('games-card-chrome.exe')).toHaveCount(0)
+  })
+
+  test('the editor lists the game\'s own recent sessions, newest first', async ({ page }) => {
+    await openGames(page)
+    await page.getByTestId('games-card-cyberpunk2077').click()
+    const recent = page.getByTestId('game-recent')
+    await expect(recent).toBeVisible()
+    // The mock's two cyberpunk2077 runs, and nothing of hades2's.
+    const rows = recent.locator('.game-recent')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.nth(0)).toContainText('1 h 0 min · 61.8 FPS · 1% low 44.2')
+    await expect(rows.nth(1)).toContainText('1 h 30 min · 52.4 FPS · 1% low 38.1')
+
+    // A session without an FPS reading shows dashes, never zeros.
+    await page.getByTestId('game-sheet-close').click()
+    await page.getByTestId('games-card-hades2').click()
+    await expect(page.getByTestId('game-recent').locator('.game-recent')).toContainText('30 min · — FPS · 1% low —')
+  })
+
   test('saving a profile stores it on the game\'s own rule and marks the game', async ({ page, request }) => {
     await openGames(page)
     await page.getByTestId('games-card-cyberpunk2077').click()

@@ -158,6 +158,22 @@ public sealed class SessionStoreTests
         Assert.Equal(1800, summaries[0].TotalSeconds);
     }
 
+    // F1 audit round 1 (2026-09-25): on the device dwm.exe headed GET /sessions/games (37 sessions at
+    // 3.5 FPS), so the Games page offered to profile the Desktop Window Manager.
+    [Fact]
+    public void Only_what_could_be_a_game_is_listed_as_one()
+    {
+        var games = SessionMath.GamesOnly(SessionMath.PerGame(
+        [
+            Session("dwm.exe", T0, 300),
+            Session("chrome.exe", T0, 60),
+            Session("Steam.exe", T0, 20),
+            Session("League of Legends.exe", T0, 30),
+        ]));
+
+        Assert.Equal(["League of Legends.exe"], games.Select(g => g.App));
+    }
+
     [Fact]
     public void Store_rejects_nonsensical_limits()
     {

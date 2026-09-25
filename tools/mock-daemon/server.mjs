@@ -174,6 +174,30 @@ const SAMPLE_SESSIONS = [
     onBattery: true, batteryStartPct: 96, batteryEndPct: 31, batteryUsedPct: 65,
     fpsTrend: trend(52.4, 120),
   },
+  {
+    // The compositor and a browser present frames too, and the daemon records their sessions (on the
+    // device dwm.exe had 37, 2026-09-25). GET /sessions lists them; GET /sessions/games must not.
+    id: '0d3b6e2a-91f4-4c7e-a5d8-3e2f1b9c7a40',
+    app: 'dwm.exe',
+    startedUtc: new Date(NOW - 7 * HOUR).toISOString(),
+    endedUtc: new Date(NOW - 5.5 * HOUR).toISOString(),
+    durationSeconds: 5400, samples: 5400, samplesWithoutFps: 0,
+    fpsAvg: 3.5, fps1PctLow: 1.1, fpsMax: 60,
+    cpuTempAvgC: 52, cpuTempMaxC: 61, packageAvgW: 8.2,
+    onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
+    fpsTrend: trend(3.5, 60),
+  },
+  {
+    id: '6c1e8f47-2d9a-4b35-8e70-a4f2d6b1c953',
+    app: 'chrome.exe',
+    startedUtc: new Date(NOW - 30 * HOUR).toISOString(),
+    endedUtc: new Date(NOW - 29 * HOUR).toISOString(),
+    durationSeconds: 3600, samples: 3600, samplesWithoutFps: 0,
+    fpsAvg: 58.2, fps1PctLow: 30.4, fpsMax: 60,
+    cpuTempAvgC: 55, cpuTempMaxC: 66, packageAvgW: 9.8,
+    onBattery: false, batteryStartPct: null, batteryEndPct: null, batteryUsedPct: null,
+    fpsTrend: trend(58.2, 60),
+  },
 ]
 
 const state = {
@@ -602,7 +626,13 @@ function appRulesInfo() {
 const profileSince = new Map()
 const INACTIVE_PROFILE = {
   active: false, game: null, ruleId: null, match: null, mode: null,
-  applied: null, skipped: [], freeze: [], sinceUtc: null,
+  applied: null, skipped: [], superseded: [], freeze: [], sinceUtc: null,
+}
+/** Mirrors RuleOverrides.IsEmpty: a rule whose overrides set nothing only picks a mode, and the daemon
+ *  records no profile for it (F1 audit round 1 — it used to announce "mode settings" for steam). */
+function hasOverrides(o) {
+  return !!o && (o.stapmW != null || o.frameCapFps != null || o.fanMode != null
+    || o.gpu?.antiLag != null || o.gpu?.chill != null || (o.freeze?.length ?? 0) > 0)
 }
 /** The game profile in force (F1), as core/Profiles/FocusProfileLoop would settle it: the rule that
  *  claims the mock's fixed foreground, when it carries overrides. The mock has no focus loop, so it
@@ -613,16 +643,32 @@ function activeProfile() {
   const match = lastRuleMatch()
   const rule = state.appRules.find((r) => r.id === match.ruleId)
   const o = rule?.overrides
-  if (!rule || !o) return INACTIVE_PROFILE
+  if (!rule || !hasOverrides(o)) return INACTIVE_PROFILE
+  // A manual TDP that differs from the game's supersedes it, as ActiveGameProfileWire decides. The mock
+  // models only this one: it has no focus loop to hold the fan or request the cap in the first place.
+  const manualOver = o.stapmW != null && state.manualStapmW != null && state.manualStapmW !== o.stapmW
   return {
     active: true, game: MOCK_FOREGROUND, ruleId: rule.id, match: rule.match, mode: rule.mode,
     applied: {
-      stapmW: o.stapmW, frameCapFps: o.frameCapFps, fanMode: o.fanMode,
+      stapmW: manualOver ? null : o.stapmW, frameCapFps: o.frameCapFps, fanMode: o.fanMode,
       gpu: { antiLag: o.gpu?.antiLag ?? null, chill: o.gpu?.chill ?? null },
     },
-    skipped: [], freeze: o.freeze ?? [], sinceUtc: profileSince.get(rule.id) ?? null,
+    skipped: [], superseded: manualOver ? ['stapmW'] : [],
+    freeze: o.freeze ?? [], sinceUtc: profileSince.get(rule.id) ?? null,
   }
 }
+
+/** Mirrors core/Telemetry/FrameTarget.NonGamePresenters (normalised names): windows that present
+ *  frames and are never the game. Kept literal like the mode lists; the sessions fixture below carries
+ *  dwm.exe and chrome.exe, as the device's history does, so the filter is exercised. */
+const NON_GAME_PRESENTERS = new Set([
+  'dwm', 'explorer', 'applicationframehost', 'shellexperiencehost', 'startmenuexperiencehost',
+  'searchhost', 'textinputhost', 'lockapp', 'systemsettings',
+  'chrome', 'msedge', 'msedgewebview2', 'firefox', 'brave', 'opera', 'vivaldi',
+  'steam', 'steamwebhelper', 'epicgameslauncher', 'eadesktop', 'galaxyclient', 'ubisoftconnect',
+  'gamebar', 'gamebarftserver', 'xboxpcappft', 'radeonsoftware', 'discord', 'motionassistant',
+  'gpd forge', 'gpd-forge',
+])
 
 const round1 = (v) => Math.round(v * 10) / 10
 /** Mirrors GpdForge.Sessions.SessionMath.PerGame: duration-weighted averages (a two-minute run must
@@ -816,14 +862,17 @@ async function handle(req, res) {
   if (method === 'GET' && path === '/tdp') {
     const last = state.lastTdp
     const manualStapmW = state.manualStapmW ?? null
+    // TdpIntent.Resolve: manual, else the game profile in force, else the active mode's preset.
+    const intentStapmW = manualStapmW ?? activeProfile().applied?.stapmW
+      ?? state.presets[state.activeMode]?.stapmW ?? null
     if (!last) {
       return send(res, 200, {
         stapmW: null, owner: null, verified: null, backend: null,
         observedStapmW: null, observedPptW: null, attempts: null, atUtc: null,
-        note: 'No TDP write has happened since the daemon started.', manualStapmW,
+        note: 'No TDP write has happened since the daemon started.', manualStapmW, intentStapmW,
       })
     }
-    return send(res, 200, { ...last, note: null, manualStapmW })
+    return send(res, 200, { ...last, note: null, manualStapmW, intentStapmW })
   }
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
 
@@ -981,8 +1030,10 @@ async function handle(req, res) {
       .slice(0, limit)
     return send(res, 200, { fpsAvailable: true, current: null, sessions: rows })
   }
+  // Known non-game presenters are not games (SessionMath.GamesOnly): their sessions stay in /sessions.
   if (method === 'GET' && path === '/sessions/games') {
-    return send(res, 200, { fpsAvailable: true, games: perGame(state.sessions) })
+    const games = perGame(state.sessions).filter((g) => !NON_GAME_PRESENTERS.has(normalizeMatch(g.app)))
+    return send(res, 200, { fpsAvailable: true, games })
   }
   if (method === 'GET' && path.startsWith('/sessions/')) {
     const s = state.sessions.find((x) => x.id === path.slice('/sessions/'.length))

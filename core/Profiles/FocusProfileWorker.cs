@@ -17,11 +17,12 @@ public sealed class FocusProfileWorker(
     ProfileApplier applier,
     IAppRuleStore rules,
     ILogger<FocusProfileWorker> logger,
-    GameProfileApplier? games = null) : BackgroundService
+    GameProfileApplier? games = null,
+    TdpIntent? intent = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        var loop = new FocusProfileLoop(foreground, telemetry, mode, applier, rules, logger, games: games);
+        var loop = new FocusProfileLoop(foreground, telemetry, mode, applier, rules, logger, games: games, intent: intent);
         logger.LogInformation("Auto-profiles ON (foreground-driven mode switching).");
 
         while (!ct.IsCancellationRequested)

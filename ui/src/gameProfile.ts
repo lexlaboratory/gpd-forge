@@ -9,7 +9,9 @@
 //   - what the notice says was applied.
 // Nothing here touches the network or the DOM (imports are types only), so tests/e2e/
 // game-profile-logic.spec.ts runs it in Node. The requests live in gameProfileSave.ts.
-import type { ActiveGameProfile, AppRule, ModeId, RuleFanMode, RuleOverrides } from './types'
+import type {
+  ActiveGameProfile, AppRule, AppRuleMatch, GpuDesired, GpuInfo, ModeId, RuleFanMode, RuleOverrides,
+} from './types'
 
 /** Mirrors AppRulePolicy.Normalize: trimmed, lowercase, no ".exe" tail. */
 export const normalizeMatch = (name: string): string => {
@@ -83,7 +85,13 @@ export function noticeText(p: ActiveGameProfile): string {
  *  the part that gives way, not the values the notice exists to show. */
 export function noticeParts(p: ActiveGameProfile): { lead: string; detail: string } {
   const lead = `Profile ${displayName(p.game ?? p.match ?? 'game')} applied:`
-  const applied = describeOverrides(p.applied)
+  // What the user changed since is theirs now (F1 audit round 1): said once, after what still applies,
+  // so the overlay's live line cannot contradict the controls right below it.
+  const changed = (p.superseded ?? []).map((f) => FIELD_LABEL[f] ?? f)
+  const described = describeOverrides(p.applied)
+  const applied = changed.length > 0 && described === 'mode settings'
+    ? `${changed.join(', ')} changed by you`
+    : changed.length > 0 ? `${described} · ${changed.join(', ')} changed by you` : described
   if (p.skipped.length === 0) return { lead, detail: applied }
   const refused = p.skipped.map((s) => `${FIELD_LABEL[s.field] ?? s.field} not applied: ${s.reason}`).join('; ')
   return { lead, detail: `${applied} — ${refused}` }
@@ -122,15 +130,80 @@ export function precedenceDelta(rules: readonly AppRule[], app: string, ownId: s
   return from > to ? to - from : 0
 }
 
+/**
+ * Mirrors core/Telemetry/FrameTarget.NonGamePresenters (normalised names): processes that present
+ * frames and are never the game — the shell, browsers and web views, launchers and overlays, GPD Forge.
+ * Kept literal, like tools/mock-daemon's copy; the daemon's list is the source.
+ */
+const NON_GAME_PRESENTERS: ReadonlySet<string> = new Set([
+  'dwm', 'explorer', 'applicationframehost', 'shellexperiencehost', 'startmenuexperiencehost',
+  'searchhost', 'textinputhost', 'lockapp', 'systemsettings',
+  'chrome', 'msedge', 'msedgewebview2', 'firefox', 'brave', 'opera', 'vivaldi',
+  'steam', 'steamwebhelper', 'epicgameslauncher', 'eadesktop', 'galaxyclient', 'ubisoftconnect',
+  'gamebar', 'gamebarftserver', 'xboxpcappft', 'radeonsoftware', 'discord', 'motionassistant',
+  'gpd forge', 'gpd-forge',
+])
+
+/** True for a process that presents frames but is never the game (FrameTarget.IsNonGame). */
+export const isNonGamePresenter = (app: string): boolean => NON_GAME_PRESENTERS.has(normalizeMatch(app))
+
+/**
+ * The game under the overlay, for "save as profile" — or null, and the button says so.
+ *
+ * F1 audit round 1 (2026-09-25): this used to be `lastMatch.process` first. But the focus loop only
+ * holds a RULED app under a known non-game window (FocusProfileLoop.Effective); with a game that has
+ * no rule yet in front — exactly when a first profile gets saved — opening the overlay (an Edge --app
+ * window) made it `msedge`, and saving wrote `msedge -> gaming` with the game's watts, applied to every
+ * browser from then on. So: the app presenting frames first, else the focus loop's app only when a
+ * rule decided on it.
+ *
+ * F1 audit round 2: "presenting" (GET /sessions `current`) is NOT filtered by the daemon. The recorder
+ * opens a session for whatever FrameTarget chose, and with no game presenting Choose falls back to a
+ * non-game one (`return held ?? front`) — only /sessions/games leaves them out. The live device had a
+ * chrome.exe session and 37 dwm.exe ones, so on the desktop the button offered `dwm -> gaming`. A known
+ * non-game presenter is ignored here; a rule the user wrote (`lastMatch` with a ruleId) is theirs.
+ */
+export function gameUnderOverlay(
+  lastMatch: Pick<AppRuleMatch, 'process' | 'ruleId'> | null | undefined,
+  presenting: string | null | undefined,
+): string | null {
+  if (presenting && presenting.trim().length > 0 && !isNonGamePresenter(presenting)) return presenting
+  return lastMatch?.ruleId != null && lastMatch.process ? lastMatch.process : null
+}
+
+/**
+ * The driver frame cap in force, as a rule stores it (0 = cap off), and whether this GPU has one.
+ * `fps` null = it cannot be known right now: the agent has not reported, went stale, or the read
+ * failed. Callers keep what they had rather than inventing "off".
+ *
+ * The daemon's request comes first (F1 audit round 2): a game profile or a pick in any window asks
+ * GpuDesiredState, and the agent carries it out a tick (3 s) later — reading only the driver would
+ * capture the cap from before. With nothing requested the driver's own (Adrenalin) cap is what holds.
+ */
+export function capInForce(
+  gpu: Pick<GpuInfo, 'available' | 'settings'> | null | undefined,
+  desired: Pick<GpuDesired, 'requested' | 'frameCapFps'> | null | undefined,
+): { supported: boolean; fps: number | null } {
+  const frtc = gpu?.available ? gpu.settings?.frameRateCap ?? null : null
+  if (!frtc?.supported) return { supported: false, fps: null }
+  if (desired?.requested) return { supported: true, fps: desired.frameCapFps ?? 0 }
+  return { supported: true, fps: frtc.enabled ? frtc.value : 0 }
+}
+
 /** A fan mode a rule can hold. The live fan can be `Manual`; a profile cannot (RuleOverridesPolicy). */
 export const toRuleFanMode = (mode: string | null | undefined): RuleFanMode | null =>
   mode === 'Auto' || mode === 'Quiet' || mode === 'Balanced' || mode === 'Aggressive' ? mode : null
 
 /** The overlay's capture: what is in force now for TDP, cap and fan; the Radeon toggles and the
- *  freeze list the overlay cannot see are kept from the profile that exists, not wiped. */
+ *  freeze list the overlay cannot see are kept from the profile that exists, not wiped. So is a cap
+ *  it could not read (`frameCapFps` null, see capInForce): sending null erased the game's own cap
+ *  whenever the GPU agent was silent at the press (F1 audit round 2). */
 export function captureOverrides(
   existing: RuleOverrides | null | undefined,
   now: { stapmW: number | null; frameCapFps: number | null; fanMode: RuleFanMode | null },
 ): RuleOverrides {
-  return { gpu: existing?.gpu ?? null, freeze: existing?.freeze ?? null, ...now }
+  return {
+    gpu: existing?.gpu ?? null, freeze: existing?.freeze ?? null, ...now,
+    frameCapFps: now.frameCapFps ?? existing?.frameCapFps ?? null,
+  }
 }

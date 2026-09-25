@@ -94,9 +94,10 @@
         "attempts": "number|null",
         "atUtc": "string|null",
         "note": "string|null",
-        "manualStapmW": "number|null"
+        "manualStapmW": "number|null",
+        "intentStapmW": "number|null"
       },
-      "$comment": "Every field nullable because 'nothing has written TDP since the daemon started' is a real answer and must not be dressed up as 0 W applied by nobody. `verified` is three-valued like the audit log, and `backend` is on the wire because with the hardware gate closed the stub echoes the request back and therefore 'verifies' every time — reporting verified without the backend would be a liar with a timestamp."
+      "$comment": "`intentStapmW` added in F1 audit round 1 (2026-09-25): what the user wants in force (manual, else the game profile, else the mode's preset), where `stapmW` is the last write by ANY owner, a guardian throttle included. Every field nullable because 'nothing has written TDP since the daemon started' is a real answer and must not be dressed up as 0 W applied by nobody. `verified` is three-valued like the audit log, and `backend` is on the wire because with the hardware gate closed the stub echoes the request back and therefore 'verifies' every time — reporting verified without the backend would be a liar with a timestamp."
     },
     {
       "method": "GET",
@@ -166,10 +167,11 @@
           }
         },
         "skipped": { "type": "array", "items": { "field": "string", "reason": "string" } },
+        "superseded": "array",
         "freeze": "array",
         "sinceUtc": "string|null"
       },
-      "$comment": "F1 (2026-09-25). The game profile in force, in memory: `active:false` with every field null after a restart and whenever auto-profiles are off. `applied` is what was actually layered; `skipped` what the rule asked for and was refused, with why; `freeze` is stored only until F5."
+      "$comment": "F1 (2026-09-25). The game profile in force, in memory: `active:false` with every field null after a restart and whenever auto-profiles are off, and for a rule that only picks a mode. `applied` is what the profile still holds, checked against each owner when asked; `skipped` what the rule asked for and was refused or is being held off, with why; `superseded` (audit round 1) names the fields the user changed since (stapmW, fanMode, frameCapFps), which leave `applied`; `freeze` is stored only until F5. core.tests/Profiles/ActiveGameProfileWireTests validates a POPULATED answer here."
     },
     {
       "method": "GET",

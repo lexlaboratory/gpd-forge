@@ -289,7 +289,7 @@ document). It went undocumented here until the same day, which is how it stayed 
 ### `GET /tdp`  (who set the power limit, and did it hold)
 `200 → { stapmW: number | null, owner: string | null, verified: boolean | null, backend: string,
 observedStapmW: number | null, observedPptW: number | null, attempts: number | null,
-atUtc: string | null, note: string | null, manualStapmW: number | null }`
+atUtc: string | null, note: string | null, manualStapmW: number | null, intentStapmW: number | null }`
 
 The provenance of the last TDP write. Every field is null and `note` explains why when nothing has
 written a limit since the service started — a fresh daemon has no last write, and reporting `0 W`
@@ -310,6 +310,11 @@ or `verified: false` for that would be inventing an event.
   is none (never set, or a mode change ended it). Present even when nothing has been written yet.
   Added 2026-09-24 so the UI's TDP controls open on the value in force instead of a hardcoded 20 W or
   the preset.
+- `intentStapmW` — what the user wants in force for the active mode (`TdpIntent.Resolve`): the manual
+  override, else the game profile in front, else the mode's preset. `stapmW` is the last write by ANY
+  owner, so mid-throttle it is the guardian's ceiling; this is not. The overlay's "save as profile"
+  captures it, so a throttle, an auto-FPS step or a charge-guard ceiling never becomes a game's
+  permanent watts (F1 audit round 1, 2026-09-25).
 
 The same owner is written into the `GET /audit` line for the change.
 
@@ -400,15 +405,35 @@ wrong JSON type (`"stapmW": "22"`) gets the field's code too, not a framework er
 ### `GET /profiles/active`  (the game profile in force)
 `→ { active: boolean, game: string | null, ruleId: guid | null, match: string | null,
 mode: ModeId | null, applied: { stapmW, frameCapFps, fanMode, gpu: { antiLag, chill } } | null,
-skipped: { field, reason }[], freeze: string[], sinceUtc: string | null }` (F1, 2026-09-25).
+skipped: { field, reason }[], superseded: string[], freeze: string[], sinceUtc: string | null }`
+(F1, 2026-09-25).
 
 What the focus loop layered for the ruled game settled in front — the source of the "Elden Ring
-profile applied: 22 W · 60 FPS · Aggressive" notice. `applied` lists what was actually set (null
-fields were left to the mode; `frameCapFps: 0` = cap turned off), `skipped` what the rule asked for
-and was refused with the reason, `freeze` the stored list (nothing is frozen before F5). `game` is
-the app that decided — the game under the overlay, not the overlay. In memory only: `active: false`
-with every field null after a restart until the loop settles again, and always while
-`GPDFORGE_AUTO_PROFILES=0`.
+profile applied: 22 W · 60 FPS · Aggressive" notice. `applied` lists what the profile still holds
+(null fields were left to the mode; `frameCapFps: 0` = cap turned off), `skipped` what the rule asked
+for and was refused or is being held off, with the reason, `freeze` the stored list (nothing is
+frozen before F5). `game` is the app that decided — the game under the overlay, not the overlay. In
+memory only: `active: false` with every field null after a restart until the loop settles again,
+always while `GPDFORGE_AUTO_PROFILES=0`, and for a rule that only picks a mode (no overrides).
+
+Audit round 1 (2026-09-25) made every field true at the moment it is read:
+- the fan is skipped while fan control is off; the cap and `gpu` are skipped while the GPU-profiles
+  gate is closed (a default install, without `-EnableGpuProfiles`) or the agent reports ADLX
+  unavailable. A silent agent with the gate open still gets the request (desired state converges);
+- `stapmW` moves to `skipped` while another power controller keeps TDP (named) or the thermal
+  guardian throttles below it — and returns when that ends;
+- `superseded` names the fields the user changed since (`stapmW` — a manual TDP other than the
+  game's; `fanMode` — a fan picked by hand; `frameCapFps` — a cap requested since). They leave
+  `applied`, and the notice says "changed by you".
+
+Audit round 2 (2026-09-25) checks the Radeon side against the GPU agent, which carries it out a tick
+(3 s) after the daemon asks:
+- at apply, an `antiLag` / `chill` the agent reports the driver does not support is skipped (field
+  `antiLag` / `chill`) and not requested; the other one still applies;
+- when read, `frameCapFps`, `gpu.antiLag` and `gpu.chill` stay in `applied` only while the agent's
+  report agrees. A report taken 8 s or more after `sinceUtc` that shows something else moves the field
+  to `skipped` ("the driver did not take it: it holds no cap"); a silent or stale agent (no report in
+  30 s) or one reporting ADLX unavailable moves it there too, as not confirmed, until it reports again.
 
 Rules persist to `%ProgramData%\GPD Forge\app-rules.json`. A fresh install is seeded from the exact
 ruleset the daemon used to hardcode (`ModeRules.DefaultRuleSet`), so turning rules into data cannot
@@ -429,10 +454,15 @@ the daemon never manufactures one out of "a game was probably running".
     PresentMon is not installed, or Smart App Control blocked it. It is the difference between "you
     have not played anything" and "nothing can ever be recorded", and the UI must say which.
   - `current` is the app presenting right now, or `null` when nothing is being recorded.
+    It is whatever the frame target chose, which with no game presenting can be a non-game presenter
+    (`dwm.exe`, `chrome.exe`); only `/sessions/games` leaves those out. The overlay's "save as profile"
+    ignores them (`FrameTarget.NonGamePresenters`, mirrored in `ui/src/gameProfile.ts`).
 - `GET /sessions/games → { fpsAvailable: boolean, games: GameSummary[] }` — the per-app rollup, most
   played first. Averages are weighted by duration, so a two-minute run cannot drag the average of a
   three-hour one around. `packageAvgW` (F1, 2026-09-25) is weighted the same way; the Games page
   shows it next to the FPS so a per-game TDP can be judged against what the game actually draws.
+  Known non-game presenters (`FrameTarget.NonGamePresenters`: dwm, explorer, browsers, launchers)
+  are left out — on the device dwm.exe headed this list. Their sessions stay in `GET /sessions`.
 - `GET /sessions/:id → GameSession`, `404 { error: "session not found" }` if unknown.
 - `DELETE /sessions/:id → 204`, same `404` if unknown.
 
@@ -880,8 +910,8 @@ steers TDP toward a target and does not stop the GPU exceeding it. `fps: null` d
   chasing frames the driver is holding back — hot, loud, no extra frames, and no error anywhere. The
   same check runs on `POST /auto-fps`, so it cannot be walked around from the other side. A disabled
   auto-FPS never blocks a cap: its target governs nothing.
-- `GET /gpu/desired` is what the agent reconciles towards; only it reads this. `requested: false`
-  means nobody has asked for anything and the GPU must be left alone — starting the daemon is not a
+- `GET /gpu/desired` is what the agent reconciles towards (the overlay also reads it, to save the
+  cap a game profile asked for before the agent has carried it out). `requested: false` means nobody has asked for anything and the GPU must be left alone — starting the daemon is not a
   reason to change someone's Adrenalin settings. Desired state rather than a command queue, so an
   agent that restarts or misses ticks converges instead of replaying.
 - `GET /gpu/desired` also carries `antiLag` / `chill` (`boolean | null`, F1): a game profile's Radeon

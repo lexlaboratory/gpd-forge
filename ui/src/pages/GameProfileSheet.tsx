@@ -16,6 +16,7 @@ import { CANCEL_EVENT } from '../hooks/useSpatialNav'
 import { describeOverrides, displayName, exactRule, governingRule, hasOverrides } from '../gameProfile'
 import { removeGameProfile, saveGameProfile } from '../gameProfileSave'
 import { PRESET_LABEL } from './shared'
+import { GameRecentSessions } from './GameRecentSessions'
 
 const MIN_W = 5
 const MAX_W = 40   // RuleOverridesPolicy's band; the daemon clamps and refuses outside it too
@@ -200,6 +201,10 @@ export function GameProfileSheet({ game, rules, modes, presets, onSaved, onClose
           <Button variant="danger" testid="game-remove" onClick={remove} disabled={busy}>Remove profile</Button>
         )}
       </div>
+
+      {/* Below the actions: the history is for judging the profile, and must never push Save out of
+          reach (the 1280x800 large-text check in games-page.spec). */}
+      <GameRecentSessions app={game.app} />
     </section>
   )
 }

@@ -10,24 +10,7 @@ import type { GameSession, GameSummary, GamesResponse, SessionsResponse } from '
 import { getSessions, getSessionGames } from '../api'
 import { Frame, Readout, Badge, Button, Segmented, Unavailable } from '../components'
 import { Sparkline } from '../Chart'
-
-// --- formatting ---------------------------------------------------------------
-const DASH = '—'
-const num = (v: number | null, digits = 0) => (v === null || !Number.isFinite(v) ? DASH : v.toFixed(digits))
-
-/** Whole minutes below an hour, h+m above — a play session is never interesting to the second. */
-function duration(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return DASH
-  const total = Math.round(seconds / 60)
-  const h = Math.floor(total / 60)
-  const m = total % 60
-  return h > 0 ? `${h} h ${m} min` : `${m} min`
-}
-
-const when = (iso: string) => {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? DASH : d.toLocaleString()
-}
+import { DASH, duration, num, when } from './sessionFormat'
 
 const VIEWS = [
   { id: 'sessions', label: 'Sessions' },
