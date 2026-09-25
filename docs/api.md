@@ -112,6 +112,15 @@ distinguish "nothing is presenting frames" from "PresentMon has no window of dat
 reporting `0` would assert the first when only the second is known. A probe that measures zero
 frames reports `0`.
 
+`fps` / `fps1PctLow` describe ONE process, the target (`core/Telemetry/FrameTarget.cs`): the
+foreground app when it is presenting; else the app-rule-matched app presenting the most frames (the
+game over `steamwebhelper`, which the shipped `steam` rule also names); else the previous target
+while it keeps presenting (the overlay or the Steam menu has focus, the game renders underneath).
+With none of those it is `null` — never "whichever process presents most". Frames are placed by
+PresentMon's own row time, not by when their line reached the daemon, so a burst of buffered output
+does not read as a burst of frames. The same probe keeps the target's last 10 s of frame times
+in-process (`IFrameTimeSource`); no endpoint serves them yet.
+
 `acConnected` is not nullable — mains power is an answer the daemon always has.
 
 `tdpVerified` **is** nullable, and this document claimed the opposite until 2026-09-02: it read

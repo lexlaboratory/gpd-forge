@@ -4,10 +4,10 @@
 // through the (pure) tracker, and files whatever session that closes. Everything decidable lives in
 // SessionTracker/SessionMath; this only wires them to the probe, the store and the log.
 //
-// Reading the frame probe a second time in the same tick is deliberate and free: FrameWindow
-// aggregates a trailing window and is not consumed by reading, so the recorder sees exactly the
-// sample the telemetry snapshot was built from — including the presenting process name, which the
-// snapshot itself does not carry.
+// Reading the frame probe a second time in the same tick is deliberate and free: the probe
+// aggregates a trailing window that is not consumed by reading, and the target (FrameTarget) is
+// chosen the same way both times, so the recorder sees the sample the telemetry snapshot was built
+// from — including the presenting process name, which the snapshot itself does not carry.
 using GpdForge.Telemetry;
 using Microsoft.Extensions.Logging;
 

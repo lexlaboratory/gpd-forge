@@ -86,6 +86,18 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   LibreHardwareMonitor's average effective core clock. Without the hardware gate the Windows value
   is still consulted, but shown only once it has been seen to change — a number that never moves is
   now "n/a" rather than a reading.
+- **FPS is the game's, not the busiest window's.** PresentMon traces every process, and the reading
+  went to whichever presented the most frames in the last 2 s — the compositor, a browser, a 144 Hz
+  overlay — whatever was in the foreground. It now follows the foreground app when that app is
+  presenting, else an app your rules name (the game rather than `steamwebhelper`, which the shipped
+  `steam` rule also matches), else the game it was already reading, which keeps the FPS on the game
+  while the overlay or the Steam menu has focus. Nothing matching is "n/a", never the busiest app.
+- **Frames are timed by PresentMon's own clock.** They were stamped when their line reached the
+  daemon, and PresentMon's output arrives in bursts, so a flush looked like hundreds of frames at
+  once. Each row's own time (`TimeInMs` in the bundled 2.5.1, `TimeInSeconds` in 1.x) now places it.
+  A row whose `FrameTime` is `NA` falls back to `MsBetweenPresents` instead of being dropped, and
+  `NA` in columns the daemon does not read no longer matters. The daemon also keeps the target's
+  last 10 s of frame times, which the frame-pacing work will build on.
 
 ## [0.3.0] — 2026-09-01
 

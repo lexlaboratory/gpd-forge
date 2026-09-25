@@ -1,7 +1,9 @@
 // GPD Forge — frame-rate telemetry via Intel PresentMon. GPL-3.0-or-later.
 //
-// READ-ONLY. Hosts PresentMon as a child process and streams its CSV output into a trailing
-// FrameWindow. Nothing here writes to hardware.
+// READ-ONLY. Hosts PresentMon as a child process and streams its CSV output into a PresentMonFeed,
+// which keeps the last 10 s of every app's frames on the capture's own timeline. Reads answer for the
+// TARGET process — the foreground app, else a rule-matched game (see FrameTarget). Nothing here
+// writes to hardware.
 //
 // Why shell out to the signed PresentMon.exe instead of consuming ETW in-process: the in-process
 // route (Microsoft.Diagnostics.Tracing.TraceEvent) drags native DLLs along, and this machine runs
@@ -12,17 +14,22 @@
 // same place: TryRead returns false and telemetry reports fps 0, meaning "not available". We never
 // invent a frame rate.
 using System.Diagnostics;
+using GpdForge.Profiles;
 using Microsoft.Extensions.Logging;
 
 namespace GpdForge.Telemetry;
 
-public sealed class PresentMonFrameRateProbe : IFrameRateProbe
+public sealed class PresentMonFrameRateProbe : IFrameRateProbe, IFrameTimeSource
 {
-    // Two seconds is long enough for a stable mean and short enough that the reading tracks the
-    // game rather than lagging behind it.
-    private static readonly TimeSpan Window = TimeSpan.FromSeconds(2);
-
-    private readonly FrameWindow _frames = new(Window);
+    private readonly PresentMonFeed _feed = new();
+    private readonly IForegroundApp? _foreground;
+    private readonly IModeResolver? _rules;
+    private readonly TimeProvider _time;
+    // Arrival times come from the monotonic counter, anchored once to the wall clock. FrameClock
+    // takes a running minimum over them, and a wall-clock step backwards (NTP, a manual change, a
+    // resume) would latch into that minimum and misplace every later frame.
+    private readonly DateTimeOffset _epoch;
+    private readonly long _epochTimestamp;
     private readonly ILogger? _logger;
     private readonly string _exePath;
     private readonly CancellationTokenSource _cts = new();
@@ -30,11 +37,25 @@ public sealed class PresentMonFrameRateProbe : IFrameRateProbe
     private bool _disposed;
     private bool _startFailureLogged;
 
-    public PresentMonFrameRateProbe(string exePath, ILogger<PresentMonFrameRateProbe>? logger = null)
+    /// <param name="foreground">Names the foreground process. Null (or a null answer) leaves the
+    /// choice to the rules and to the previous target.</param>
+    /// <param name="rules">The user's app rules; an app one of them names is a game worth reading
+    /// when the foreground app is not presenting.</param>
+    public PresentMonFrameRateProbe(
+        string exePath,
+        ILogger<PresentMonFrameRateProbe>? logger = null,
+        IForegroundApp? foreground = null,
+        IModeResolver? rules = null,
+        TimeProvider? time = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(exePath);
         _exePath = exePath;
         _logger = logger;
+        _foreground = foreground;
+        _rules = rules;
+        _time = time ?? TimeProvider.System;
+        _epoch = _time.GetUtcNow();
+        _epochTimestamp = _time.GetTimestamp();
     }
 
     /// <summary>
@@ -72,8 +93,32 @@ public sealed class PresentMonFrameRateProbe : IFrameRateProbe
         if (_disposed) return false;
 
         EnsureRunning();
-        return _frames.TryAggregate(DateTimeOffset.UtcNow, out sample);
+        return _feed.TryRead(Now(), Foreground(), IsRuleMatched, out sample);
     }
+
+    public bool TryGetFrameTimes(out FrameTimeSeries series)
+    {
+        series = null!;
+        if (_disposed) return false;
+
+        EnsureRunning();
+        return _feed.TryGetFrameTimes(Now(), Foreground(), IsRuleMatched, out series);
+    }
+
+    private DateTimeOffset Now() => _epoch + _time.GetElapsedTime(_epochTimestamp);
+
+    private string? Foreground()
+    {
+        // Win32ForegroundApp already swallows its own failures; this guards any other implementation,
+        // because a foreground lookup going wrong must cost the target choice, not the FPS reading.
+        try { return _foreground?.Current(); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private bool IsRuleMatched(string application) => _rules?.ModeFor(application) is not null;
 
     /// <summary>
     /// Starts PresentMon if it is not up. Also covers the restart case: PresentMon exits on its own
@@ -133,19 +178,14 @@ public sealed class PresentMonFrameRateProbe : IFrameRateProbe
     {
         try
         {
-            var columns = default(PresentMonColumns);
             while (!ct.IsCancellationRequested)
             {
                 var line = await proc.StandardOutput.ReadLineAsync(ct).ConfigureAwait(false);
                 if (line is null) break; // stdout closed: PresentMon exited
 
-                // The header can arrive more than once (a new capture starts a new block), so keep
-                // re-resolving it rather than assuming the first one holds forever.
-                if (PresentMonCsv.TryParseHeader(line, out var parsed)) { columns = parsed; continue; }
-                if (!columns.IsValid) continue;
-
-                if (PresentMonCsv.TryParseRow(line, columns, out var row))
-                    _frames.Add(row.Application, row.FrameTimeMs, DateTimeOffset.UtcNow);
+                // Arrival time only bounds when a frame happened; the feed places it by the row's own
+                // time column (see FrameClock), which is what survives stdout arriving in bursts.
+                _feed.Accept(line, Now());
             }
         }
         catch (OperationCanceledException) { /* shutting down */ }

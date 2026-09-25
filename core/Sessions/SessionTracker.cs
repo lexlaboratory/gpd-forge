@@ -39,7 +39,7 @@ public sealed class SessionTracker
             if (_open is not null)
             {
                 // A different app taking over the reading ends the previous session immediately:
-                // FrameWindow already resolved which process owns the frame rate, and mixing two
+                // FrameTarget already resolved which process owns the frame rate, and mixing two
                 // games into one row would be a lie about both.
                 bool appChanged = presenting && !string.Equals(_open.App, tick.App, StringComparison.OrdinalIgnoreCase);
                 bool wentQuiet = tick.At - _open.LastFrameAt > _policy.IdleTimeout;

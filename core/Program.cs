@@ -478,8 +478,15 @@ if (Environment.GetEnvironmentVariable("GPDFORGE_ENABLE_FPS") == "1")
     var presentMon = PresentMonFrameRateProbe.Locate();
     if (presentMon is not null)
     {
-        builder.Services.AddSingleton<IFrameRateProbe>(sp =>
-            new PresentMonFrameRateProbe(presentMon, sp.GetService<ILogger<PresentMonFrameRateProbe>>()));
+        // The reading follows the foreground app, then the user's app rules (FrameTarget). One probe
+        // instance serves both views of it: the FPS summary and the 10 s frame-time buffer (plan F2).
+        builder.Services.AddSingleton(sp => new PresentMonFrameRateProbe(
+            presentMon,
+            sp.GetService<ILogger<PresentMonFrameRateProbe>>(),
+            sp.GetService<IForegroundApp>(),
+            sp.GetService<IAppRuleStore>()));
+        builder.Services.AddSingleton<IFrameRateProbe>(sp => sp.GetRequiredService<PresentMonFrameRateProbe>());
+        builder.Services.AddSingleton<IFrameTimeSource>(sp => sp.GetRequiredService<PresentMonFrameRateProbe>());
     }
     // else: PresentMon is not installed. Left unregistered on purpose — fps stays 0 ("n/a") rather
     // than the service failing to start over an optional sensor.
@@ -746,9 +753,12 @@ bool autoProfiles = Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES")
 // feature; it does not delete the user's rules or hide them from the UI.
 builder.Services.AddSingleton<IAppRuleStore>(_ => new AppRuleStore(DataRoot.Current));
 
+// Foreground detection is registered OUTSIDE the auto-profiles gate: it is a read-only Win32 query,
+// and the FPS probe needs it to know whose frames to read even when mode switching is off.
+builder.Services.AddSingleton<IForegroundApp, Win32ForegroundApp>();
+
 if (autoProfiles)
 {
-    builder.Services.AddSingleton<IForegroundApp, Win32ForegroundApp>();
     builder.Services.AddHostedService<FocusProfileWorker>();
 }
 

@@ -111,82 +111,120 @@ public class PresentMonCsvTests
     }
 }
 
-public class FrameWindowTests
+
+/// <summary>
+/// The fields the target-aware feed needs on top of the frame interval: the row's own time, its
+/// process id, and a fallback interval for rows whose preferred one is "NA".
+/// </summary>
+public class PresentMonCsvRowTimeTests
 {
-    private static readonly DateTimeOffset T0 = new(2026, 8, 28, 12, 0, 0, TimeSpan.Zero);
-
     [Fact]
-    public void Reports_nothing_when_empty()
+    public void Resolves_the_real_251_header_the_installer_ships()
     {
-        var w = new FrameWindow(TimeSpan.FromSeconds(2));
-        Assert.False(w.TryAggregate(T0, out _));
+        Assert.True(PresentMonCsv.TryParseHeader(PresentMonFixtures.Header251, out var cols));
+        Assert.True(cols.IsValid);
+        Assert.Equal(10, cols.FrameTimeMs);   // MsBetweenPresents: 2.5.1 has no "FrameTime" column
+        Assert.Equal(8, cols.Time);           // TimeInMs — the present's own time, preferred over CPU start
+        Assert.Equal(1.0, cols.TimeUnitMs);
+        Assert.Equal(1, cols.ProcessId);
     }
 
     [Fact]
-    public void Reports_nothing_on_a_single_frame()
+    public void Reads_TimeInSeconds_as_seconds()
     {
-        var w = new FrameWindow(TimeSpan.FromSeconds(2));
-        w.Add("game.exe", 16.67, T0);
-        Assert.False(w.TryAggregate(T0, out _));
+        PresentMonCsv.TryParseHeader(PresentMonFixtures.Header1x, out var cols);
+        Assert.Equal(7, cols.Time);
+        Assert.Equal(1000.0, cols.TimeUnitMs);
+
+        Assert.True(PresentMonCsv.TryParseRow(
+            "game.exe,4242,0x1234,DXGI,1,0,0,12.5,16.67,16.70,0.42,8.1,17.0", cols, out var row));
+        Assert.Equal(12_500.0, row.TimeMs!.Value, 3);
+        Assert.Equal(4242, row.ProcessId);
     }
 
     [Fact]
-    public void Averages_a_steady_60fps_stream()
+    public void Reads_CPUStartTime_as_milliseconds_and_prefers_FrameTime()
     {
-        var w = new FrameWindow(TimeSpan.FromSeconds(2));
-        for (int i = 0; i < 100; i++) w.Add("game.exe", 16.67, T0.AddMilliseconds(i * 16.67));
-
-        Assert.True(w.TryAggregate(T0.AddSeconds(1), out var s));
-        Assert.Equal(60.0, s.Fps, 1);
-        Assert.Equal("game.exe", s.Process);
+        // PresentMon 2.x prints every default time in ms; only the "...InSeconds" names are seconds.
+        Assert.True(PresentMonCsv.TryParseHeader(PresentMonFixtures.HeaderV2FrameTime, out var cols));
+        Assert.Equal(8, cols.Time);
+        Assert.Equal(1.0, cols.TimeUnitMs);
+        Assert.Equal(9, cols.FrameTimeMs);            // FrameTime wins when both exist...
+        Assert.Equal(10, cols.FallbackFrameTimeMs);   // ...MsBetweenPresents is kept for its NA rows
     }
 
     [Fact]
-    public void One_percent_low_tracks_the_worst_frames_not_the_mean()
+    public void Resolves_the_lower_case_v1_column_names_of_PresentMon_2()
     {
-        // 99 good frames at 60fps + one 100ms stall: the mean barely moves, the 1% low collapses.
-        var w = new FrameWindow(TimeSpan.FromSeconds(5));
-        for (int i = 0; i < 99; i++) w.Add("game.exe", 16.67, T0.AddMilliseconds(i * 16.67));
-        w.Add("game.exe", 100.0, T0.AddMilliseconds(99 * 16.67));
-
-        Assert.True(w.TryAggregate(T0.AddSeconds(2), out var s));
-        Assert.True(s.Fps > 50, $"mean should stay high, was {s.Fps}");
-        Assert.Equal(10.0, s.Fps1PctLow, 1); // 1000 / 100ms
-        Assert.True(s.Fps1PctLow < s.Fps);
+        // 2.5.1's --v1_metrics header spells it "msBetweenPresents"; names are case-insensitive.
+        const string header = "Application,ProcessID,SwapChainAddress,Runtime,SyncInterval,PresentFlags,Dropped,TimeInSeconds,msInPresentAPI,msBetweenPresents";
+        Assert.True(PresentMonCsv.TryParseHeader(header, out var cols));
+        Assert.Equal(9, cols.FrameTimeMs);
     }
 
     [Fact]
-    public void One_percent_low_falls_back_to_the_worst_frame_on_small_samples()
+    public void A_NA_FrameTime_falls_back_to_MsBetweenPresents_instead_of_dropping_the_frame()
     {
-        Assert.Equal(20.0, FrameWindow.OnePercentLowMs([10.0, 20.0, 15.0]), 3);
+        PresentMonCsv.TryParseHeader(PresentMonFixtures.HeaderV2FrameTime, out var cols);
+        const string line = "game.exe,4242,0x1,DXGI,0,0,0,Hardware: Independent Flip,1000.5,NA,7.14,6.0,1.1";
+
+        Assert.True(PresentMonCsv.TryParseRow(line, cols, out var row));
+        Assert.Equal(7.14, row.FrameTimeMs, 3);
+        Assert.Equal(1000.5, row.TimeMs!.Value, 3);
     }
 
     [Fact]
-    public void One_percent_low_of_nothing_is_zero()
+    public void A_NA_time_keeps_the_frame_with_no_row_time()
     {
-        Assert.Equal(0.0, FrameWindow.OnePercentLowMs([]));
+        // The frame interval is still honest; only its position in time is unknown, and the feed
+        // stamps such a row with its arrival time instead.
+        PresentMonCsv.TryParseHeader(PresentMonFixtures.Header251, out var cols);
+        var line = PresentMonFixtures.Row251("game.exe", 100, 7.14).Replace("100.0000", "NA");
+
+        Assert.True(PresentMonCsv.TryParseRow(line, cols, out var row));
+        Assert.Null(row.TimeMs);
+        Assert.Equal(7.14, row.FrameTimeMs, 3);
     }
 
     [Fact]
-    public void Evicts_frames_older_than_the_window()
+    public void NA_in_columns_the_feed_does_not_read_is_ignored()
     {
-        var w = new FrameWindow(TimeSpan.FromSeconds(2));
-        for (int i = 0; i < 10; i++) w.Add("game.exe", 16.67, T0.AddMilliseconds(i * 10));
-
-        // ...and nothing since. Ten seconds later the window is empty: the game stopped rendering,
-        // which must read as "no FPS", not as a stale 60.
-        Assert.False(w.TryAggregate(T0.AddSeconds(10), out _));
+        PresentMonCsv.TryParseHeader(PresentMonFixtures.Header251, out var cols);
+        // Real row: MsBetweenSimulationStart, MsAnimationError and three latency columns are "NA".
+        Assert.True(PresentMonCsv.TryParseRow(PresentMonFixtures.Rows251[0], cols, out var row));
+        Assert.Equal("Orca.exe", row.Application);
+        Assert.Equal(82.7006, row.FrameTimeMs, 3);
+        Assert.Equal(165.1775, row.TimeMs!.Value, 3);
+        Assert.Equal(7644, row.ProcessId);
     }
 
     [Fact]
-    public void Attributes_the_reading_to_the_busiest_process()
+    public void A_zero_interval_is_still_not_a_frame()
     {
-        var w = new FrameWindow(TimeSpan.FromSeconds(2));
-        for (int i = 0; i < 50; i++) w.Add("game.exe", 16.67, T0.AddMilliseconds(i * 16.67));
-        for (int i = 0; i < 5; i++) w.Add("dwm.exe", 8.0, T0.AddMilliseconds(i * 16.67));
+        // The real capture's webview rows: MsBetweenPresents 0 is a repeated present. With no usable
+        // fallback the row is dropped, as before.
+        PresentMonCsv.TryParseHeader(PresentMonFixtures.Header251, out var cols);
+        Assert.False(PresentMonCsv.TryParseRow(PresentMonFixtures.Rows251[5], cols, out _));
+    }
 
-        Assert.True(w.TryAggregate(T0.AddSeconds(1), out var s));
-        Assert.Equal("game.exe", s.Process);
-        Assert.Equal(60.0, s.Fps, 1); // dwm's faster frames must not inflate the game's reading
+    [Fact]
+    public void A_row_with_both_intervals_NA_is_dropped()
+    {
+        PresentMonCsv.TryParseHeader(PresentMonFixtures.HeaderV2FrameTime, out var cols);
+        Assert.False(PresentMonCsv.TryParseRow(
+            "game.exe,4242,0x1,DXGI,0,0,0,Hardware: Independent Flip,1000.5,NA,NA,6.0,1.1", cols, out _));
+    }
+
+    [Theory]
+    [InlineData("TimeInQPC")]
+    [InlineData("CPUStartQPC")]
+    [InlineData("CPUStartDateTime")]
+    public void Time_columns_in_units_the_feed_cannot_convert_are_not_used(string timeColumn)
+    {
+        // Only reachable with --qpc_time/--date_time, which the probe never passes; if one ever
+        // appears the feed falls back to arrival time rather than misreading ticks as milliseconds.
+        var header = $"Application,ProcessID,{timeColumn},MsBetweenPresents";
+        Assert.True(PresentMonCsv.TryParseHeader(header, out var cols));
+        Assert.Equal(-1, cols.Time);
     }
 }
