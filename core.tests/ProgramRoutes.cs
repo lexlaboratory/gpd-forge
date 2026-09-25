@@ -39,7 +39,7 @@ public static partial class ProgramRoutes
     /// at the root and that this repository genuinely depends on — <c>Directory.Build.props</c> holds
     /// the single declared version — so a rename would be a deliberate act, not a silent drift.
     /// </summary>
-    private static string FindProgramCs()
+    public static string FindProgramCs()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)

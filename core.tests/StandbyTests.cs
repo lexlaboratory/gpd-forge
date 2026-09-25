@@ -139,7 +139,7 @@ public class StandbyRestoreOrderTests
         var order = new List<string>();
         var svc = new StandbyService(
             new RecordingTdp(order), new RecordingBackend(), new RecordingFan(order),
-            new StubTelemetryService(), logger: null, runner: new NoRunner());
+            new FixedTelemetrySource(TelemetrySnapshot.Unmeasured), logger: null, runner: new NoRunner());
 
         var outcome = await svc.RestoreAsync(new TdpProfile(20, 20, 20, 90), CancellationToken.None);
 
@@ -288,12 +288,27 @@ public class StandbyServiceTests
             throw new InvalidOperationException("powercfg not found");
     }
 
-    private sealed class FakeTelemetry(int batteryPct, bool ac) : ITelemetryService
+    private sealed class FakeTelemetry(int batteryPct, bool ac) : ITelemetrySource
     {
         public int BatteryPct { get; set; } = batteryPct;
         public bool Ac { get; set; } = ac;
-        public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct) =>
-            Task.FromResult(new TelemetrySnapshot(0, 0, 0, 0, 0, 0, 0, 0, BatteryPct, 0, Ac, false));
+        /// <summary>When the reading was taken. Tests that inject a clock into StandbyService pass the
+        /// same one here, or every reading looks stale by months and is (correctly) ignored.</summary>
+        public Func<DateTimeOffset> SampledAt { get; set; } = () => DateTimeOffset.UtcNow;
+        public int Waits { get; private set; }
+        /// <summary>What the next wait delivers; null = the sampler did not tick in time.</summary>
+        public Func<DateTimeOffset>? NextSampleAt { get; set; }
+        private long _sequence = 1;
+
+        public TelemetryReading Latest =>
+            new(new TelemetrySnapshot(0, 0, 0, 0, 0, 0, 0, 0, BatteryPct, 0, Ac, false), SampledAt(), _sequence);
+
+        public Task<TelemetryReading> WaitForNewerAsync(long afterSequence, TimeSpan timeout, CancellationToken ct)
+        {
+            Waits++;
+            if (NextSampleAt is not null) { SampledAt = NextSampleAt; _sequence++; }
+            return Task.FromResult(Latest);
+        }
     }
 
     private sealed class RealFan : IFanController
@@ -328,7 +343,7 @@ public class StandbyServiceTests
         IFanController? fan = null,
         ITdpController? tdp = null,
         ITdpBackend? backend = null,
-        ITelemetryService? telemetry = null) =>
+        ITelemetrySource? telemetry = null) =>
         new(tdp ?? new FakeTdpController(true),
             backend ?? new StubTdpBackend(),
             fan ?? new StubFanController(),
@@ -472,7 +487,7 @@ public class StandbyServiceTests
     public async Task A_sampled_suspend_surfaces_as_the_measured_drain()
     {
         var at = new DateTimeOffset(2026, 8, 28, 23, 0, 0, TimeSpan.Zero);
-        var telemetry = new FakeTelemetry(90, ac: false);
+        var telemetry = new FakeTelemetry(90, ac: false) { SampledAt = () => at };
 
         // Unbiased (sleep-excluding) time frozen while wall time jumps 8 h == the box was suspended.
         var svc = new StandbyService(
@@ -505,6 +520,37 @@ public class StandbyServiceTests
         await svc.SampleAsync(CancellationToken.None);
 
         Assert.Null((await svc.GetStatusAsync(CancellationToken.None)).LastDrainPctPerHour);
+    }
+
+    [Fact]
+    public async Task A_reading_cached_from_before_the_suspend_is_never_paired_with_the_post_resume_clock()
+    {
+        // The case the shared sampler introduced (2026-09-24): right after a resume, the cached
+        // reading can be the last one taken BEFORE the suspend. Paired with the post-resume clock it
+        // would report ~0 %/h for a night that cost 8 %.
+        var at = new DateTimeOffset(2026, 8, 28, 23, 0, 0, TimeSpan.Zero);
+        var telemetry = new FakeTelemetry(90, ac: false) { SampledAt = () => at };
+        var svc = new StandbyService(
+            new FakeTdpController(true), new StubTdpBackend(), new StubFanController(),
+            telemetry, logger: null, runner: new ScriptedRunner(Requests, LastWake),
+            clock: new FixedUnbiasedClock(() => TimeSpan.Zero), now: () => at);
+        await svc.SampleAsync(CancellationToken.None);
+
+        var beforeSleep = at;
+        at = at.AddHours(8);
+        telemetry.SampledAt = () => beforeSleep;   // the sampler has not ticked since the resume
+        telemetry.BatteryPct = 90;                  // ...so its battery figure is the pre-sleep one
+        await svc.SampleAsync(CancellationToken.None);
+
+        Assert.Equal(1, telemetry.Waits);   // it asked for a fresh tick rather than trusting the cache
+        Assert.Null((await svc.GetStatusAsync(CancellationToken.None)).LastDrainPctPerHour);
+
+        // The sampler's next tick delivers the real post-resume figure, and that one is measured.
+        telemetry.NextSampleAt = () => at;
+        telemetry.BatteryPct = 82;
+        await svc.SampleAsync(CancellationToken.None);
+
+        Assert.Equal(1.0, (await svc.GetStatusAsync(CancellationToken.None)).LastDrainPctPerHour);
     }
 
     private sealed class FixedUnbiasedClock(Func<TimeSpan?> read) : IUnbiasedClock

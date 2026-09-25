@@ -698,7 +698,10 @@ async function handle(req, res) {
     // A blind reading is never recorded: history is shared state, and null samples in the ring
     // outlive the request and repaint the Monitor chart for every later spec.
     if (!blind) pushHistory(t)
-    return send(res, 200, t)
+    // The real daemon serves its sampler's last reading plus when it was taken (core/Telemetry/
+    // TelemetryWire.cs). Only on this response, as there: history rows carry the bare snapshot. The
+    // mock samples on request, so its reading is always brand new.
+    return send(res, 200, { ...t, sampledAtMs: Date.now(), sampleAgeMs: 0 })
   }
   // What TDP is in force and WHO set it. Mirrors core/Tdp/TdpState.cs. The mock reports a real
   // backend name because the point of the field is that a stub must be visible — a mock that always

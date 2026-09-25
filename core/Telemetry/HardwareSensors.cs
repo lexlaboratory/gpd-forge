@@ -9,7 +9,9 @@ using Microsoft.Extensions.Logging;
 
 namespace GpdForge.Telemetry;
 
-public readonly record struct HwSample(double PackageW, double CpuTempC, double GpuTempC, int FanRpm);
+/// <summary>One LHM pass. <see cref="CpuClockMhz"/> is the average effective core clock chosen by
+/// <see cref="CpuClock.EffectiveCoreMhz"/>, null when LHM exposes no core clock (added 2026-09-24).</summary>
+public readonly record struct HwSample(double PackageW, double CpuTempC, double GpuTempC, int FanRpm, double? CpuClockMhz = null);
 
 public interface IHardwareSensors : IDisposable
 {
@@ -39,6 +41,7 @@ public sealed class LhmHardwareSensors(ILogger<LhmHardwareSensors>? logger = nul
 
                 double packageW = 0, cpuTempC = 0, gpuTempC = 0;
                 int fanRpm = 0;
+                var cpuClocks = new List<ClockSensorReading>();
 
                 foreach (var hw in _computer.Hardware)
                 {
@@ -59,12 +62,15 @@ public sealed class LhmHardwareSensors(ILogger<LhmHardwareSensors>? logger = nul
                                 gpuTempC = v; break;
                             case SensorType.Fan when fanRpm == 0 && v > 0:
                                 fanRpm = (int)v; break;
+                            case SensorType.Clock when hw.HardwareType is HardwareType.Cpu:
+                                cpuClocks.Add(new ClockSensorReading(s.Name, v)); break;
                         }
                     }
                 }
 
-                sample = new HwSample(Math.Round(packageW, 1), Math.Round(cpuTempC, 1), Math.Round(gpuTempC, 1), fanRpm);
-                return packageW > 0 || cpuTempC > 0 || fanRpm > 0;
+                int? cpuClockMhz = CpuClock.EffectiveCoreMhz(cpuClocks);
+                sample = new HwSample(Math.Round(packageW, 1), Math.Round(cpuTempC, 1), Math.Round(gpuTempC, 1), fanRpm, cpuClockMhz);
+                return packageW > 0 || cpuTempC > 0 || fanRpm > 0 || cpuClockMhz is not null;
             }
         }
         catch (Exception ex)

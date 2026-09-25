@@ -35,6 +35,10 @@ export interface Telemetry {
   /** Null when nothing has written TDP yet, or the backend cannot report a readback. Was a
    * hardcoded `true` in the daemon until 2026-09-02 — see GET /tdp for the provenance. */
   tdpVerified: boolean | null
+  /** GET /telemetry only (absent from history rows): when the daemon's sampler read the hardware,
+   * Unix ms, and how old that reading was when served. Null before the first sample. */
+  sampledAtMs?: number | null
+  sampleAgeMs?: number | null
 }
 
 // One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon

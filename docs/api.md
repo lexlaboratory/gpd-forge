@@ -30,6 +30,7 @@ interface Telemetry {
   fps: number | null; fps1PctLow: number | null
   batteryPct: number | null; dischargeW: number | null
   acConnected: boolean; tdpVerified: boolean | null
+  sampledAtMs?: number | null; sampleAgeMs?: number | null   // GET /telemetry only, see below
 }
 
 interface ImportedProfile { name: string; stapmW: number; fastW: number; slowW: number; tctlC: number }
@@ -66,7 +67,24 @@ installed binary against a fresh build hunting for marker strings. The Settings 
 compares the **shell** build against the **daemon** build and says plainly when they disagree.
 
 ### `GET /telemetry`
-`200 → Telemetry` — the latest snapshot.
+`200 → Telemetry & { sampledAtMs: number | null, sampleAgeMs: number | null }` — the latest snapshot.
+
+**It is a cached reading, not a hardware read** (changed 2026-09-24). One background loop,
+`TelemetrySampler`, reads the hardware at 1 Hz; this endpoint, the worker, auto-profiles, `POST /jobs`,
+`GET /health/check` and the standby drain sampler all serve its last reading. Before, each of them
+did its own full read — four WMI queries, an `Update()` of every LHM device and an EC read, ~100–140 ms
+— so the UI and the overlay polling at 1 Hz each cost the machine two of those every second.
+
+- `sampledAtMs` — when the hardware was read, Unix ms. `sampleAgeMs` — how old that was when this
+  response was built; normally under 1000. A value that keeps growing means the sampler has stalled
+  and the numbers are the last ones it managed to take. Both are **null before the first sample**,
+  when every sensor is null too (the endpoint waits up to 5 s for that first sample at startup
+  rather than answering with nothing).
+- Battery, discharge and the ACPI thermal zone are queried **every 5 s** and served from cache in
+  between (also re-read immediately after a suspend). `acConnected` rides on the battery query, so a
+  plug-in shows up within 5 s.
+- `GET /history` rows carry the bare snapshot, without the two time fields: their `unixMs` is already
+  the sample time.
 
 ⚠️ **Every sensor field is nullable, and null means "no reading" — never zero.** Changed
 2026-09-01. Before that an unreadable sensor came back as `0`, so with the hardware gate closed the
@@ -75,13 +93,19 @@ distinguish from a cold machine. Measured on device with the gate closed, the re
 
 ```json
 { "cpuTempC": null, "packageW": null, "fanRpm": null, "fps": null,
-  "cpuClockMhz": 2000, "batteryPct": 100, "dischargeW": 0, "acConnected": true }
+  "cpuClockMhz": null, "batteryPct": 100, "dischargeW": 0, "acConnected": true }
 ```
 
 Note what is **not** null there, because the distinction is per-field rather than blanket:
-`cpuClockMhz` and `batteryPct` come from plain WMI and are genuine readings, and `dischargeW: 0` is
+`batteryPct` comes from plain WMI and is a genuine reading, and `dischargeW: 0` is
 true — the machine is on AC and nothing is discharging. A **measured zero is still a zero**;
 collapsing it into null would lose as much information as the bug this fixed.
+
+`cpuClockMhz` was on that list of genuine readings until 2026-09-24, and it was not one: it came from
+`Win32_Processor.CurrentClockSpeed`, which on this HX 370 is the fixed 2000 MHz base clock — 2000 at
+idle, 2000 at full boost. It is now LibreHardwareMonitor's **average effective core clock** (hardware
+gate open). Without LHM, `CurrentClockSpeed` is still consulted, but reported only once it has been
+seen to change; a value that never moves is `null`, as in the example above.
 
 `fps` is null both with no probe and with a probe that has produced no sample: those do not
 distinguish "nothing is presenting frames" from "PresentMon has no window of data yet", and

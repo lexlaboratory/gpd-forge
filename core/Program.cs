@@ -186,7 +186,7 @@ if (args.Contains("--probe"))
     var s = await probe.ReadAsync(CancellationToken.None);
     Console.WriteLine("GPD Forge telemetry probe (read-only, WMI):");
     Console.WriteLine($"  cpuTempC   = {s.CpuTempC:F1}");
-    Console.WriteLine($"  cpuClock   = {s.CpuClockMhz} MHz");
+    Console.WriteLine($"  cpuClock   = {(s.CpuClockMhz is int mhz ? mhz + " MHz" : "n/a (static base clock, or no sensor)")}");
     Console.WriteLine($"  battery    = {s.BatteryPct}%");
     Console.WriteLine($"  ac         = {s.AcConnected}");
     Console.WriteLine($"  dischargeW = {s.DischargeW:F1}");
@@ -208,7 +208,7 @@ if (args.Contains("--probe-hw"))
     Console.WriteLine($"  packageW   = {s.PackageW:F1}");
     Console.WriteLine($"  gpuTempC   = {s.GpuTempC:F1}");
     Console.WriteLine($"  fanRpm     = {s.FanRpm}");
-    Console.WriteLine($"  cpuClock   = {s.CpuClockMhz} MHz");
+    Console.WriteLine($"  cpuClock   = {(s.CpuClockMhz is int mhz ? mhz + " MHz" : "n/a (static base clock, or no sensor)")}");
     Console.WriteLine($"  battery    = {s.BatteryPct}%   ac = {s.AcConnected}");
     Console.WriteLine("  (0s here usually mean the sensor needs elevation or isn't exposed on this device.)");
     return;
@@ -533,7 +533,14 @@ builder.Services.AddSingleton<ITdpController>(sp => new AuditingTdpController(
     // describes what is actually wired.
     sp.GetRequiredService<ITdpBackend>() is StubTdpBackend ? "stub" : "ryzenadj"));
 builder.Services.AddSingleton<IFanController, StubFanController>();
+// Telemetry: ONE hardware reader, ONE loop reading it. WmiTelemetryService is registered as the
+// reader, and the only thing that resolves it is TelemetrySampler; every endpoint and worker takes
+// ITelemetrySource and reads the sampler's last reading (TelemetrySamplerTests enforce both halves).
+// Until 2026-09-24 six callers each did a full ~100–140 ms read on their own timers.
 builder.Services.AddSingleton<ITelemetryService, WmiTelemetryService>();
+builder.Services.AddSingleton<TelemetrySampler>();
+builder.Services.AddSingleton<ITelemetrySource>(sp => sp.GetRequiredService<TelemetrySampler>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<TelemetrySampler>());
 // Standby Doctor: powercfg diagnostics plus a MEASURED overnight drain. The sampler runs
 // continuously because a drain figure needs a battery reading from *before* the suspend — there is
 // no way to reconstruct one afterwards.
@@ -854,7 +861,7 @@ app.MapPost("/standby/hibernate", async (HibernateIdleRequest r, HibernateServic
 // reports what is installed and whether the machine is in a state where an update would be safe to
 // attempt by hand. A tool that flashed firmware on a handheld with no recovery path, from a daemon,
 // would be the most dangerous thing in this repository by a wide margin.
-app.MapGet("/firmware", (ITelemetryService telemetry, CancellationToken ct) =>
+app.MapGet("/firmware", () =>
 {
     string? version = null, releaseDate = null;
     try
@@ -919,7 +926,12 @@ app.MapGet("/audit", (HardwareAuditLog audit, int? limit) =>
     });
 });
 
-app.MapGet("/telemetry", async (ITelemetryService t, CancellationToken ct) => Results.Json(await t.ReadAsync(ct)));
+// The sampler's last reading — a field load, not a hardware read. Carries two additive fields,
+// sampledAtMs and sampleAgeMs, so a client can tell a live reading from one a stalled sampler left
+// behind (see core/Telemetry/TelemetryWire.cs). Serialised with the app's own options so the
+// snapshot's fields come out exactly as they always have.
+app.MapGet("/telemetry", async (ITelemetrySource t, Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> json, CancellationToken ct) =>
+    Results.Json(TelemetryWire.ToJson(await t.ReadAsync(ct), DateTimeOffset.UtcNow, json.Value.SerializerOptions)));
 
 // Telemetry history (ring buffer, filled once per worker tick) + CSV export.
 app.MapGet("/history", (int? minutes, TelemetryHistory history) =>
@@ -1032,10 +1044,11 @@ app.MapPost("/panic", async (ITdpController tdp, FanState fan, CancellationToken
 
 // Agents / AI — job queue. Runs a job only while its constraints hold (here: requireAC on battery → blocked).
 app.MapGet("/jobs", (JobsState j) => Results.Json(j.All));
-app.MapPost("/jobs", async (JobRequest req, JobsState j, ITelemetryService t, CancellationToken ct) =>
+app.MapPost("/jobs", async (JobRequest req, JobsState j, ITelemetrySource t, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(req.Cmd)) return Results.BadRequest(new { error = new { code = "bad_job", message = "cmd required" } });
-    var tele = await t.ReadAsync(ct);
+    // Unsampled reads as "on battery", so a requireAC job is blocked rather than run on a guess.
+    var tele = (await t.ReadAsync(ct)).Snapshot;
     var status = req.Constraints?.RequireAC == true && !tele.AcConnected ? "blocked" : "running";
     var job = j.Add(req.Cmd!, req.Constraints, status);
     return Results.Json(new { id = job.Id, status = job.Status });
@@ -1689,9 +1702,9 @@ app.MapPost("/guardian", (GuardianRequest r, GuardianService g) =>
 // System health check / anomaly detection: pure rules (GpdForge.Health.HealthCheck) evaluated
 // against a REAL live snapshot. Catches things like this unit's parked-fan-while-warm state, a
 // firmware that's silently reverting TDP, or a critical-temp / high-discharge condition.
-app.MapGet("/health/check", async (ITelemetryService t, CancellationToken ct) =>
+app.MapGet("/health/check", async (ITelemetrySource t, CancellationToken ct) =>
 {
-    var snapshot = await t.ReadAsync(ct);
+    var snapshot = (await t.ReadAsync(ct)).Snapshot;
     var report = HealthCheck.Evaluate(snapshot, new HealthContext());
     return Results.Json(report);
 });

@@ -45,8 +45,19 @@ public readonly record struct TelemetrySnapshot(
     /// closed, where the stub backend echoes back whatever it was handed. The G4 pass made every
     /// sensor honest and left the one field that was not a sensor still lying.
     /// </summary>
-    bool? TdpVerified);
+    bool? TdpVerified)
+{
+    /// <summary>Nothing measured: every sensor null, on battery (the conservative answer), no TDP write.</summary>
+    public static TelemetrySnapshot Unmeasured { get; } = new(
+        null, null, null, null, null, null, null, null, null, null,
+        AcConnected: false, TdpVerified: null);
+}
 
+/// <summary>
+/// The HARDWARE READER. Each call is a real read (~100–140 ms, measured 2026-09-24), which is why the
+/// only thing allowed to take one is <see cref="TelemetrySampler"/> — enforced by
+/// TelemetrySamplerTests. Consumers take <see cref="ITelemetrySource"/> and read the cached sample.
+/// </summary>
 public interface ITelemetryService
 {
     Task<TelemetrySnapshot> ReadAsync(CancellationToken ct);
@@ -64,7 +75,5 @@ public interface ITelemetryService
 public sealed class StubTelemetryService : ITelemetryService
 {
     public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct) =>
-        Task.FromResult(new TelemetrySnapshot(
-            null, null, null, null, null, null, null, null, null, null,
-            AcConnected: false, TdpVerified: null));
+        Task.FromResult(TelemetrySnapshot.Unmeasured);
 }

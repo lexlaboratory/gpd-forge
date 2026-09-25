@@ -17,7 +17,8 @@ using GpdForge.Sessions;
 namespace GpdForge;
 
 /// <summary>
-/// Orchestrates the hardware subsystems: reads telemetry, and (in gaming mode, once FPS telemetry is
+/// Orchestrates the hardware subsystems: consumes the sampler's telemetry (it never reads hardware
+/// sensors itself — see TelemetrySampler), and (in gaming mode, once FPS telemetry is
 /// available) steers TDP toward a target FPS via the tested PID — or, while an auto-tuner sweep is
 /// running, steps TDP through the sweep instead (the two never run the same tick; see below). Thaws
 /// any frozen processes on stop.
@@ -26,7 +27,7 @@ public sealed class ForgeWorker(
     ILogger<ForgeWorker> logger,
     ITdpController tdp,
     IFanController fan,
-    ITelemetryService telemetry,
+    ITelemetrySource telemetry,
     ModeState mode,
     AutoFpsState autoFps,
     FpsTdpController fpsController,
@@ -72,6 +73,11 @@ public sealed class ForgeWorker(
     private double? _lastUsableTempC;
     private double _lastUsableTempAtSeconds;
 
+    // How long one wait for the next sample may last before the loop re-checks cancellation. Not a
+    // tick rate — the sampler sets that — just a bound so a stalled sampler cannot park the loop
+    // in a single await forever.
+    private static readonly TimeSpan SampleWait = TimeSpan.FromSeconds(2);
+
     // The guardian's last applied ceiling, so a steady throttle is not re-applied every tick.
     private const double ThrottleReassertSeconds = 30.0;
     private TdpProfile? _lastThrottleApplied;
@@ -84,11 +90,23 @@ public sealed class ForgeWorker(
 
         try
         {
+            long lastSequence = 0;
             while (!stoppingToken.IsCancellationRequested)
             {
-                var snapshot = await telemetry.ReadAsync(stoppingToken);
-                history.Add(new HistorySample(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), snapshot));
-                sessions.Observe(snapshot, DateTimeOffset.UtcNow);
+                // Paced by the sampler: one tick per NEW sample, instead of a hardware read of its
+                // own followed by Delay(1 s). A tick that overran (a slow ryzenadj) simply picks up the
+                // newest sample next; a sampler that stalls leaves the tick waiting, exactly as the
+                // old blocking read did, rather than re-processing a stale snapshot as if it were new
+                // (which would put duplicate rows in the history and feed the guardian old data).
+                var reading = await telemetry.WaitForNewerAsync(lastSequence, SampleWait, stoppingToken);
+                if (reading.Sequence == lastSequence) continue;
+                lastSequence = reading.Sequence;
+                var snapshot = reading.Snapshot;
+                var sampledAt = reading.SampledAt ?? DateTimeOffset.UtcNow;
+
+                // Stamped with when the hardware was READ, not when this tick got round to it.
+                history.Add(new HistorySample(sampledAt.ToUnixTimeMilliseconds(), snapshot));
+                sessions.Observe(snapshot, sampledAt);
 
                 // Per-power-source auto mode-switch — only on the AC/battery edge, mirroring how
                 // POST /mode applies: flip ModeState.Active, then apply it through the same
@@ -289,8 +307,6 @@ public sealed class ForgeWorker(
                         ResetFanCurveState();
                         break;
                 }
-
-                await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
         }
         catch (OperationCanceledException) { /* shutting down */ }

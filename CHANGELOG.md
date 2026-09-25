@@ -29,6 +29,14 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   so the handheld booted into 32 px mouse targets.
 - **Sidebar icons are inline SVG** (Lucide shapes) instead of emoji, so they follow the theme's
   colour and sit on one grid on every system.
+- **Telemetry is read once a second, by one loop.** A full hardware read (four WMI queries, every
+  LibreHardwareMonitor device, the EC) costs ~100–140 ms, and six callers each did their own: the
+  worker, `GET /telemetry` for the panel and again for the overlay, auto-profiles every 1.5 s for
+  one yes/no, `POST /jobs`, `/health/check` and the standby sampler. A single sampler now reads at
+  1 Hz and all of them serve its last reading. Battery, discharge and the ACPI thermal zone are
+  queried every 5 s instead of every call, and the WMI queries are built once instead of per read.
+  `GET /telemetry` gains `sampledAtMs` and `sampleAgeMs`, so a stalled sampler shows as an ageing
+  reading instead of passing for a live one.
 
 ### Added
 - **LB / RB switch sections** from a gamepad, wrapping at either end. Alerts was ten D-pad presses
@@ -73,6 +81,11 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   restart or reinstall silently handed the fan back to firmware. `POST /fan` and
   `/settings/import` now save it to `%ProgramData%\GPD Forge\fan.json`, read back and validated at
   startup. `/panic`'s Aggressive is deliberately not saved: an emergency is not a preference.
+- **The CPU clock is real.** `cpuClockMhz` was Windows' `CurrentClockSpeed`, which on the HX 370
+  is the fixed 2000 MHz base clock: it said 2000 at idle and 2000 at full boost. It is now
+  LibreHardwareMonitor's average effective core clock. Without the hardware gate the Windows value
+  is still consulted, but shown only once it has been seen to change — a number that never moves is
+  now "n/a" rather than a reading.
 
 ## [0.3.0] — 2026-09-01
 

@@ -22,7 +22,7 @@ public sealed record HealthContext(
 /// <summary>
 /// Pure, side-effect-free anomaly detection over a telemetry snapshot — trivially unit-testable (same
 /// shape as GpdForge.Guardian.GuardianEvaluator). Never touches hardware; the caller (GET /health/check)
-/// supplies a real snapshot from ITelemetryService.
+/// supplies a real snapshot from the telemetry sampler (ITelemetrySource).
 /// </summary>
 public static class HealthCheck
 {

@@ -59,7 +59,7 @@ public sealed class StandbyService : IStandbyService
     // controllable:true through IGpdFanController. Two interfaces for one fan, and the restore held
     // the dead one. Optional so the type stays constructible in tests that do not care.
     private readonly IGpdFanController? _gpdFan;
-    private readonly ITelemetryService _telemetry;
+    private readonly ITelemetrySource _telemetry;
     private readonly ILogger<StandbyService>? _logger;
     private readonly StandbyDoctor _doctor;
     private readonly StandbyDrainTracker _tracker;
@@ -81,7 +81,7 @@ public sealed class StandbyService : IStandbyService
         ITdpController tdp,
         ITdpBackend tdpBackend,
         IFanController fan,
-        ITelemetryService telemetry,
+        ITelemetrySource telemetry,
         ILogger<StandbyService>? logger = null,
         IProcessRunner? runner = null,
         IUnbiasedClock? clock = null,
@@ -136,7 +136,16 @@ public sealed class StandbyService : IStandbyService
             var unbiased = _clock.Read();
             if (unbiased is null) return;   // without a sleep-excluding clock a suspend is unprovable
 
-            var snapshot = await _telemetry.ReadAsync(ct);
+            // The sampler's last reading, not a hardware read of our own — but only a FRESH one. This
+            // runs right after a resume, and the reading cached at that moment can be the last one
+            // taken before the suspend: pairing a pre-sleep battery figure with a post-sleep clock
+            // would measure a drain of zero over the whole night. A stale reading gets one short wait
+            // for the sampler's next tick; if that does not arrive either, this minute is skipped.
+            var reading = _telemetry.Latest;
+            if (!IsFresh(reading))
+                reading = await _telemetry.WaitForNewerAsync(reading.Sequence, TelemetryFreshness, ct);
+            if (!IsFresh(reading)) return;
+            var snapshot = reading.Snapshot;
             var measured = _tracker.Observe(_now(), unbiased.Value, snapshot.BatteryPct, snapshot.AcConnected);
             if (measured is not null)
             {
@@ -148,6 +157,12 @@ public sealed class StandbyService : IStandbyService
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { _logger?.LogDebug(ex, "standby battery sample failed"); }
     }
+
+    // Three sampler ticks: generous enough to absorb a slow read, far short of any suspend.
+    private static readonly TimeSpan TelemetryFreshness = TimeSpan.FromSeconds(3);
+
+    private bool IsFresh(TelemetryReading reading) =>
+        reading.IsSampled && reading.AgeMs(_now()) is long age && age <= TelemetryFreshness.TotalMilliseconds;
 
     /// <summary>
     /// Fan first, then TDP: the EC comes back from suspend uninitialized, and re-applying power

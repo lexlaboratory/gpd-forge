@@ -12,8 +12,9 @@ public readonly record struct HistorySample(long UnixMs, TelemetrySnapshot Snap)
 /// Thread-safe fixed-capacity ring buffer of timestamped telemetry samples. Pure logic: it never calls
 /// DateTime/DateTimeOffset itself, so it is trivially deterministic to unit-test — construct samples
 /// with whatever <c>UnixMs</c> the test wants. In production <c>ForgeWorker</c> is the sole writer and
-/// stamps each sample with <c>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()</c> before calling
-/// <see cref="Add"/>. Default capacity 3600 = 1 hour of history at the worker's 1 Hz tick.
+/// stamps each sample with the time the sampler READ it (<c>TelemetryReading.SampledAt</c>, since
+/// 2026-09-24; before that, the moment the worker got round to it) before calling <see cref="Add"/>.
+/// Default capacity 3600 = 1 hour of history at the sampler's 1 Hz tick.
 /// </summary>
 public sealed class TelemetryHistory
 {
