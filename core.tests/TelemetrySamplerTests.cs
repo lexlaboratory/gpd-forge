@@ -191,7 +191,7 @@ public class TelemetrySamplerTests
     [Fact]
     public void The_worker_and_every_telemetry_consumer_depend_on_the_sampled_source()
     {
-        foreach (var type in new[] { typeof(ForgeWorker), typeof(GpdForge.Profiles.FocusProfileWorker), typeof(GpdForge.Standby.StandbyService) })
+        foreach (var type in new[] { typeof(ForgeWorker), typeof(GpdForge.Fan.FanWorker), typeof(GpdForge.Profiles.FocusProfileWorker), typeof(GpdForge.Standby.StandbyService) })
         {
             Assert.Contains(type.GetConstructors().SelectMany(c => c.GetParameters()),
                 p => p.ParameterType == typeof(ITelemetrySource));

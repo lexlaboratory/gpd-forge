@@ -742,6 +742,11 @@ builder.Services.AddSingleton(sp => new SessionRecorder(
 
 builder.Services.AddHostedService<ForgeWorker>();
 
+// The fan's own loop: a fixed 1 s timer over the sampler's cached temperature, so a slow ryzenadj
+// apply in ForgeWorker's tick can never delay a fan response (see core/Fan/FanWorker.cs). Always
+// registered: IGpdFanController is the no-op stand-in whenever the fan gates are closed.
+builder.Services.AddHostedService<FanWorker>();
+
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
 // "automatic"); disable with GPDFORGE_AUTO_PROFILES=0. Updates the mode label only; applying a
 // mode's TDP still requires the hardware gate. No hardware writes here.
@@ -1418,8 +1423,8 @@ app.MapPost("/power-source", (PowerSourceRequest r, PowerSourceState s) =>
 // Display brightness (WMI, no driver).
 // Fan mode preference (Auto/Quiet/Balanced/Aggressive/Manual) + manual duty. `controllable` reports
 // whether GPD Forge is actually gated to WRITE the EC right now (GPDFORGE_ENABLE_HARDWARE=1 AND
-// GPDFORGE_ENABLE_FAN_CONTROL=1 AND a matched board) — see ForgeWorker.cs for the tick that applies
-// this, and core/Fan/GpdFanController.cs for the write path itself.
+// GPDFORGE_ENABLE_FAN_CONTROL=1 AND a matched board) — see core/Fan/FanWorker.cs for the 1 s loop that
+// applies this, and core/Fan/GpdFanController.cs for the write path itself.
 app.MapGet("/fan", (FanState f, IGpdFanController controller) => Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available }));
 app.MapPost("/fan", (FanRequest r, FanState f, FanPreferenceStore store, IGpdFanController controller, ILogger<FanState> log) =>
 {
@@ -1850,7 +1855,7 @@ namespace GpdForge.Api
     public sealed record UndervoltRequest(int? CoCount, int? OffsetMv);
 
     /// <summary>Mode is Auto/Quiet/Balanced/Aggressive/Manual; ManualDuty (0..255) is the fixed duty
-    /// used only while Mode == "Manual" — see ForgeWorker.cs's fan-control tick.</summary>
+    /// used only while Mode == "Manual" — see core/Fan/FanTickPolicy.cs.</summary>
     public sealed class FanState { public string Mode { get; set; } = "Auto"; public int ManualDuty { get; set; } = 128; }
     public sealed record FanRequest(string? Mode, int? ManualDuty);
     public sealed record FreezerRequest(string? Name);

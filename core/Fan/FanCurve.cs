@@ -13,7 +13,7 @@ public readonly record struct CurvePoint(double TempC, int Duty);
 
 public static class FanCurve
 {
-    /// <summary>Default hysteresis band (°C) ForgeWorker feeds into <see cref="DutyForTemp"/>.</summary>
+    /// <summary>Default hysteresis band (°C) FanTickPolicy feeds into <see cref="DutyForTemp"/>.</summary>
     public const double DefaultHysteresisC = 5.0;
 
     // Conservative: stays low while cool, but never truly silent above ~50°C, and is already ramped

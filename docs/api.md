@@ -363,13 +363,14 @@ power controller (MotionAssistant/GPD Tool) is running.
 The daemon always stores the preference (so the UI round-trips even with the gate closed). Applying
 it to hardware requires **both** `GPDFORGE_ENABLE_HARDWARE=1` **and** a second, separate opt-in
 `GPDFORGE_ENABLE_FAN_CONTROL=1` (fan writes are gated more strictly than other hardware writes — see
-`core/Fan/GpdFanController.cs`) — with both set and a matched board, `ForgeWorker` drives the EC every
-tick: `Auto` restores automatic (once, on the transition), `Quiet`/`Balanced`/`Aggressive` compute a
+`core/Fan/GpdFanController.cs`) — with both set and a matched board, `FanWorker` drives the EC once a second on its own timer
+(`core/Fan/FanWorker.cs`, independent of the TDP loop, reading the latest cached telemetry sample): `Auto` restores automatic (once, on the transition), `Quiet`/`Balanced`/`Aggressive` compute a
 duty from a temp→duty curve with hysteresis (`core/Fan/FanCurve.cs`) via `FanMath`'s PWM-scale cast
   (`core/Fan/FanMath.cs`), and `Manual` holds `manualDuty`. A safety floor (`GpdFanController.MinManualDuty`,
   40/255) means GPD Forge never commands a near-stopped fan, and AUTOMATIC is always restored on
   service shutdown. If CPU temperature telemetry is absent/non-finite, curve modes fail safe to
-  firmware AUTOMATIC instead of interpreting the missing `0` reading as a cold CPU. With either gate
+  firmware AUTOMATIC instead of interpreting the missing `0` reading as a cold CPU; a missed reading, or a telemetry
+  sampler that stops publishing, is bridged for up to 3 s before that happens. With either gate
   closed, an unmatched board, or an unavailable EC port, `controllable:false` and nothing is written.
 
 ### `GET /display`  ·  `POST /display/brightness`

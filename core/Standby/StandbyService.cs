@@ -195,7 +195,7 @@ public sealed class StandbyService : IStandbyService
                 // Hand the EC back to firmware control. After a suspend the EC comes back
                 // uninitialised, and AUTOMATIC is the safe state to land in: it is what the board
                 // does on its own, and it cannot leave the fan pinned at a duty nobody chose.
-                // ForgeWorker's curve takes over again on its next tick if a manual mode is selected.
+                // FanWorker's curve takes over again on its next tick if a manual mode is selected.
                 _gpdFan.SetAuto();
 
                 // Read the duty back rather than trusting a void call. SetAuto cannot report failure

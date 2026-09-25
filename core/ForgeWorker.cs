@@ -21,7 +21,8 @@ namespace GpdForge;
 /// sensors itself — see TelemetrySampler), and (in gaming mode, once FPS telemetry is
 /// available) steers TDP toward a target FPS via the tested PID — or, while an auto-tuner sweep is
 /// running, steps TDP through the sweep instead (the two never run the same tick; see below). Thaws
-/// any frozen processes on stop.
+/// any frozen processes on stop. The fan is not driven from here: it has its own 1 s loop
+/// (core/Fan/FanWorker.cs), so a slow ryzenadj apply in this tick can never delay it.
 /// </summary>
 public sealed class ForgeWorker(
     ILogger<ForgeWorker> logger,
@@ -37,8 +38,6 @@ public sealed class ForgeWorker(
     ProfileApplier profileApplier,
     PowerSourceState powerSource,
     TunerState tuner,
-    FanState fanState,
-    IGpdFanController fanControl,
     AlertService alerts,
     ChargeGuardService chargeGuard,
     SessionRecorder sessions) : BackgroundService
@@ -47,31 +46,8 @@ public sealed class ForgeWorker(
     // than re-applying every tick. Null until the first snapshot arrives.
     private bool? _lastAcConnected;
 
-    // Gated fan (PWM duty) control state — see the tick block below. _lastFanMode lets Auto restore
-    // fire only ONCE per transition (not every tick); _lastFanDuty is the duty last written.
-    private string? _lastFanMode;
-    private int _lastFanDuty;
-
-    // Curve mode is a three-stage pipeline: TempSmoother (what temperature to react to) →
-    // FanCurve.DutyForTemp (what duty that calls for, with hysteresis) → FanDutyRamp (how fast the
-    // fan may get there). _lastFanTarget is the curve's own last answer, which is what its
-    // hysteresis must compare against; _lastFanDuty is what was actually written. All of it resets
-    // together (ResetFanCurveState) so a stale average or ramp never leaks into the next session.
-    private readonly TempSmoother _fanTempSmoother = new();
-    private readonly FanDutyRamp _fanRamp = new();
-    private int _lastFanTarget;
-
-    // Elapsed time between fan ticks, measured rather than assumed: a slow TDP apply earlier in the
-    // tick can stretch one loop to several seconds, and both the smoother and the ramp are rates.
-    private readonly System.Diagnostics.Stopwatch _fanClock = System.Diagnostics.Stopwatch.StartNew();
-    private double _lastFanTickSeconds;
-
-    // A single missed sensor read must not hand the fan back to firmware: that SetAuto is followed
-    // by a MAX safety write when curve mode resumes, which is an audible burst. The last usable
-    // reading is reused for up to this long before giving up.
-    private const double FanSensorGraceSeconds = 3.0;
-    private double? _lastUsableTempC;
-    private double _lastUsableTempAtSeconds;
+    // Monotonic clock for the throttle re-assert interval below.
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
 
     // How long one wait for the next sample may last before the loop re-checks cancellation. Not a
     // tick rate — the sampler sets that — just a bound so a stalled sampler cannot park the loop
@@ -164,7 +140,7 @@ public sealed class ForgeWorker(
                     // An unchanged ceiling is re-asserted every ThrottleReassertSeconds, not every
                     // tick: each apply runs ryzenadj twice, and under a sustained throttle that
                     // stretched the loop to ~1.7 s per tick (measured 2026-09-24).
-                    double nowS = _fanClock.Elapsed.TotalSeconds;
+                    double nowS = _clock.Elapsed.TotalSeconds;
                     if (throttle != _lastThrottleApplied || nowS - _lastThrottleAppliedAt >= ThrottleReassertSeconds)
                     {
                         await tdp.ApplyAsync(throttle, TdpOwner.ThermalGuardian, stoppingToken);
@@ -241,72 +217,6 @@ public sealed class ForgeWorker(
                         await tdp.ApplyAsync(gaming with { StapmW = next }, TdpOwner.AutoFps, stoppingToken);
                     }
                 }
-
-                // Gated fan (PWM duty) control — see core/Fan/GpdFanController.cs. Deliberately AFTER
-                // the guardian throttle above: guardian's panic path can set FanState.Mode to
-                // Aggressive, and that switch must take effect the very same tick. `fanControl` is a
-                // no-op (NoOpGpdFanController) whenever the fan-control gate is closed or the board is
-                // unmatched, so this block is always safe to run unconditionally.
-                switch (fanState.Mode)
-                {
-                    case "Auto":
-                        // Only write on the transition INTO Auto, not every tick.
-                        if (_lastFanMode != "Auto") { fanControl.SetAuto(); _lastFanMode = "Auto"; ResetFanCurveState(); }
-                        break;
-                    case "Manual":
-                        if (_lastFanMode != "Manual") ResetFanCurveState();
-                        _lastFanDuty = fanState.ManualDuty;
-                        _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
-                        _lastFanMode = "Manual";
-                        break;
-                    case "Quiet" or "Balanced" or "Aggressive":
-                    {
-                        double nowS = _fanClock.Elapsed.TotalSeconds;
-                        double dtS = _lastFanMode == fanState.Mode ? nowS - _lastFanTickSeconds : 0;
-                        _lastFanTickSeconds = nowS;
-
-                        // Zero/non-finite means telemetry is unavailable, not that the CPU is cold.
-                        // Never take firmware control without a trustworthy temperature sensor —
-                        // but a single missed read is reused briefly rather than bouncing the fan
-                        // through firmware and back (see FanSensorGraceSeconds).
-                        double tempC;
-                        if (FanControlPolicy.IsUsableTemperature(snapshot.CpuTempC))
-                        {
-                            tempC = snapshot.CpuTempC!.Value;
-                            _lastUsableTempC = tempC;
-                            _lastUsableTempAtSeconds = nowS;
-                        }
-                        else if (_lastUsableTempC is double held && nowS - _lastUsableTempAtSeconds <= FanSensorGraceSeconds)
-                        {
-                            tempC = held;
-                        }
-                        else
-                        {
-                            fanControl.SetAuto();
-                            _lastFanMode = "Auto";
-                            ResetFanCurveState();
-                            break;
-                        }
-
-                        var curve = FanCurve.ForMode(fanState.Mode) ?? FanCurve.Balanced;
-                        // Smoothed, not raw: Tctl swings ten-plus degrees tick to tick under a bursty
-                        // load, and DutyForTemp never delays a rise. The guardian above reacts on its
-                        // own input regardless, so this never dilutes the safety margin.
-                        double smoothedTempC = _fanTempSmoother.Add(tempC, dtS);
-                        _lastFanTarget = FanCurve.DutyForTemp(smoothedTempC, curve, FanCurve.DefaultHysteresisC, _lastFanTarget);
-                        _lastFanDuty = _fanRamp.Step(_lastFanTarget, dtS);
-                        _ = fanControl.SetManualDuty(_lastFanDuty);   // failures are already logged inside GpdFanController
-                        _lastFanMode = fanState.Mode;
-                        break;
-                    }
-                    default:
-                        // Defense in depth for imported/legacy state: invalid state can never leave
-                        // a previous manual duty pinned. The HTTP API rejects it before this point.
-                        fanControl.SetAuto();
-                        _lastFanMode = "Auto";
-                        ResetFanCurveState();
-                        break;
-                }
             }
         }
         catch (OperationCanceledException) { /* shutting down */ }
@@ -315,19 +225,9 @@ public sealed class ForgeWorker(
             try { freezer.ThawAll(); } catch { /* best effort */ }
             // File the in-flight session so quitting the service does not lose the evening.
             try { sessions.Flush(DateTimeOffset.UtcNow); } catch { /* best effort */ }
-            // Critical safety: always restore AUTOMATIC fan control on shutdown, even if we were
-            // never in manual this run (SetAuto is idempotent / a no-op controller ignores it).
-            try { fanControl.SetAuto(); } catch { /* best effort */ }
+            // The fan's shutdown restore to AUTOMATIC lives in FanWorker, next to the loop that
+            // could have left it in manual.
             logger.LogInformation("GPD Forge service stopping.");
         }
-    }
-
-    private void ResetFanCurveState()
-    {
-        _lastFanDuty = 0;
-        _lastFanTarget = 0;
-        _fanTempSmoother.Reset();
-        _fanRamp.Reset();
-        _lastUsableTempC = null;
     }
 }

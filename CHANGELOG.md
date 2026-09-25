@@ -37,6 +37,12 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   queried every 5 s instead of every call, and the WMI queries are built once instead of per read.
   `GET /telemetry` gains `sampledAtMs` and `sampleAgeMs`, so a stalled sampler shows as an ageing
   reading instead of passing for a live one.
+- **The fan has its own 1 s loop.** It was the last step of the TDP worker's tick, behind the thermal
+  guardian's and charge guard's `ryzenadj` applies, which under a sustained throttle stretched a tick
+  to ~1.7 s — so the fan answered heat late by however long a TDP write took. It now runs on a fixed
+  timer over the cached temperature; the curve, smoothing, ramp and 3 s sensor grace are unchanged.
+  A telemetry sampler that stops publishing now counts as a missing reading: after the same 3 s grace
+  the fan goes back to firmware control instead of running its curve off the last cached value.
 
 ### Added
 - **LB / RB switch sections** from a gamepad, wrapping at either end. Alerts was ten D-pad presses
