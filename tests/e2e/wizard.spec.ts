@@ -6,7 +6,8 @@ import { test, expect } from '@playwright/test'
 
 test.describe('First-run setup wizard', () => {
   test('appears on a clean install, walks through, and hides after finishing', async ({ page }) => {
-    // A fresh Playwright test gets a fresh browser context (no localStorage) — navigate directly.
+    // Every test starts with empty localStorage — the reused context (playwright.config.ts,
+    // reuseContext) is reset between tests — so navigate directly.
     await page.goto('/', { waitUntil: 'domcontentloaded' })
     await expect(page.getByTestId('wizard')).toBeVisible()
 

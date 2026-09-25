@@ -11,6 +11,7 @@ import http from 'node:http'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { attachDiagnostics } from './diagnostics.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 // The version the mock reports. Read from ui/package.json — the same copy VersionModelTests keeps
@@ -1404,4 +1405,5 @@ const server = http.createServer(async (req, res) => {
 process.on('unhandledRejection', (e) => console.error('[gpd-forge mock] unhandled rejection:', e))
 process.on('uncaughtException', (e) => console.error('[gpd-forge mock] uncaught exception:', e))
 
+attachDiagnostics(server, process.env.MOCK_LOG)
 server.listen(PORT, '127.0.0.1', () => console.log(`[gpd-forge mock] http://127.0.0.1:${PORT}`))

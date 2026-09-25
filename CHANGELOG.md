@@ -81,6 +81,15 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **The E2E suite no longer fails a random handful of tests one run in three.** The cause was not
+  the mock, the UI or the tests: on the dev handheld, Windows stops completing *new* connections to
+  127.0.0.1 — every listener at once, for 10–35 s — after a burst of roughly a thousand of them, and
+  a fresh browser context per test opened ~600 to the mock and ~400 to the preview server per run.
+  Node reported the dropped SYN as `connect ETIMEDOUT` after ~310 ms; Chromium as a shell that never
+  rendered. The suite now reuses one browser context per worker (Playwright's `reuseContext`, reset
+  between tests) and opens ~18 connections a run instead of ~1,000; 184/184 three runs in a row, in
+  1.3 min instead of 2–3. `connection-churn.spec.ts` fails if the churn comes back. Video recording
+  is off, because any video mode silently disables context reuse; failures still get a screenshot.
 - **Opening the overlay over a game no longer switches the mode.** Now that the session agent reports
   the real foreground, the overlay — an Edge window — became the app auto-profiles judged, so about
   4.5 s after opening it over a game a rule had put in `gaming` the mode flipped to `windows`, wrote
