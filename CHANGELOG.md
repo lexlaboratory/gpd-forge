@@ -117,6 +117,22 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **A game's frame cap goes on even when it is the value GPD Forge last set.** The GPU agent wrote
+  a cap only when the requested value changed from the last one it had written, so with a 60 FPS
+  request carried out yesterday and 45 set in Adrenalin since (the device's state on 2026-09-25), a
+  game whose profile says 60 asked for 60 and nothing was written: the game ran at 45 and the notice
+  blamed the driver. Each request now has an identity (`capVersion` and `requestedAtUtc` on
+  `GET /gpu/desired`), and a new request is carried out whatever its value; an old one is still never
+  re-asserted over a change you make in Adrenalin.
+- **A restart mid-game no longer leaves the game's cap on the driver for good.** The cap to put back
+  lived only in memory, and FRTC is a driver setting that survives the daemon, so a reboot, service
+  restart or update with a capped game in front kept that cap for every app, and the next game took
+  it for yours. The pending restore is now kept on disk from the game's start to its end and put back
+  at startup; a clean stop also ends the profile.
+- **With auto-profiles off (`GPDFORGE_AUTO_PROFILES=0`) the Games page and the overlay say a profile
+  will not apply.** Nothing applies profiles then, yet the editor said "Applies automatically" and
+  the overlay's save toast read as if it would. Profiles still save; the page, the editor and the
+  toast now say so plainly.
 - **Leaving a game puts back the cap you set in Adrenalin, not an old one of ours.** The cap to
   restore was GPD Forge's last request whenever there had ever been one; but the GPU agent applies a
   request once and never re-asserts it, so a cap changed in Adrenalin afterwards stayed changed. On

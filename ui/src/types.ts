@@ -432,6 +432,8 @@ export interface GpuDesired {
   requested: boolean
   frameCapFps: number | null
   requestedAtUtc: string | null
+  // Rises on every request (F1 audit round 4); the agent keys on it, the UI does not need it.
+  capVersion?: number
   antiLag: boolean | null
   chill: boolean | null
 }

@@ -249,4 +249,28 @@ test.describe('Games page layout', () => {
     const title = (await page.getByTestId('game-sheet-title').boundingBox())!
     expect(title.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1)
   })
+
+  // F1 audit round 4 (2026-09-25): with GPDFORGE_AUTO_PROFILES=0 no focus worker runs, so no profile is
+  // ever applied — but this page still said "Applies automatically while ... is in front". A static
+  // body, not a proxied fetch: the page re-reads the rules every 5 s, and a fetch still in flight when
+  // the test ends fails it after it has passed.
+  test('with auto-profiles off it says profiles will not apply, instead of promising they will', async ({ page, request }) => {
+    const real = await (await request.get(`${API}/app-rules`)).json()
+    await page.route(`${API}/app-rules`, (route) => route.request().method() === 'GET'
+      ? route.fulfill({ json: { ...real, autoProfiles: false } })
+      : route.continue())
+    await openGames(page)
+    await expect(page.getByTestId('games-auto-off')).toContainText('nothing applies them')
+    await openSheet(page, 'cyberpunk2077')
+    await expect(page.getByTestId('game-auto-off')).toBeVisible()
+    await expect(page.getByTestId('game-sheet')).not.toContainText('Applies automatically')
+  })
+
+  test('with auto-profiles on there is no such notice', async ({ page }) => {
+    await openGames(page)
+    await openSheet(page, 'cyberpunk2077')
+    await expect(page.getByTestId('game-sheet')).toContainText('Applies automatically')
+    await expect(page.getByTestId('games-auto-off')).toHaveCount(0)
+    await expect(page.getByTestId('game-auto-off')).toHaveCount(0)
+  })
 })

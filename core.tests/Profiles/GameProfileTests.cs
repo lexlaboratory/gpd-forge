@@ -50,12 +50,14 @@ public sealed partial class GameProfileTests : IDisposable
     private sealed record Rig(
         FocusProfileLoop Loop, FakeForeground Fg, RecordingTdp Tdp, ModeState Mode, TdpIntent Intent,
         AppRuleStore Rules, AppRule Rule, FanState Fan, FanOverride FanOverride, GpuDesiredState Gpu,
-        ActiveGameProfileState Active, AutoFpsState AutoFps, ProfileApplier Applier, GpuAgentState Agent);
+        ActiveGameProfileState Active, AutoFpsState AutoFps, ProfileApplier Applier, GpuAgentState Agent,
+        GameProfileApplier Games);
 
     /// <param name="gpuGate">The GPU-profiles gate; open by default so the cap and Radeon paths run.</param>
     private Rig Build(string? foreground, RuleOverrides? overrides = null, GuardianService? guardian = null,
         string fanMode = "Balanced", bool noOverrides = false, bool gpuGate = true,
-        IGpdFanController? fanController = null, IPowerControllerDetector? detector = null)
+        IGpdFanController? fanController = null, IPowerControllerDetector? detector = null,
+        CapRestoreStore? capStore = null)
     {
         var fg = new FakeForeground(foreground);
         var tdp = new RecordingTdp();
@@ -70,11 +72,11 @@ public sealed partial class GameProfileTests : IDisposable
         var autoFps = new AutoFpsState();
         var agent = new GpuAgentState();
         var games = new GameProfileApplier(intent, fan, fanOverride, gpu, agent, autoFps, active,
-            fanController: fanController, gpuGateOpen: () => gpuGate);
+            fanController: fanController, gpuGateOpen: () => gpuGate, capStore: capStore);
         var applier = new ProfileApplier(tdp, detector ?? new NoRivals(), intent: intent, guardian: guardian);
         var telemetry = new FixedTelemetrySource(TelemetrySnapshot.Unmeasured with { AcConnected = true, AcUnknown = false });
         var loop = new FocusProfileLoop(fg, telemetry, mode, applier, rules, isRunning: _ => true, games: games, intent: intent);
-        return new Rig(loop, fg, tdp, mode, intent, rules, rule, fan, fanOverride, gpu, active, autoFps, applier, agent);
+        return new Rig(loop, fg, tdp, mode, intent, rules, rule, fan, fanOverride, gpu, active, autoFps, applier, agent, games);
     }
 
     private static async Task TickAsync(Rig rig, int times)

@@ -34,6 +34,10 @@
 // recorded as applied the moment they were requested, while AdlxSettings.SetEnabled refused them and
 // the only trace was "Chill -> NOT applied" on the agent's hidden console. Whether a supported one was
 // actually taken is checked when the notice is read (ActiveGameProfileWire), against later reports.
+//
+// F1 audit round 4: the cap to restore is kept on disk (CapRestoreStore) from Begin to End, and
+// replayed at startup (RecoverPendingCap). FRTC is a persisted driver setting, so a restart with a
+// capped game in front used to leave the game's cap on the driver for good.
 using GpdForge.Api;
 using GpdForge.Fan;
 using GpdForge.Gpu;
@@ -52,7 +56,8 @@ public sealed class GameProfileApplier(
     TimeProvider? time = null,
     ILogger<GameProfileApplier>? logger = null,
     IGpdFanController? fanController = null,
-    Func<bool>? gpuGateOpen = null)
+    Func<bool>? gpuGateOpen = null,
+    CapRestoreStore? capStore = null)
 {
     public const string FanOffReason = "Fan control is not enabled on this device, so the fan keeps its own mode.";
     public const string GpuGateOffReason = "Radeon control is off: install with -EnableGpuProfiles to let GPD Forge set it.";
@@ -66,6 +71,7 @@ public sealed class GameProfileApplier(
     private long? _capVersion;
     private int? _capRestore;
     private bool _capRestoreUnknown;
+    private bool _capPersisted;
     private DateTimeOffset _begunAt;
     private (bool? AntiLag, bool? Chill)? _features;
 
@@ -109,6 +115,7 @@ public sealed class GameProfileApplier(
                 (_capRestore, _capRestoreUnknown) = PreviousCap(now);
                 gpu.RequestFrameCap(fps == RuleOverridesPolicy.FrameCapOff ? null : fps, now);
                 _capVersion = gpu.CapVersion;
+                PersistCapRestore();
                 capApplied = fps;
             }
         }
@@ -154,12 +161,48 @@ public sealed class GameProfileApplier(
     /// </summary>
     public void Observe()
     {
+        // Someone asked for a cap since the game's (the user, a mode): the cap is theirs now, End will
+        // not restore over it, and neither must a restart.
+        if (_capPersisted && _capVersion is long v && gpu.CapVersion != v)
+        {
+            capStore?.Clear();
+            _capPersisted = false;
+        }
+
         if (!_capRestoreUnknown) return;
         var (report, usable, _) = agent.Current(_time.GetUtcNow());
         if (!usable || report is null || report.AtUtc < _begunAt) return;
         _capRestore = DriverCap(report);
         _capRestoreUnknown = false;
+        if (_capPersisted) PersistCapRestore();
     }
+
+    /// <summary>
+    /// At startup, before anything else asks for a cap: puts back the cap a game profile owed when the
+    /// daemon last stopped (see the header). A request made since the start wins, and a restore that
+    /// was never read is withdrawn — which at startup means nothing is asked, and the driver keeps the
+    /// user's own. Replayed once: the record is removed either way.
+    /// </summary>
+    public void RecoverPendingCap()
+    {
+        if (capStore?.Read() is not PendingCapRestore pending) return;
+        capStore.Clear();
+        if (_rule is not null || gpu.Requested || pending.Unknown) return;
+
+        logger?.LogInformation("Game profile '{Match}' was in force when the daemon stopped; putting back the cap from before the game ({Cap}).",
+            pending.Match, pending.Cap is int c ? $"{c} FPS" : "off");
+        _capRestore = pending.Cap;
+        _capRestoreUnknown = false;
+        RestoreCap(_time.GetUtcNow(), pending.Match);
+        _capRestore = null;
+    }
+
+    /// <summary>
+    /// A clean stop (FocusProfileWorker.StopAsync): <see cref="End"/>, but the record stays. The daemon
+    /// is going away, so the agent may never read the restore End just asked for; the next start
+    /// replays it, and the same cap twice is harmless.
+    /// </summary>
+    public void Shutdown(string modeAfter) => End(modeAfter, keepCapRecord: true);
 
     /// <summary>What the TDP write that carried this profile's watts did. A yield or a guardian hold
     /// is kept on the record, so the notice does not claim watts that were never written.</summary>
@@ -179,7 +222,9 @@ public sealed class GameProfileApplier(
     /// caller must write that mode's TDP again. False when the mode has moved away (its own apply
     /// already wrote, and the layer, keyed to the old mode, was never in its way).
     /// </summary>
-    public bool End(string modeAfter)
+    public bool End(string modeAfter) => End(modeAfter, keepCapRecord: false);
+
+    private bool End(string modeAfter, bool keepCapRecord)
     {
         if (_rule is null) return false;
         var now = _time.GetUtcNow();
@@ -189,7 +234,11 @@ public sealed class GameProfileApplier(
 
         fanOverride.Restore(fan);
 
-        if (_capVersion is long v && gpu.CapVersion == v) RestoreCap(now);
+        bool capStillOurs = _capVersion is long v && gpu.CapVersion == v;
+        if (capStillOurs) RestoreCap(now, _rule.Match);
+        // Kept on a clean stop only while the cap is still the game's: one the user picked mid-game
+        // is theirs, and the next start must not replay the pre-game cap over it.
+        if (_capPersisted && !(keepCapRecord && capStillOurs)) capStore?.Clear();
         if (_features is var (antiLag, chill) && gpu.AntiLag == antiLag && gpu.Chill == chill)
             gpu.RequestFeatures(null, null);
 
@@ -199,12 +248,20 @@ public sealed class GameProfileApplier(
         _capVersion = null;
         _capRestore = null;
         _capRestoreUnknown = false;
+        _capPersisted = false;
         _features = null;
         active.Clear();
         return tdpWasInForce;
     }
 
-    private void RestoreCap(DateTimeOffset now)
+    private void PersistCapRestore()
+    {
+        if (capStore is null) return;
+        capStore.Write(new PendingCapRestore(_capRestore, _capRestoreUnknown, _rule?.Match));
+        _capPersisted = true;
+    }
+
+    private void RestoreCap(DateTimeOffset now, string? match)
     {
         if (_capRestoreUnknown)
         {
@@ -212,7 +269,7 @@ public sealed class GameProfileApplier(
             // reports before it reconciles). Forcing "off" here is what used to erase the user's own
             // Adrenalin cap; withdrawing the request leaves the driver exactly as the user had it.
             gpu.WithdrawFrameCap();
-            logger?.LogWarning("Game profile '{Match}': the cap before the game was never read (the GPU agent was silent); the request is withdrawn and the driver keeps its own.", _rule?.Match);
+            logger?.LogWarning("Game profile '{Match}': the cap before the game was never read (the GPU agent was silent); the request is withdrawn and the driver keeps its own.", match);
             return;
         }
 
@@ -222,7 +279,7 @@ public sealed class GameProfileApplier(
         if (FrameRateGovernance.Conflict(autoFps.Enabled, autoFps.TargetFps, _capRestore) is string clash)
         {
             logger?.LogInformation("Game profile '{Match}': the cap before the game ({Cap} FPS) is not restored, the cap is turned off instead: {Why}",
-                _rule?.Match, _capRestore, clash);
+                match, _capRestore, clash);
             gpu.RequestFrameCap(null, now);
             return;
         }

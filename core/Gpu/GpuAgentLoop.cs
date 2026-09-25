@@ -96,8 +96,7 @@ public static class GpuAgentLoop
 
         // Mode plus a game profile's Anti-Lag / Chill (F1): the profile is re-applied when either moves.
         string? lastAppliedKey = null;
-        int? lastAppliedCap = null;
-        var capEverApplied = false;
+        var caps = new GpuCapReconciler();
 
         while (!ct.IsCancellationRequested)
         {
@@ -143,18 +142,18 @@ public static class GpuAgentLoop
 
                     // Reconcile the frame cap towards what the daemon wants. Desired state, not
                     // commands: an agent that missed ten ticks or restarted converges on the same
-                    // result instead of replaying a queue.
-                    if (desired is { Requested: true } && (!capEverApplied || desired.FrameCapFps != lastAppliedCap))
+                    // result instead of replaying a queue. Keyed on the request's identity, not its
+                    // value (F1 audit round 4): a game asking for the 60 the agent wrote yesterday,
+                    // while the user has 45 in Adrenalin since, is a new request and gets written.
+                    if (desired is not null && caps.ShouldApply(desired))
                     {
                         var (ok, detail) = settings.SetFrameRateCapDetailed(desired.FrameCapFps);
                         Console.WriteLine(desired.FrameCapFps is int fps
                             ? $"  frame cap {fps} FPS -> {(ok ? "applied" : "NOT applied")}: {detail}"
                             : $"  frame cap off -> {(ok ? "applied" : "NOT applied")}: {detail}");
 
-                        // Recorded even on failure, so a cap the driver refuses is not retried every
-                        // three seconds forever. GET /gpu still shows the truth, read from the driver.
-                        lastAppliedCap = desired.FrameCapFps;
-                        capEverApplied = true;
+                        // Recorded even on failure (GpuCapReconciler.Handled).
+                        caps.Handled(desired);
                     }
                 }
             }
@@ -186,34 +185,14 @@ public static class GpuAgentLoop
         }
     }
 
-    /// <summary>What the daemon wants. Null when it could not be read — which must NOT be treated as
-    /// "no cap wanted", or a momentary hiccup would undo the user's setting.</summary>
+    /// <summary>What the daemon wants (<see cref="DesiredGpuState.Parse"/>). Null when it could not
+    /// be read — which must NOT be treated as "no cap wanted".</summary>
     private static async Task<DesiredGpuState?> ReadDesiredAsync(HttpClient http, CancellationToken ct)
     {
         using var res = await http.GetAsync("/gpu/desired", ct);
         if (!res.IsSuccessStatusCode) return null;
-
-        var body = await res.Content.ReadAsStringAsync(ct);
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("requested", out var requested)) return null;
-
-            int? cap = null;
-            if (root.TryGetProperty("frameCapFps", out var f) && f.ValueKind == JsonValueKind.Number)
-                cap = f.GetInt32();
-
-            // Absent on a daemon older than F1, which reads as "no game opinion".
-            return new DesiredGpuState(requested.GetBoolean(), cap, Bool(root, "antiLag"), Bool(root, "chill"));
-        }
-        catch (JsonException) { return null; }
+        return DesiredGpuState.Parse(await res.Content.ReadAsStringAsync(ct));
     }
-
-    private static bool? Bool(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
-
-    private sealed record DesiredGpuState(bool Requested, int? FrameCapFps, bool? AntiLag, bool? Chill);
 
     private static async Task<string?> ReadActiveModeAsync(HttpClient http, CancellationToken ct)
     {

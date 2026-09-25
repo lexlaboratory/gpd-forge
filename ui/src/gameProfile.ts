@@ -39,6 +39,11 @@ export const hasOverrides = (o: RuleOverrides | null | undefined): o is RuleOver
   o != null && (o.stapmW != null || o.frameCapFps != null || o.fanMode != null
     || o.gpu?.antiLag != null || o.gpu?.chill != null || (o.freeze?.length ?? 0) > 0)
 
+/** Said wherever a profile is saved or promised while GPDFORGE_AUTO_PROFILES=0: no focus worker runs
+ *  then, so nothing applies a profile (F1 audit round 4). The rules are still the user's to edit. */
+export const AUTO_PROFILES_OFF = 'automatic profile switching is off (GPDFORGE_AUTO_PROFILES=0), so nothing applies them'
+export const AUTO_PROFILES_OFF_SAVED = 'automatic profile switching is off, so it will not apply'
+
 export type ProfileKind = 'profile' | 'rule' | 'none'
 
 /** `profile`: settings of its own. `rule`: a rule only picks its mode. `none`: the AC/battery default. */

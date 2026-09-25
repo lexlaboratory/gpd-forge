@@ -70,6 +70,10 @@ public class GamingBatteryModeTests(DaemonUnderTest daemon)
         var desired = JsonDocument.Parse(await daemon.Client.GetStringAsync("/gpu/desired")).RootElement;
         Assert.True(desired.GetProperty("requested").GetBoolean());
         Assert.Equal(45, desired.GetProperty("frameCapFps").GetInt32());
+        // The request's identity (F1 audit round 4): the agent carries out a NEW request even when its
+        // value is the one it last wrote, so it must be able to tell a new request from an old one.
+        Assert.True(desired.GetProperty("capVersion").GetInt64() > 0);
+        Assert.Equal(JsonValueKind.String, desired.GetProperty("requestedAtUtc").ValueKind);
     }
 
     [Fact]

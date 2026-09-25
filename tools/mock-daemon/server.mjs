@@ -261,6 +261,7 @@ const state = {
   gpu: {
     available: false,
     capRequested: false,
+    capVersion: 0, // rises on every request, as GpuDesiredState.CapVersion does (F1 audit round 4)
     frameCapFps: null,
     settings: {
       antiLag: { supported: true, enabled: false, value: null },
@@ -1195,6 +1196,7 @@ async function handle(req, res) {
   if (method === 'GET' && path === '/gpu/desired') {
     return send(res, 200, {
       requested: state.gpu.capRequested, frameCapFps: state.gpu.frameCapFps, requestedAtUtc: null,
+      capVersion: state.gpu.capVersion,
       antiLag: null, chill: null, // a game profile's Radeon features (F1); none without a focus loop
     })
   }
@@ -1218,6 +1220,7 @@ async function handle(req, res) {
       })
     }
     state.gpu.capRequested = true
+    state.gpu.capVersion++
     state.gpu.frameCapFps = fps
     state.gpu.settings.frameRateCap = { ...frtc, enabled: fps !== null, value: fps ?? frtc.value }
     return send(res, 200, { applied: false, pending: true, requested: fps, reason: 'Handed to the GPU agent.' })

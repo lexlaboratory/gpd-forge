@@ -33,4 +33,17 @@ public sealed class FocusProfileWorker(
             await Task.Delay(TimeSpan.FromMilliseconds(1500), ct);
         }
     }
+
+    /// <summary>
+    /// A clean stop ends the game profile (F1 audit round 4): nothing did, so the game's cap, fan and
+    /// watts stayed layered until the process died. After the loop has stopped — the applier is only
+    /// ever touched from the loop's thread — and keeping the cap record, since the agent may not read
+    /// the restore before the daemon is gone (GameProfileApplier.Shutdown).
+    /// </summary>
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        try { games?.Shutdown(mode.Active); }
+        catch (Exception ex) { logger.LogDebug(ex, "game profile shutdown"); }
+    }
 }

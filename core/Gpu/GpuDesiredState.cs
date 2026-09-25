@@ -62,7 +62,7 @@ public sealed class GpuDesiredState
 
     /// <summary>
     /// Whether a driver reading taken at <paramref name="reportAtUtc"/> supersedes a request made at
-    /// <paramref name="requestedAtUtc"/>. The agent applies a request once, when its value changes, and
+    /// <paramref name="requestedAtUtc"/>. The agent applies each request once (GpuCapReconciler) and
     /// never re-asserts it — so a cap the user sets in Adrenalin afterwards is what holds, and the
     /// request is history. Measured on the device 2026-09-25: a 60 FPS request from the day before
     /// against a driver at 45 (F1 audit round 3). Within the settle window the request is the truth.

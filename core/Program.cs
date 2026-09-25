@@ -831,6 +831,9 @@ builder.Services.AddSingleton<IForegroundApp>(sp => sp.GetRequiredService<Sessio
 // Registered outside the gate so the endpoint answers ("nothing active") with auto-profiles off.
 builder.Services.AddSingleton<FanOverride>();
 builder.Services.AddSingleton<ActiveGameProfileState>();
+// The cap a game profile owes back, on disk so a restart mid-game cannot leave the game's cap on the
+// driver for good (F1 audit round 4). Replayed once at startup, below, whatever the auto-profiles gate.
+builder.Services.AddSingleton(_ => new CapRestoreStore(DataRoot.Current));
 builder.Services.AddSingleton<GameProfileApplier>();
 
 if (autoProfiles)
@@ -849,6 +852,10 @@ var forgePort = Environment.GetEnvironmentVariable("GPDFORGE_PORT") is string p 
 builder.WebHost.UseUrls($"http://127.0.0.1:{forgePort}");
 
 var app = builder.Build();
+
+// Before any worker can ask for a cap: a request made after this is newer and wins anyway, but one made
+// before it would make the replay skip itself for no reason.
+app.Services.GetRequiredService<GameProfileApplier>().RecoverPendingCap();
 app.UseCors();
 // Serve the web UI (wwwroot) so it can be opened in a browser at http://127.0.0.1:8787 — no
 // unsigned desktop binary needed (works under Smart App Control).
@@ -1375,6 +1382,10 @@ app.MapGet("/gpu/desired", (GpuDesiredState desired) => Results.Json(new
     requested = desired.Requested,
     frameCapFps = desired.FrameCapFps,
     requestedAtUtc = desired.RequestedAtUtc,
+    // Rises on every request (F1 audit round 4). With requestedAtUtc it is the request's identity: the
+    // agent carries out a NEW request even when its value is the one it last wrote, because the user
+    // may have changed the cap in Adrenalin since — and never re-asserts an old one over that change.
+    capVersion = desired.CapVersion,
     // A game profile's Radeon features over the mode's (F1); null = the mode decides.
     antiLag = desired.AntiLag,
     chill = desired.Chill,

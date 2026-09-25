@@ -306,10 +306,11 @@
         "requested": "boolean",
         "frameCapFps": "number|null",
         "requestedAtUtc": "string|null",
+        "capVersion": "number",
         "antiLag": "boolean|null",
         "chill": "boolean|null"
       },
-      "$comment": "antiLag/chill added in F1 (2026-09-25): a game profile's Radeon features, layered over the mode's by the agent. Null = the mode decides."
+      "$comment": "antiLag/chill added in F1 (2026-09-25): a game profile's Radeon features, layered over the mode's by the agent. Null = the mode decides. capVersion added in F1 audit round 4: rises on every cap request; with requestedAtUtc it is the request's identity, so the agent carries out a new request even when its value is the one it last wrote."
     },
     {
       "method": "GET",

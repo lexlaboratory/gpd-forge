@@ -19,8 +19,8 @@ import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
 import { useActiveProfile } from './hooks/useActiveProfile'
 import {
-  capInForce, captureOverrides, describeOverrides, displayName, exactRule, gameUnderOverlay, governingRule, noticeParts,
-  noticeText, profileKey, toRuleFanMode,
+  AUTO_PROFILES_OFF_SAVED, capInForce, captureOverrides, describeOverrides, displayName, exactRule, gameUnderOverlay,
+  governingRule, noticeParts, noticeText, profileKey, toRuleFanMode,
 } from './gameProfile'
 import { saveGameProfile } from './gameProfileSave'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
@@ -292,7 +292,10 @@ export function OverlayApp() {
         fanMode: toRuleFanMode(fanNow),
       })
       await saveGameProfile(game, ruleMode, overrides)
-      toast.push({ kind: 'success', message: `Saved as the ${displayName(game)} profile: ${describeOverrides(overrides)}` })
+      // Still saved with auto-profiles off — the rules are the user's data — but never as if it applies
+      // (F1 audit round 4): no focus worker runs, so nothing puts it on.
+      const saved = `Saved as the ${displayName(game)} profile: ${describeOverrides(overrides)}`
+      toast.push({ kind: 'success', message: info.autoProfiles === false ? `${saved} — ${AUTO_PROFILES_OFF_SAVED}` : saved })
     } catch (e) {
       toast.push({ kind: 'error', message: `Profile not saved — ${e instanceof Error ? e.message : String(e)}` })
     } finally {

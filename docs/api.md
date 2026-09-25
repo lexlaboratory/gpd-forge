@@ -914,6 +914,10 @@ steers TDP toward a target and does not stop the GPU exceeding it. `fps: null` d
   cap a game profile asked for before the agent has carried it out). `requested: false` means nobody has asked for anything and the GPU must be left alone — starting the daemon is not a
   reason to change someone's Adrenalin settings. Desired state rather than a command queue, so an
   agent that restarts or misses ticks converges instead of replaying.
+- `GET /gpu/desired` also carries `capVersion` (`number`, F1 audit round 4), which rises on every cap
+  request. With `requestedAtUtc` it identifies the request: the agent carries out a NEW request even
+  when its value is the one it last wrote (the user may have moved the cap in Adrenalin since), and
+  never re-asserts an OLD one over the user's change.
 - `GET /gpu/desired` also carries `antiLag` / `chill` (`boolean | null`, F1): a game profile's Radeon
   features, which the agent layers over the mode's profile while the game is in front and drops when
   it leaves. A game's Chill turns the mode's Anti-Lag off (and vice versa) instead of sending the pair

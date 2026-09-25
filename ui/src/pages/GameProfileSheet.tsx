@@ -9,11 +9,11 @@
 // finger reach it the same way as everything else, and nothing behind it can take focus unseen.
 import { useEffect, useId, useRef, useState } from 'react'
 import type { AppRule, AppRulesInfo, GameSummary, ModeId, Preset, RuleFanMode, RuleOverrides } from '../types'
-import { Button, Segmented, Stepper, Toggle } from '../components'
+import { Button, Segmented, Stepper, Toggle, Unavailable } from '../components'
 import { Icon } from '../components/Icon'
 import { useToast } from '../Toast'
 import { CANCEL_EVENT } from '../hooks/useSpatialNav'
-import { describeOverrides, displayName, exactRule, governingRule, hasOverrides } from '../gameProfile'
+import { AUTO_PROFILES_OFF, AUTO_PROFILES_OFF_SAVED, describeOverrides, displayName, exactRule, governingRule, hasOverrides } from '../gameProfile'
 import { removeGameProfile, saveGameProfile } from '../gameProfileSave'
 import { PRESET_LABEL } from './shared'
 import { GameRecentSessions } from './GameRecentSessions'
@@ -33,11 +33,13 @@ interface Props {
   rules: readonly AppRule[]
   modes: readonly ModeId[]
   presets: Record<string, Preset> | null
+  /** GET /app-rules `autoProfiles`: false = no focus worker, so a saved profile never applies. */
+  autoProfiles?: boolean
   onSaved: (info: AppRulesInfo) => void
   onClose: () => void
 }
 
-export function GameProfileSheet({ game, rules, modes, presets, onSaved, onClose }: Props) {
+export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = true, onSaved, onClose }: Props) {
   const toast = useToast()
   const titleId = useId()
   const ref = useRef<HTMLElement>(null)
@@ -111,7 +113,8 @@ export function GameProfileSheet({ game, rules, modes, presets, onSaved, onClose
   }
   const save = () => {
     const o = draft()
-    return run(() => saveGameProfile(game.app, mode, o), `Profile saved for ${name}: ${describeOverrides(hasOverrides(o) ? o : null)}`)
+    const saved = `Profile saved for ${name}: ${describeOverrides(hasOverrides(o) ? o : null)}`
+    return run(() => saveGameProfile(game.app, mode, o), autoProfiles ? saved : `${saved} — ${AUTO_PROFILES_OFF_SAVED}`)
   }
   const remove = () => run(() => removeGameProfile(game.app), `Profile removed for ${name} — the mode decides again`)
 
@@ -190,10 +193,14 @@ export function GameProfileSheet({ game, rules, modes, presets, onSaved, onClose
         <p className="muted">Off leaves it to the mode. AMD refuses the two together, so one turns the other off.</p>
       </div>
 
-      <p className="muted game-sheet-note">
-        Applies automatically while {name} is in front and the mode is {PRESET_LABEL[mode] ?? mode}, and comes
-        off when you leave it.
-      </p>
+      {autoProfiles ? (
+        <p className="muted game-sheet-note">
+          Applies automatically while {name} is in front and the mode is {PRESET_LABEL[mode] ?? mode}, and comes
+          off when you leave it.
+        </p>
+      ) : (
+        <Unavailable testid="game-auto-off" reason={`Saved profiles are kept, but ${AUTO_PROFILES_OFF}: ${name} will run on its mode alone.`} />
+      )}
 
       <div className="row game-sheet-actions">
         <Button variant="accent" testid="game-save" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</Button>

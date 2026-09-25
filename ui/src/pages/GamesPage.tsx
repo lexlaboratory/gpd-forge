@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActiveGameProfile, AppRulesInfo, GameSummary, GamesResponse, Preset } from '../types'
 import { getAppRules, getProfiles, getSessionGames } from '../api'
 import { Badge, Frame, Unavailable, type Tone } from '../components'
-import { describeOverrides, displayName, profileState, type ProfileKind } from '../gameProfile'
+import { AUTO_PROFILES_OFF, describeOverrides, displayName, profileState, type ProfileKind } from '../gameProfile'
 import { GameProfileSheet } from './GameProfileSheet'
 import { FALLBACK_MODES } from './ProfilesPage'
 import { PRESET_LABEL } from './shared'
@@ -82,6 +82,7 @@ export function GamesPage({ active = null }: { active?: ActiveGameProfile | null
           rules={rules.rules}
           modes={rules.modes?.length ? rules.modes : FALLBACK_MODES}
           presets={presets}
+          autoProfiles={rules.autoProfiles}
           onSaved={setRules}
           onClose={close}
         />
@@ -98,6 +99,11 @@ export function GamesPage({ active = null }: { active?: ActiveGameProfile | null
         {!loading && rulesFailed && (
           <Unavailable testid="games-rules-offline"
             reason="the rules could not be read, so which games have a profile cannot be shown or changed right now." />
+        )}
+        {/* F1 audit round 4: the cards still read "Profile" — the settings are stored — but with the
+            focus worker off nothing puts them on, and the page must not let that pass unsaid. */}
+        {rules && !rules.autoProfiles && (
+          <Unavailable testid="games-auto-off" reason={`Profiles are stored and editable, but ${AUTO_PROFILES_OFF}.`} />
         )}
         {!loading && !failed && !fpsAvailable && (
           <Unavailable testid="games-no-fps"

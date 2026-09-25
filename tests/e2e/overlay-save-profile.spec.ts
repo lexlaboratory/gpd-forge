@@ -289,4 +289,25 @@ test.describe('Overlay: save as profile for this game', () => {
       for (const r of rules) if (r.match === 'hades2') await request.delete(`${API}/app-rules/${r.id}`)
     }
   })
+
+  // F1 audit round 4 (2026-09-25): with GPDFORGE_AUTO_PROFILES=0 nothing applies a profile, and the
+  // toast still said "Saved as the steam profile: 22 W", as if it would. It still saves — the rules are
+  // the user's data either way — but says it will not apply.
+  test('with auto-profiles off, the save says the profile will not apply', async ({ page, request }) => {
+    const real = await (await request.get(`${API}/app-rules`)).json()
+    await page.route(`${API}/app-rules`, (route) => route.request().method() === 'GET'
+      ? route.fulfill({ json: { ...real, autoProfiles: false } })
+      : route.continue())
+    await openOverlay(page)
+    await page.getByTestId('qam-save-profile').click()
+    await expect(page.getByTestId('toast-success')).toContainText('will not apply')
+    expect((await steamRule(request)).overrides).not.toBeNull()
+  })
+
+  test('with auto-profiles on, the save does not say it will not apply', async ({ page }) => {
+    await openOverlay(page)
+    await page.getByTestId('qam-save-profile').click()
+    await expect(page.getByTestId('toast-success')).toBeVisible()
+    await expect(page.getByTestId('toast-success')).not.toContainText('will not apply')
+  })
 })
