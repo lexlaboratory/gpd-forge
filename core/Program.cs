@@ -4,6 +4,7 @@
 // (see docs/api.md). The Tauri UI, the overlay, and external agents are clients.
 
 using GpdForge;
+using GpdForge.Advisor;
 using GpdForge.Ai;
 using GpdForge.Api;
 using GpdForge.Tdp;
@@ -791,6 +792,10 @@ builder.Services.AddSingleton<PowerSourceState>();
 // takes IFrameRateProbe as a NULLABLE dependency on purpose — when the FPS gate above is closed the
 // probe is unregistered, GetService returns null, and the recorder honestly records nothing rather
 // than inventing sessions out of "a game was probably running" (see core/Sessions/SessionModels.cs).
+// Forge Advisor (plan F3): the per-game thermal ceiling the worker learns from the guardian, and the
+// dismissed / applied record. Both persist beside the other state files.
+builder.Services.AddSingleton(_ => new ThermalCeilingLearner(DataRoot.Current));
+builder.Services.AddSingleton(_ => new AdvisorService(DataRoot.Current));
 builder.Services.AddSingleton(_ => new SessionStore(DataRoot.Current));
 builder.Services.AddSingleton(sp => new SessionRecorder(
     sp.GetRequiredService<SessionStore>(),
@@ -1580,6 +1585,31 @@ app.MapGet("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>
 app.MapDelete("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>
     sessions.Delete(id) ? Results.NoContent() : Results.NotFound(new { error = "session not found" }));
 
+// Forge Advisor (plan F3). GET proposes; nothing changes until POST /advisor/apply, which writes the one
+// suggestion into the game's profile (F1 rule overrides) and records it. Apply takes only an id and
+// re-derives the suggestion from the live state, so a client cannot write arbitrary values through it,
+// and advice that no longer holds (the throttle ended, the cap was set) is refused as stale.
+app.MapGet("/advisor/suggestions", (string? game, HttpContext ctx) => Results.Json(AdvisorPayload(ctx.RequestServices, game)));
+app.MapPost("/advisor/apply", (AdvisorRequest r, HttpContext ctx, AdvisorService advisor, IAppRuleStore rules) =>
+{
+    if (AdvisorRules.GameOf(r.Id) is not string game)
+        return Results.BadRequest(new { error = "Unknown suggestion id.", code = "bad_id" });
+    if (AdvisorPayload(ctx.RequestServices, game).Suggestions.FirstOrDefault(s => s.Id == r.Id) is not AdvisorSuggestion suggestion)
+        return Results.Conflict(new { error = "That suggestion no longer applies.", code = "stale_suggestion" });
+    if (!suggestion.Applicable)
+        return Results.BadRequest(new { error = "This suggestion is advice only; there is nothing to apply.", code = "not_applicable" });
+    try { advisor.Apply(suggestion, rules, DateTimeOffset.UtcNow); }
+    catch (ArgumentException ex) { return RuleRejectedFrom(ex); }
+    return Results.Json(AdvisorPayload(ctx.RequestServices, game));
+});
+app.MapPost("/advisor/dismiss", (AdvisorRequest r, HttpContext ctx, AdvisorService advisor) =>
+{
+    if (AdvisorRules.GameOf(r.Id) is not string game)
+        return Results.BadRequest(new { error = "Unknown suggestion id.", code = "bad_id" });
+    advisor.Dismiss(r.Id!);
+    return Results.Json(AdvisorPayload(ctx.RequestServices, game));
+});
+
 // MotionAssistant .ini importer: read-only, never throws. Only RETURNS parsed profiles — applying
 // one reuses the existing POST /profiles/:mode above.
 app.MapPost("/import/motionassistant", (IIniFileSource src) =>
@@ -2040,6 +2070,45 @@ static IResult RuleRejected(string code, string message) => Results.BadRequest(n
 static IResult RuleRejectedFrom(ArgumentException ex) =>
     RuleRejected(ex is AppRuleRejectedException r ? r.Code : "bad_rule", ex.Message);
 
+// Forge Advisor (plan F3): gathers what the pure rules judge. The game is the one asked about, else the
+// one presenting frames, else the session recorder's current app. Live readings (frame pacing, the
+// guardian, the cap and limit in force) count only when that game is the one in front — for any other
+// game the advice rests on its last session and its stored profile.
+static AdvisorView AdvisorPayload(IServiceProvider sp, string? gameQuery)
+{
+    var frames = sp.GetService<IFrameTimeSource>();
+    FrameTimeSeries? series = frames is not null && frames.TryGetFrameTimes(out var s) ? s : null;
+    var recorder = sp.GetRequiredService<SessionRecorder>();
+    var game = AppRulePolicy.Normalize(!string.IsNullOrWhiteSpace(gameQuery) ? gameQuery : series?.Process ?? recorder.CurrentApp);
+    var advisor = sp.GetRequiredService<AdvisorService>();
+    if (game.Length == 0)
+        return new AdvisorView(null, false, null, null, [], advisor.Applied.Take(10).ToArray());
+
+    var liveMetrics = series is not null && AppRulePolicy.Normalize(series.Process) == game ? FramePacing.Compute(series.FrameTimesMs) : null;
+    var live = liveMetrics is not null;
+    int? hz = null;
+    try { hz = sp.GetRequiredService<RefreshRateService>().GetInfo().CurrentHz is > 0 and var h ? h : null; }
+    catch (Exception) { /* no refresh reading: the cap rules stay quiet rather than guess */ }
+    var rules = sp.GetRequiredService<IAppRuleStore>();
+    var profile = rules.RuleFor(game)?.Overrides;
+    var last = sp.GetRequiredService<SessionStore>().List(null, 500)
+        .FirstOrDefault(x => AppRulePolicy.Normalize(x.App) == game && x.FpsAvg is not null);
+    var ceiling = sp.GetRequiredService<ThermalCeilingLearner>().CeilingFor(game);
+    var input = new AdvisorInput(
+        Game: game,
+        Live: liveMetrics,
+        LastSession: last,
+        RefreshHz: hz,
+        FrameCapFps: live ? sp.GetRequiredService<GpuDesiredState>().FrameCapFps : null,
+        GuardianThrottling: live && sp.GetRequiredService<GuardianService>().Throttling,
+        LearnedCeilingW: ceiling,
+        StapmW: profile?.StapmW ?? (live ? sp.GetRequiredService<TdpState>().Last?.Requested.StapmW : null),
+        Profile: profile);
+    return new AdvisorView(game, live, hz, ceiling is double c ? Math.Round(c, 1) : null,
+        advisor.Visible(AdvisorRules.Advise(input)),
+        advisor.Applied.Where(a => a.Game == game).Take(10).ToArray());
+}
+
 static object RulesPayload(IAppRuleStore rules, bool autoProfilesEnabled) => new
 {
     rules = rules.List(),
@@ -2065,6 +2134,8 @@ namespace GpdForge.Api
 
     /// <summary>Body of POST /app-rules/{id}/move. Negative moves the rule towards higher precedence.</summary>
     public sealed record AppRuleMove(int Delta);
+    /// <summary>Body of POST /advisor/apply and /advisor/dismiss: a suggestion id from GET /advisor/suggestions.</summary>
+    public sealed record AdvisorRequest(string? Id);
     public sealed record BrightnessRequest(int Level);
     public sealed record RefreshRateRequest(int Hz);
     public sealed record NightModeRequest(bool On, int? Warmth);

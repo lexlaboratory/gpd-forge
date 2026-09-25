@@ -51,6 +51,14 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Forge Advisor (plan F3).** A "Suggestions" card on the Dashboard and the Games page, and a
+  one-line suggestion with **Apply** in the overlay, propose changes for the game: cap at the
+  display's refresh when it runs well above it uncapped; cap at 30 FPS (or lower the resolution)
+  when the thermal guardian throttles and the 1 % low falls under half the average; hold the
+  sustained limit at the game's learned thermal ceiling (where the guardian settles, learned per
+  game); and fewer watts for a light game with FPS to spare. Nothing changes until Apply, which
+  writes that one suggestion into the game's profile and records it; Dismiss hides it.
+  `GET /advisor/suggestions`, `POST /advisor/apply`, `POST /advisor/dismiss`.
 - **Frame pacing (plan F2).** The overlay draws the game's last 10 s of frame times and says
   "Steady pacing" or "Stutters: N/min" (a stutter is a frame slower than twice the rolling median
   and 25 ms), with the 1 % and 0.1 % lows beside it. `GET /frames` serves the series and the

@@ -14,7 +14,7 @@ import type {
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, StandbyRestoreOutcome,
-  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, FramesResponse, TdpInfo, RuleOverrides,
+  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, FramesResponse, TdpInfo, RuleOverrides, AdvisorView,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -218,3 +218,21 @@ export const getSessionGames = () => json<GamesResponse>('/sessions/games')
 export const getFrames = () => json<FramesResponse>('/frames')
 export const getSession = (id: string) => json<GameSession>(`/sessions/${id}`)
 export const deleteSession = (id: string) => json<void>(`/sessions/${id}`, { method: 'DELETE' })
+
+// --- Forge Advisor (plan F3) ---
+// Apply and dismiss answer with the game's new state; a refusal carries the daemon's own sentence
+// (stale_suggestion when the advice no longer holds), which the card shows as-is.
+async function advisor(path: string, init?: RequestInit): Promise<AdvisorView> {
+  const res = await fetch(`${BASE}/advisor${path}`, init)
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `${init?.method ?? 'GET'} /advisor${path} → ${res.status}`)
+  }
+  return res.json() as Promise<AdvisorView>
+}
+/** Suggestions for one game, or (no argument) for the game in front. */
+export const getAdvisor = (game?: string) =>
+  advisor(`/suggestions${game ? `?game=${encodeURIComponent(game)}` : ''}`)
+/** Writes that one suggestion into the game's profile — nothing else. */
+export const applySuggestion = (id: string) => advisor('/apply', post({ id }))
+export const dismissSuggestion = (id: string) => advisor('/dismiss', post({ id }))

@@ -659,6 +659,89 @@ function lastRuleMatch() {
     atUtc: new Date().toISOString(),
   }
 }
+// --- Forge Advisor (plan F3) -------------------------------------------------------------------
+// A port of core/Advisor/AdvisorRules.cs over the mock's own state. The mock learns no ceiling (it has
+// no guardian loop), so it starts with none and specs seed one through /advisor/_test-seed.
+const advisorState = { ceilings: {}, dismissed: [], applied: [] }
+const MOCK_FRAME_GAME = 'cyberpunk2077'
+const clampW = (w) => Math.max(5, Math.min(40, Math.round(w)))
+function adviseMock(input) {
+  const { game, live, last, hz, profile } = input
+  const avg = live?.fpsAvg ?? last?.fpsAvg ?? null
+  const low = live ? live.fps1PctLow : last?.fps1PctLow ?? null
+  const cap = live ? input.cap : last?.frameCapFps ?? null
+  const uncapped = (c) => c == null || c <= 0 || (hz != null && c > hz)
+  const pCap = profile?.frameCapFps ?? null
+  const out = []
+  const capRefresh = avg > 0 && hz != null && avg > hz * 1.1 && uncapped(cap) && !(pCap > 0 && pCap <= hz)
+  if (capRefresh) out.push({ id: `cap_refresh:${game}:${hz}`, game, kind: 'cap_refresh', title: `Cap at ${hz} FPS`,
+    detail: `Running at ${Math.round(avg)} FPS on a ${hz} Hz display: the extra frames are never shown but still cost watts and heat.`,
+    stapmW: null, frameCapFps: hz })
+  if (!capRefresh && live && input.throttling && live.fps1PctLow < live.fpsAvg * 0.5) {
+    if (uncapped(cap) || cap > 30) {
+      if (pCap !== 30) out.push({ id: `cap_30:${game}:30`, game, kind: 'cap_30', title: 'Cap at 30 FPS',
+        detail: 'The thermal guardian is holding the power down and the 1 % low is under half the average.', stapmW: null, frameCapFps: 30 })
+    } else {
+      out.push({ id: `lower_resolution:${game}`, game, kind: 'lower_resolution', title: 'Lower the resolution or enable RSR',
+        detail: 'Throttled and stuttering even at a low cap.', stapmW: null, frameCapFps: null })
+    }
+  }
+  const lower = input.stapmW != null ? clampW(input.stapmW * 0.75) : null
+  const fewer = avg > 0 && hz != null && !input.throttling && lower != null && low >= hz * 1.5
+    && lower < input.stapmW && !(profile?.stapmW != null && profile.stapmW <= lower)
+  if (fewer) out.push({ id: `fewer_watts:${game}:${lower}`, game, kind: 'fewer_watts', title: `Try ${lower} W`,
+    detail: `Even the 1 % low is well above the ${hz} Hz refresh at ${input.stapmW} W.`, stapmW: lower, frameCapFps: null })
+  const ceiling = input.ceiling
+  if (!fewer && ceiling > 0 && profile?.stapmW !== clampW(ceiling)) {
+    const w = clampW(ceiling)
+    out.push({ id: `stapm_ceiling:${game}:${w}`, game, kind: 'stapm_ceiling', title: `Hold ${w} W`,
+      detail: `In this game the thermal guardian settles at about ${ceiling} W. Holding the sustained limit there avoids swinging between boost and throttle.`,
+      stapmW: w, frameCapFps: null })
+  }
+  return out.map((x) => ({ ...x, applicable: x.stapmW != null || x.frameCapFps != null }))
+}
+function governingRule(game) {
+  return state.appRules.find((r) => r.enabled && r.match.length > 0 && game.includes(r.match)) ?? null
+}
+function advisorView(gameQuery) {
+  const game = normalizeMatch(gameQuery || MOCK_FRAME_GAME)
+  const live = game === MOCK_FRAME_GAME ? framePacing(MOCK_FRAMETIMES) : null
+  const profile = governingRule(game)?.overrides ?? null
+  const last = [...state.sessions].sort((a, b) => (a.startedUtc < b.startedUtc ? 1 : -1))
+    .find((x) => normalizeMatch(x.app) === game && x.fpsAvg != null) ?? null
+  const ceiling = advisorState.ceilings[game] ?? null
+  const suggestions = adviseMock({
+    game, live, last, hz: state.refresh.current, profile, ceiling, throttling: false,
+    cap: live ? state.gpu.frameCapFps : null,
+    stapmW: profile?.stapmW ?? (live ? state.lastTdp.stapmW : null),
+  }).filter((x) => !advisorState.dismissed.includes(x.id))
+  return {
+    game, live: live != null, refreshHz: state.refresh.current, learnedCeilingW: ceiling, suggestions,
+    applied: advisorState.applied.filter((a) => a.game === game).slice(0, 10),
+  }
+}
+const advisorGameOf = (id) => {
+  const parts = typeof id === 'string' ? id.split(':') : []
+  return (parts.length === 2 || parts.length === 3) && parts[1] ? parts[1] : null
+}
+/** AdvisorService.Apply: merge into the game's own rule (enabled), or add one ahead of a broader rule. */
+function applyToProfile(sug) {
+  const game = normalizeMatch(sug.game)
+  const own = state.appRules.find((r) => r.match === game)
+  const patch = (o) => ({ ...(o ?? {}), stapmW: sug.stapmW ?? o?.stapmW ?? null, frameCapFps: sug.frameCapFps ?? o?.frameCapFps ?? null })
+  if (own) {
+    own.overrides = patch(own.overrides); own.enabled = true
+    profileSince.set(own.id, new Date().toISOString())
+    return
+  }
+  const governing = governingRule(game)
+  const id = `rule-${++ruleSeq}`
+  const rule = { id, match: game, mode: governing?.mode ?? 'gaming', enabled: true, overrides: patch(null) }
+  const at = governing ? state.appRules.indexOf(governing) : state.appRules.length
+  state.appRules.splice(at, 0, rule)
+  profileSince.set(id, new Date().toISOString())
+}
+
 function appRulesInfo() {
   return { rules: state.appRules, modes: RULE_MODES, autoProfiles: true, lastMatch: lastRuleMatch() }
 }
@@ -1062,6 +1145,34 @@ async function handle(req, res) {
 
   // Frame pacing (F2). `_test_frames=none` answers as a daemon with no frame source; `steady` drops the
   // two hitches. Per request, like `_test_blind`, so no spec leaves state behind for the next.
+  if (method === 'GET' && path === '/advisor/suggestions') return send(res, 200, advisorView(url.searchParams.get('game')))
+  if (method === 'POST' && path === '/advisor/apply') {
+    const body = await readBody(req)
+    const game = advisorGameOf(body?.id)
+    if (!game) return send(res, 400, { error: 'Unknown suggestion id.', code: 'bad_id' })
+    const sug = advisorView(game).suggestions.find((x) => x.id === body.id)
+    if (!sug) return send(res, 409, { error: 'That suggestion no longer applies.', code: 'stale_suggestion' })
+    if (!sug.applicable) return send(res, 400, { error: 'This suggestion is advice only; there is nothing to apply.', code: 'not_applicable' })
+    applyToProfile(sug)
+    advisorState.applied.unshift({ id: sug.id, game, kind: sug.kind, stapmW: sug.stapmW, frameCapFps: sug.frameCapFps, atUtc: new Date().toISOString() })
+    advisorState.applied.splice(50)
+    return send(res, 200, advisorView(game))
+  }
+  if (method === 'POST' && path === '/advisor/dismiss') {
+    const body = await readBody(req)
+    const game = advisorGameOf(body?.id)
+    if (!game) return send(res, 400, { error: 'Unknown suggestion id.', code: 'bad_id' })
+    if (!advisorState.dismissed.includes(body.id)) advisorState.dismissed.push(body.id)
+    return send(res, 200, advisorView(game))
+  }
+  // Test seam: seed learned ceilings ({ ceilings: { game: W } }) or clear everything ({ reset: true }).
+  if (method === 'POST' && path === '/advisor/_test-seed') {
+    const body = await readBody(req)
+    if (body?.reset) { advisorState.ceilings = {}; advisorState.dismissed = []; advisorState.applied = [] }
+    Object.assign(advisorState.ceilings, body?.ceilings ?? {})
+    return send(res, 200, { ok: true })
+  }
+
   if (method === 'GET' && path === '/frames') {
     const knob = url.searchParams.get('_test_frames')
     if (knob === 'none') return send(res, 200, { available: false, process: null, frametimesMs: [], metrics: null })

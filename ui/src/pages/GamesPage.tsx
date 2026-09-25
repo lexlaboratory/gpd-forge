@@ -12,6 +12,7 @@ import { getAppRules, getProfiles, getSessionGames } from '../api'
 import { Badge, Frame, Unavailable, type Tone } from '../components'
 import { AUTO_PROFILES_OFF, describeOverrides, displayName, profileState, type ProfileKind } from '../gameProfile'
 import { GameProfileSheet } from './GameProfileSheet'
+import { AdvisorCard } from '../AdvisorCard'
 import { FALLBACK_MODES } from './ProfilesPage'
 import { PRESET_LABEL } from './shared'
 
@@ -126,6 +127,10 @@ export function GamesPage({ active = null }: { active?: ActiveGameProfile | null
           </div>
         )}
       </Frame>
+
+      {/* The open game's advice, else the game in front's. Applying re-reads the rules so the card's
+          "Profile" state follows; an open sheet keeps its own draft and is not overwritten. */}
+      <AdvisorCard game={selected} onApplied={() => { getAppRules().then(setRules).catch(() => setRulesFailed(true)) }} />
     </div>
   )
 }

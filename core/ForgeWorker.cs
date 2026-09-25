@@ -3,6 +3,7 @@
 
 using GpdForge.Api;
 using GpdForge.Fan;
+using GpdForge.Advisor;
 using GpdForge.Guardian;
 using GpdForge.Profiles;
 using GpdForge.SystemControl;
@@ -45,7 +46,9 @@ public sealed class ForgeWorker(
     SessionRecorder sessions,
     TdpIntent intent,
     TdpState tdpState,
-    TdpReasserter reasserter) : BackgroundService
+    TdpReasserter reasserter,
+    // Optional so the worker tests that predate F3 construct it unchanged; the host always registers one.
+    ThermalCeilingLearner? ceilings = null) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
     // than re-applying every tick. Null until the first snapshot arrives.
@@ -124,6 +127,8 @@ public sealed class ForgeWorker(
                 // Thermal/battery guardian — evaluated every tick. A safety throttle takes priority
                 // over auto-FPS; alerts are logged and surfaced via GET /guardian.
                 var g = guardian.Observe(snapshot);
+                // Where the guardian comes to rest in this game is its thermal ceiling (plan F3).
+                ceilings?.Observe(sessions.CurrentApp, guardian.ThrottledToW, DateTimeOffset.UtcNow);
                 if (g.Alert is not null)
                 {
                     logger.LogWarning("Guardian [{Severity}]: {Alert}", g.Severity, g.Alert);

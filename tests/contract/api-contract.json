@@ -461,6 +461,19 @@
     },
     {
       "method": "GET",
+      "path": "/advisor/suggestions",
+      "shape": {
+        "game": "string|null",
+        "live": "boolean",
+        "refreshHz": "number|null",
+        "learnedCeilingW": "number|null",
+        "suggestions": "array",
+        "applied": "array"
+      },
+      "$comment": "F3 Forge Advisor (2026-09-25). `?game=` asks about one game; without it, the game presenting frames (else the session recorder's current app), and game:null with empty lists when there is none. Each suggestion: { id ('kind:game[:value]'), game, kind (cap_refresh | cap_30 | lower_resolution | stapm_ceiling | fewer_watts), title, detail, stapmW|null, frameCapFps|null, applicable }. `applied`: { id, game, kind, stapmW, frameCapFps, atUtc }, newest first. Dismissed suggestions are left out."
+    },
+    {
+      "method": "GET",
       "path": "/frames",
       "shape": {
         "available": "boolean",
@@ -616,6 +629,8 @@
     { "method": "PUT", "path": "/app-rules/{id}" },
     { "method": "DELETE", "path": "/app-rules/{id}" },
     { "method": "POST", "path": "/app-rules/{id}/move" },
+    { "method": "POST", "path": "/advisor/apply" },
+    { "method": "POST", "path": "/advisor/dismiss" },
     { "method": "POST", "path": "/alerts/{id}/ack" },
     { "method": "POST", "path": "/alerts/ack-all" },
     { "method": "DELETE", "path": "/alerts/{id}" },

@@ -610,6 +610,7 @@ input[type="range"]::-webkit-slider-thumb {
     grid-template-areas: "list sheet"; align-items: start;
   }
   .games-layout.has-sheet > [data-testid="games-list"] { grid-area: list; }
+  .games-layout.has-sheet > [data-testid="advisor"] { grid-column: 1; }
   /* Sticky under the topbar, and scrollable inside itself: at 800px tall with large text the editor is
      taller than the window, and the list beside it must not have to scroll away to reach Save. */
   .games-layout.has-sheet > .game-sheet {
@@ -812,3 +813,10 @@ input[type="range"]::-webkit-slider-thumb {
   .tile-value { font-size: var(--text-xl); }
   .bb-main { font-size: var(--text-2xl); }
 }
+
+/* Forge Advisor card (plan F3): each suggestion is its text beside its two buttons, stacking on narrow widths. */
+.advisor-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.advisor-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+.advisor-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1 1 18rem; }
+.advisor-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
+.advisor-note { margin: var(--space-3) 0 0; }

@@ -461,6 +461,48 @@ stutters) **and 25 ms** (below that a doubled frame is not a visible hitch). `st
 by the time the frames cover. The overlay draws the graph and shows "Steady pacing" or
 "Stutters: N/min".
 
+### `GET /advisor/suggestions` · `POST /advisor/apply` · `POST /advisor/dismiss`  (Forge Advisor, plan F3)
+`GET /advisor/suggestions?game=name → AdvisorView` (`game` optional)
+
+```
+AdvisorView = { game: string | null, live: boolean, refreshHz: number | null, learnedCeilingW: number | null,
+                suggestions: Suggestion[], applied: Applied[] }
+Suggestion  = { id: string, game: string, kind: string, title: string, detail: string,
+                stapmW: number | null, frameCapFps: number | null, applicable: boolean }
+Applied     = { id: string, game: string, kind: string, stapmW: number | null, frameCapFps: number | null, atUtc: string }
+```
+
+A pure rules engine (`core/Advisor/AdvisorRules.cs`) over the game's live frame pacing (only when that
+game is the one presenting), its last recorded session, its stored profile, the panel's refresh rate
+and its **learned thermal ceiling** — the watts at which the thermal guardian settles in that game (a
+throttle held for 60 s is one sample into an EMA, α 0.3; ~22 W on this device). Without `?game`, the
+game presenting frames, else the session recorder's current app; `game: null` and empty lists when
+there is none. Kinds:
+
+| kind | when | writes |
+|---|---|---|
+| `cap_refresh` | FPS > 1.1× refresh with no cap (or a cap above it) | `frameCapFps` = refresh |
+| `cap_30` | live, guardian throttling, 1 % low < 50 % of the average, no cap ≤ 30 | `frameCapFps` = 30 |
+| `lower_resolution` | as `cap_30`, but already capped at ≤ 30 | nothing (`applicable: false`; RSR arrives in F4) |
+| `fewer_watts` | 1 % low ≥ 1.5× refresh, not throttling, limit known | `stapmW` = 75 % of the limit |
+| `stapm_ceiling` | a ceiling is learned (and `fewer_watts` did not fire) | `stapmW` = the ceiling |
+
+`cap_refresh` takes precedence over `cap_30` (the smaller step: capping at 60 alone lifted the 1 % low
+from 2–17 to ~30 here). Advice the profile already carries is not repeated. Ids are
+`kind:game[:value]`, stable while the advice is the same, so a dismissal holds; dismissed ones are
+left out. `applied` is this game's accepted suggestions, newest first (at most 10).
+
+`POST /advisor/apply { id } → AdvisorView` writes that one suggestion into the game's profile (the
+F1 rule overrides) — merged into the game's own rule, which is enabled, or a new rule in the mode the
+game already runs in, moved ahead of any broader rule — and records it. Nothing else is changed; the
+focus loop applies the profile as it would one typed on the Games page. The suggestion is re-derived
+from the current state: `400 { code: "bad_id" }` for a malformed id, `409 { code: "stale_suggestion" }`
+when it no longer applies, `400 { code: "not_applicable" }` for a hint, and the `/app-rules` codes if
+the store refuses a value.
+
+`POST /advisor/dismiss { id } → AdvisorView` hides that suggestion (persisted, last 200 kept);
+`400 { code: "bad_id" }` for a malformed id.
+
 ### `GET /sessions` · `GET /sessions/games` · `GET|DELETE /sessions/:id`  (play-session history)
 A session is one continuous stretch during which a single application presented frames. The only
 trustworthy evidence a game is running is that it is *presenting*, and that evidence comes from the

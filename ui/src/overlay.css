@@ -248,3 +248,19 @@ button { font: inherit; user-select: none; -webkit-tap-highlight-color: transpar
   .qam-action:hover:not(:disabled) { background: var(--bg-hover); }
   .stepper-btn:hover:not(:disabled) { background: var(--bg-hover); }
 }
+
+/* Forge Advisor line (plan F3): one suggestion and its Apply, on one line like the profile notice. */
+.qam-advice {
+  margin: 0; padding: var(--space-2) var(--space-3);
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+  border-radius: var(--radius-md); border: var(--hairline) solid var(--border); color: var(--text);
+  font-size: var(--text-xs); font-weight: var(--weight-medium); line-height: var(--leading-tight);
+}
+.qam-advice-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qam-advice-apply {
+  flex-shrink: 0; min-height: var(--tap-min); padding: 0 var(--space-3);
+  border: 0; border-radius: var(--radius-md); background: var(--accent); color: var(--accent-ink);
+  font: inherit; cursor: pointer;
+}
+.qam-advice-apply:disabled { opacity: 0.6; cursor: default; }
+.qam-advice-error { color: var(--warn, var(--text)); }

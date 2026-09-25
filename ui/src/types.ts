@@ -490,3 +490,38 @@ export interface GpuInfo {
   settings?: GpuSettings | null
   modeProfiles?: Record<string, GpuModeProfile>
 }
+
+// --- Forge Advisor (plan F3): GET /advisor/suggestions, POST /advisor/apply | /advisor/dismiss ---
+export type AdvisorKind = 'cap_refresh' | 'cap_30' | 'lower_resolution' | 'stapm_ceiling' | 'fewer_watts'
+export interface AdvisorSuggestion {
+  /** `kind:game[:value]` — stable while the advice is the same. */
+  id: string
+  game: string
+  kind: AdvisorKind
+  title: string
+  detail: string
+  /** What Apply writes into the game's profile; both null for a hint. */
+  stapmW: number | null
+  frameCapFps: number | null
+  applicable: boolean
+}
+export interface AppliedSuggestion {
+  id: string
+  game: string
+  kind: AdvisorKind
+  stapmW: number | null
+  frameCapFps: number | null
+  atUtc: string
+}
+export interface AdvisorView {
+  /** Null when no game is in front and none was asked about. */
+  game: string | null
+  /** The advice used this game's live frame pacing (it is the one presenting now). */
+  live: boolean
+  refreshHz: number | null
+  /** Where the thermal guardian settles in this game, learned; null until seen. */
+  learnedCeilingW: number | null
+  suggestions: AdvisorSuggestion[]
+  /** This game's accepted suggestions, newest first. */
+  applied: AppliedSuggestion[]
+}

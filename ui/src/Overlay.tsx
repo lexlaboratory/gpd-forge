@@ -30,6 +30,7 @@ import {
 } from './pages/shared'
 import { Icon } from './components/Icon'
 import { FramePacingGraph } from './FramePacingGraph'
+import { OverlayAdvice } from './AdvisorCard'
 
 const QMODES: { id: ModeId; label: string }[] = [
   { id: 'gaming', label: 'Gaming' },
@@ -377,6 +378,7 @@ export function OverlayApp() {
       </header>
 
       <FramePacingGraph frames={frames} />
+      <OverlayAdvice />
 
       <div className="qam-modes" role="group" aria-label="Mode">
         {QMODES.map((m) => (

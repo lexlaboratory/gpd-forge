@@ -8,6 +8,7 @@ import { Badge, Button, Frame, Icon, Readout, Segmented, Slider, Toggle, type To
 import { useToast } from '../Toast'
 import { JobsPanel } from '../JobsPanel'
 import { StandbyPanel } from '../StandbyPanel'
+import { AdvisorCard } from '../AdvisorCard'
 import { MODES, reading, fractionOf, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type Shared, type TdpWrite } from './shared'
 import { BatteryBudgetCard } from './SystemPage'
 
@@ -159,6 +160,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
         <p className="muted">Applied with a closed loop — GPD Forge re-reads the PM table and warns if the firmware reverts it.</p>
       </Frame>
 
+      <AdvisorCard />
       {active === 'ai' && <JobsPanel />}
       {active === 'ai' && <AiCard />}
       {active === 'standby' && <StandbyPanel />}
