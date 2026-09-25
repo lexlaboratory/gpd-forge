@@ -59,6 +59,24 @@ test.describe('Dashboard', () => {
     await expect(dash.activeMode).toContainText('Agents / AI')
   })
 
+  test('a mode read that was in flight when you picked cannot undo the pick', async ({ page }) => {
+    // Found by the full suite flaking ai.spec: picking a mode turns auto off, which re-runs the
+    // shell's GET /mode, and that read raced the POST. When the GET was served first it answered
+    // the OLD mode and flipped the card back. Holding the POST makes the race certain.
+    let posted = false
+    await page.route(/\/mode$/, async (route) => {
+      if (route.request().method() !== 'POST') return route.continue()
+      await new Promise((r) => setTimeout(r, 600))
+      posted = true
+      return route.continue()
+    })
+    await dash.pickMode('ai')
+    await expect.poll(() => posted).toBe(true)
+    await page.waitForTimeout(300) // let the stale read land, if the shell still takes it
+    await expect(dash.mode('ai')).toHaveAttribute('aria-selected', 'true')
+    await expect(dash.mode('windows')).toHaveAttribute('aria-selected', 'false')
+  })
+
   test('auto mode is on by default and a manual pick turns it off', async ({ page }) => {
     const auto = page.getByTestId('auto-toggle')
     await expect(auto).toHaveAttribute('aria-pressed', 'true')

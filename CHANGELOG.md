@@ -5,6 +5,25 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-25
+
+0.3.0 taught the app the difference between a measurement and a zero. This one is about the game in
+front of you: what it is, how smoothly it runs, and what the handheld should do about it.
+
+### The headline
+- **Per-game profiles in the daemon, and a Games page** to edit them: TDP, frame cap, fan, Radeon
+  settings and mode per game, applied when the game comes to the front and undone when it leaves.
+- **Frame pacing**: 1 % and 0.1 % lows, frametime spread and stutters per minute, drawn in the
+  overlay from the game's last 10 s — timed by PresentMon's own clock, not by when a line arrived.
+- **Forge Advisor**: suggestions judged from the game's live pacing or its last session, each one
+  a single press to apply.
+- **More of the machine per mode**: Radeon Super Resolution and Image Sharpening, a processor power
+  policy (EPP, boost, max state), background apps frozen while a game plays and always thawed.
+- **Battery time per game**, and `gaming` vs `gaming-battery` side by side in FPS per watt.
+- **A modern redesign**, sized for the 1280×800 panel it runs on, and the overlay on a back paddle.
+- **TDP that stays true**: read back and reasserted instead of re-applied blind, one write at a
+  time, never a made-up 20 W — plus a long list of fixes in the Fixed section below.
+
 ### Changed
 - **A modern redesign.** The retro HUD (monospace caps everywhere, bracket corners, scanlines,
   phosphor glow, 2–4 px radii) became soft layered surfaces with depth from luminance, 10–16 px
@@ -177,6 +196,11 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **A mode you pick stays picked.** Picking a mode turns auto off, which made the app ask the daemon
+  for the mode again at the same moment it sent the new one; when the question was answered first,
+  the old mode came back and the card you had just pressed went dark. A read now counts only if no
+  pick was made or is still being sent since it was asked. Found by the E2E suite failing once in a
+  full run.
 - **A game's frame cap goes on even when it is the value GPD Forge last set.** The GPU agent wrote
   a cap only when the requested value changed from the last one it had written, so with a 60 FPS
   request carried out yesterday and 45 set in Adrenalin since (the device's state on 2026-09-25), a

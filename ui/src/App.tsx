@@ -127,12 +127,24 @@ export function App() {
     return () => { alive = false; clearInterval(id) }
   }, [])
 
+  // A GET /mode answer is only taken if no pick happened since it was asked, and none is still in
+  // flight. Picking turns auto off, which re-runs the effect below, and its read raced the POST:
+  // served first, it answered the OLD mode and flipped the card straight back.
+  const pickSeq = useRef(0)
+  const picksInFlight = useRef(0)
   useEffect(() => {
     let alive = true
-    getMode().then((m) => alive && setActive(m)).catch(() => {})
-    if (!auto) return
-    const id = setInterval(() => getMode().then((m) => alive && setActive(m)).catch(() => {}), 2000)
-    return () => { alive = false; clearInterval(id) }
+    const read = () => {
+      const seq = pickSeq.current
+      getMode().then((m) => {
+        if (alive && seq === pickSeq.current && picksInFlight.current === 0) setActive(m)
+      }).catch(() => {})
+    }
+    read()
+    // Manual mode reads once, but still needs the cleanup: without it that one read outlived the
+    // effect and could land after auto was switched back on.
+    const id = auto ? setInterval(read, 2000) : null
+    return () => { alive = false; if (id) clearInterval(id) }
   }, [auto])
 
   useEffect(() => {
@@ -145,8 +157,10 @@ export function App() {
   // Resolves with whether the daemon took it, so a page that shows what the mode put in force (the
   // Dashboard's TDP control) can re-read it once the mode has actually been applied.
   const pickMode = (id: ModeId) => {
+    pickSeq.current += 1; picksInFlight.current += 1
     setAuto(false); setActive(id)
     return apiSetMode(id).then(() => true, () => false)
+      .finally(() => { picksInFlight.current -= 1 })
   }
   const shared: Shared = { tele, active, auto, setAuto, pickMode }
   const connLabel = connected ? 'Live' : 'Offline'
