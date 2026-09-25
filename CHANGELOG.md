@@ -51,6 +51,15 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **The overlay on a back paddle, from the installer (plan F7).** The Win 4 has no Home button;
+  map L4, R4 or Menu to F24 in GPD's WinControls and install with
+  `-EnableHotkeys -OverlayHotkey F24`. The startup listener then catches that key instead of
+  Ctrl+Alt+Home, with no shortcut to build by hand. The key is checked when you install, so a typo
+  fails in front of you rather than silently at logon. See `docs/overlay-home-button.md`.
+- **Agents / AI mode keeps the fan steady (plan F7).** A long inference run dips a few degrees
+  between batches, and the fan curve followed every dip down and back up. In `ai` mode your chosen
+  curve (Quiet, Balanced or Aggressive) now waits for a 10 °C fall instead of 5 °C before slowing
+  the fan. It never slows a rise, and it leaves Auto and Manual alone.
 - **Battery time per game, and gaming vs gaming-battery side by side (plan F6).** On battery the
   overlay's Battery line now reads "~1 h 28 m in this game": the charge left at what this game has
   drained per hour in its recorded battery play (in the current mode when it has 5+ minutes there),

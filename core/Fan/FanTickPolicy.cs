@@ -65,7 +65,10 @@ public sealed class FanTickPolicy
     /// (sensor missing, or no fresh sample since the previous tick). Zero and non-finite values are
     /// treated like null.</param>
     /// <param name="nowSeconds">A monotonic clock, in seconds.</param>
-    public FanCommand Next(string? mode, int manualDuty, double? tempC, double nowSeconds)
+    /// <param name="sustained">The active power mode is a sustained one (<c>ai</c>): a curve mode
+    /// holds its duty through short dips (<see cref="FanCurve.SustainedHysteresisC"/>). Auto and
+    /// Manual ignore it — this shapes a curve the user chose, it never takes a fan they did not.</param>
+    public FanCommand Next(string? mode, int manualDuty, double? tempC, double nowSeconds, bool sustained = false)
     {
         switch (mode)
         {
@@ -80,7 +83,7 @@ public sealed class FanTickPolicy
                 return FanCommand.DutyOf(manualDuty);
 
             case "Quiet" or "Balanced" or "Aggressive":
-                return CurveTick(mode, tempC, nowSeconds);
+                return CurveTick(mode, tempC, nowSeconds, sustained);
 
             default:
                 // Defense in depth for imported/legacy state: invalid state can never leave a
@@ -98,7 +101,7 @@ public sealed class FanTickPolicy
         ResetCurve();
     }
 
-    private FanCommand CurveTick(string mode, double? tempC, double nowS)
+    private FanCommand CurveTick(string mode, double? tempC, double nowS, bool sustained)
     {
         // A change of mode — including between two curves — restarts the clock (dt = 0): the elapsed
         // time since this mode last ran says nothing about the time the new pipeline has covered.
@@ -129,7 +132,10 @@ public sealed class FanTickPolicy
         // DutyForTemp never delays a rise. The thermal guardian reacts on its own input regardless,
         // so this never dilutes the safety margin.
         double smoothedTempC = _smoother.Add(useTempC, dtS);
-        _lastTarget = FanCurve.DutyForTemp(smoothedTempC, curve, FanCurve.DefaultHysteresisC, _lastTarget);
+        // Switching sustained on or off does not reset anything: only the width of the drop band
+        // changes, so the fan neither jumps nor restarts its ramp when the power mode changes.
+        double hysteresisC = sustained ? FanCurve.SustainedHysteresisC : FanCurve.DefaultHysteresisC;
+        _lastTarget = FanCurve.DutyForTemp(smoothedTempC, curve, hysteresisC, _lastTarget);
         int duty = _ramp.Step(_lastTarget, dtS);
         _lastMode = mode;
         return FanCommand.DutyOf(duty);

@@ -16,6 +16,15 @@ public static class FanCurve
     /// <summary>Default hysteresis band (°C) FanTickPolicy feeds into <see cref="DutyForTemp"/>.</summary>
     public const double DefaultHysteresisC = 5.0;
 
+    /// <summary>
+    /// Hysteresis for a sustained power mode (<c>ai</c>). An inference run dips several degrees between
+    /// batches and climbs straight back; at 5 °C the curve follows every dip down and up again, which
+    /// is audible hunting for no thermal gain. Twice the band holds the duty through those dips.
+    /// It costs no safety margin: <see cref="DutyForTemp"/> applies hysteresis only to a DROP, never a
+    /// rise, and a real end of work (a much larger fall) still lets the fan down.
+    /// </summary>
+    public const double SustainedHysteresisC = 10.0;
+
     // Conservative: stays low while cool, but never truly silent above ~50°C, and is already ramped
     // hard by the time the CPU is hot (~85°C) — "quiet" trades noise for a few extra degrees when
     // it's cool, never for safety margin when it's hot.

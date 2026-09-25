@@ -20,6 +20,7 @@
     ...\install-gpd-forge.ps1 -NoFanControl   # telemetry + TDP only; leave the fan to the EC
     ...\install-gpd-forge.ps1 -EnableGpuProfiles  # let GPD Forge set Radeon Anti-Lag/Chill/Boost
     ...\install-gpd-forge.ps1 -EnableHotkeys      # resident global hotkeys (overlay, TDP, mode)
+    ...\install-gpd-forge.ps1 -EnableHotkeys -OverlayHotkey F24   # overlay on a WinControls-mapped L4/R4/Menu
     ...\install-gpd-forge.ps1 -Restore        # undo -Substitute: hand MA / GPD Tool back
     ...\install-gpd-forge.ps1 -DryRun         # rehearse -Restore, writing nothing
     ...\install-gpd-forge.ps1 -Uninstall      # remove the service and shortcut (restores first)
@@ -44,9 +45,21 @@ param(
     # Register the resident global hotkeys at logon: Ctrl+Alt+Home toggles the overlay, Ctrl+Alt+Up /
     # Down step TDP, Ctrl+Alt+M cycles mode. Opt-in because a global hotkey is a claim on chords the
     # whole machine shares — taking one without being asked is how a tool breaks somebody's game.
-    [switch]$EnableHotkeys
+    [switch]$EnableHotkeys,
+    # The overlay chord the resident listener registers, as Mod+Mod+Key (Ctrl, Alt, Shift, Win) or a
+    # bare key. The Win 4 has no Home button: map L4/R4/Menu to a single unused key in GPD's own
+    # WinControls (e.g. F24) and pass that key here — see docs/overlay-home-button.md. Validated
+    # because it is written into a startup shortcut's command line and forwarded to the elevated half.
+    [ValidatePattern('^((Ctrl|Alt|Shift|Win)\+)*[A-Za-z0-9]+$')]
+    [string]$OverlayHotkey = 'Ctrl+Alt+Home'
 )
 $ErrorActionPreference = 'Stop'
+# The pattern admits any word as the key; the listener would reject a bad one only at logon, hidden,
+# where nobody sees it. Refuse it here instead, while the person who typed it is still looking.
+Add-Type -AssemblyName System.Windows.Forms
+$overlayKey = ($OverlayHotkey -split '\+')[-1]
+try { [void][Enum]::Parse([System.Windows.Forms.Keys], $overlayKey, $true) }
+catch { throw "-OverlayHotkey: '$overlayKey' is not a key name (for example F24, Home or Insert)." }
 $ServiceName = 'GPDForge'
 $InstallDir  = 'C:\Program Files\GPD Forge'
 $RepoDir     = Split-Path $PSScriptRoot -Parent
@@ -61,7 +74,12 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     Write-Host "Elevation required - relaunching (accept UAC)..." -ForegroundColor Yellow
     Write-Host "  the elevated half logs to $LogPath" -ForegroundColor DarkGray
     $fwd = @()
-    foreach ($kv in $PSBoundParameters.GetEnumerator()) { if ($kv.Value -is [switch] -and $kv.Value.IsPresent) { $fwd += "-$($kv.Key)" } }
+    foreach ($kv in $PSBoundParameters.GetEnumerator()) {
+        if ($kv.Value -is [switch]) { if ($kv.Value.IsPresent) { $fwd += "-$($kv.Key)" } }
+        # Valued parameters too (-OverlayHotkey): forwarding switches only made the elevated half
+        # quietly install the default. Safe to quote as-is — ValidatePattern admits no quote or space.
+        elseif ($kv.Value -is [string]) { $fwd += "-$($kv.Key)"; $fwd += "`"$($kv.Value)`"" }
+    }
     Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList (@('-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"") + $fwd)
     return
 }
@@ -531,8 +549,16 @@ New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
 # window at all. It is Microsoft-signed too, so Smart App Control has nothing new to refuse.
 $Conhost    = "$env:SystemRoot\System32\conhost.exe"
 $PowerShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-function Get-HeadlessScriptArgs([string]$Script) {
-    "--headless `"$PowerShell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\$Script`""
+function Get-HeadlessScriptArgs([string]$Script, [string]$ScriptArgs = '') {
+    "--headless `"$PowerShell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\$Script`" $ScriptArgs".TrimEnd()
+}
+# 'Ctrl+Alt+Home' -> '-Modifiers Ctrl,Alt -Key Home'; a bare key ('F24', a WinControls-mapped paddle)
+# -> '-Modifiers None -Key F24'. "None" rather than "": an empty quoted argument does not survive a
+# shortcut's command line reliably, and overlay-hotkey.ps1 ignores a modifier token it does not know.
+function Get-OverlayHotkeyArgs([string]$Chord) {
+    $parts = $Chord -split '\+'
+    $mods = if ($parts.Count -gt 1) { $parts[0..($parts.Count - 2)] -join ',' } else { 'None' }
+    "-Modifiers $mods -Key $($parts[-1])"
 }
 $trayLink = $wsh.CreateShortcut("$StartupDir\GPD Forge Tray.lnk")
 $trayLink.TargetPath = $Conhost
@@ -548,14 +574,14 @@ $trayLink.WorkingDirectory = $InstallDir; $trayLink.IconLocation = "$InstallDir\
 # mechanism can live. Both scripts are hosted by the Microsoft-signed powershell.exe (itself hosted
 # headless, see the tray above), so Smart App Control has no unsigned binary of ours to refuse.
 $hotkeyLinks = @(
-    @{ Path = "$StartupDir\GPD Forge Overlay Hotkey.lnk"; Script = 'overlay-hotkey.ps1'; Desc = 'GPD Forge overlay hotkey (Ctrl+Alt+Home)' },
-    @{ Path = "$StartupDir\GPD Forge Hotkeys.lnk";        Script = 'forge-hotkeys.ps1';  Desc = 'GPD Forge hotkeys (TDP and mode)' }
+    @{ Path = "$StartupDir\GPD Forge Overlay Hotkey.lnk"; Script = 'overlay-hotkey.ps1'; Args = (Get-OverlayHotkeyArgs $OverlayHotkey); Desc = "GPD Forge overlay hotkey ($OverlayHotkey)" },
+    @{ Path = "$StartupDir\GPD Forge Hotkeys.lnk";        Script = 'forge-hotkeys.ps1';  Args = '';                                    Desc = 'GPD Forge hotkeys (TDP and mode)' }
 )
 foreach ($hk in $hotkeyLinks) {
     if ($EnableHotkeys) {
         $l = $wsh.CreateShortcut($hk.Path)
         $l.TargetPath = $Conhost
-        $l.Arguments = Get-HeadlessScriptArgs $hk.Script
+        $l.Arguments = Get-HeadlessScriptArgs $hk.Script $hk.Args
         $l.WorkingDirectory = $InstallDir
         $l.IconLocation = "$InstallDir\icon.ico"
         $l.Description = $hk.Desc
@@ -565,7 +591,8 @@ foreach ($hk in $hotkeyLinks) {
         Remove-Item -Force $hk.Path
     }
 }
-if ($EnableHotkeys) { Write-Host "  Global hotkeys will start at logon (Ctrl+Alt+Home / Up / Down / M)." -ForegroundColor DarkGray }
+if ($EnableHotkeys) { Write-Host "  Global hotkeys will start at logon (overlay: $OverlayHotkey; TDP: Ctrl+Alt+Up / Down; mode: Ctrl+Alt+M)." -ForegroundColor DarkGray }
+elseif ($PSBoundParameters.ContainsKey('OverlayHotkey')) { Write-Host "  -OverlayHotkey has no effect without -EnableHotkeys (no listener was made resident)." -ForegroundColor Yellow }
 
 # ALWAYS created (audit round 2, 2026-09-24). The agent is also the only thing that can tell the
 # service which app is in front - the service is in session 0, where there is no foreground window -

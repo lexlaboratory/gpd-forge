@@ -49,20 +49,39 @@ touching the firmware, and reads the config back afterwards. To undo:
 
 > The controller config write is reversible but it *is* firmware — the backup is taken first by design.
 
-## Step 2 — run the resident listener
+## Step 2 — make the listener resident (installer)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File scripts\overlay-hotkey.ps1 -Modifiers "" -Key F24
+powershell -ExecutionPolicy Bypass -File scripts\install-gpd-forge.ps1 -EnableHotkeys -OverlayHotkey F24
 ```
 
-Now pressing **L4** opens the overlay; pressing it again closes it. To auto-start it, drop a shortcut
-to that command in `shell:startup`.
+`-OverlayHotkey` takes the key you mapped in Step 1 (a bare key such as `F24`, or a chord such as
+`Ctrl+Alt+Home`, which is the default). The installer puts a startup shortcut in `shell:startup`
+that runs `overlay-hotkey.ps1 -Modifiers None -Key F24` through `conhost --headless`, so no console
+flashes at logon. Pressing **L4** then opens the overlay; pressing it again closes it.
+
+- The chord is validated (`Ctrl`/`Alt`/`Shift`/`Win` plus one key name) and the key is checked
+  against the Windows key names before anything is installed, so a typo fails at install time
+  rather than silently at logon.
+- The same key as R4 or Menu works the same way: map that button to F24 (or F13–F23) instead.
+- `-OverlayHotkey` without `-EnableHotkeys` changes nothing and says so. Reinstalling without
+  `-EnableHotkeys` removes the startup shortcut, so no listener is left holding the key.
+- The TDP and mode chords (`forge-hotkeys.ps1`: `Ctrl+Alt+Up`/`Down`, `Ctrl+Alt+M`) are unchanged.
+
+### Without the installer
+
+```powershell
+powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File scripts\overlay-hotkey.ps1 -Modifiers None -Key F24
+```
 
 For a keyboard-only test (no paddle), the listener defaults to **Ctrl+Alt+Home**:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\overlay-hotkey.ps1   # Ctrl+Alt+Home toggles the overlay
 ```
+
+`-SelfTest` registers and unregisters the hotkey. It fails while the resident listener is running,
+because the listener already holds the key: that failure means the listener is working.
 
 ## Notes / pending
 

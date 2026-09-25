@@ -21,8 +21,19 @@ public sealed class FanWorker(
     FanState fanState,
     IGpdFanController fanControl,
     ILogger<FanWorker> logger,
-    TimeProvider? time = null) : BackgroundService
+    TimeProvider? time = null,
+    Func<bool>? sustained = null) : BackgroundService
 {
+    /// <summary>
+    /// Whether <paramref name="powerMode"/> is a catalogue mode flagged <c>Sustained</c> (today only
+    /// <c>ai</c>). Read from the catalogue rather than compared to "ai" so a future sustained mode
+    /// gets the sustained fan by construction, like it already gets ProfileShaper's flat power.
+    /// </summary>
+    public static bool IsSustainedMode(string? powerMode) =>
+        GpdForge.Profiles.ModeCatalogue.Find(powerMode)?.Sustained == true;
+
+    private readonly Func<bool> _sustained = sustained ?? (() => false);
+
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
@@ -60,7 +71,7 @@ public sealed class FanWorker(
             int manualDuty = fanState.ManualDuty;
             double nowS = _time.GetElapsedTime(_startTimestamp).TotalSeconds;
 
-            var command = _policy.Next(mode, manualDuty, freshTempC, nowS);
+            var command = _policy.Next(mode, manualDuty, freshTempC, nowS, _sustained());
             switch (command.Kind)
             {
                 case FanCommandKind.Auto:

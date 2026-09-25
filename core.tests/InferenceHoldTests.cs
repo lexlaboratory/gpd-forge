@@ -859,12 +859,28 @@ public class InferenceHoldWorkerTests
     /// </summary>
     private sealed class BreaksAfterEngagingSampler(AntiStandbyService anti) : IProcessCpuSampler
     {
+        /// <summary>
+        /// Failed passes to wait for before the test judges the outcome. The worker calls Sample and
+        /// then Tick strictly in turn on one loop, so the Nth failing call proves the ticks for the
+        /// N-1 failures before it have FINISHED, state publication included. Comfortably above
+        /// Inf.Options' ReleaseTicks (2), so a correct engine has released by then.
+        /// </summary>
+        public const int FailuresToSettle = 8;
+
         private TimeSpan _cpu;
         private volatile bool _broken;
+        private int _failures;
+
+        public TaskCompletionSource Settled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public IReadOnlyList<ProcessCpuSample> Sample(IReadOnlyList<string> watched)
         {
-            if (_broken) throw new InvalidOperationException("process table unreadable");
+            if (_broken)
+            {
+                if (Interlocked.Increment(ref _failures) == FailuresToSettle) Settled.TrySetResult();
+                throw new InvalidOperationException("process table unreadable");
+            }
             _cpu += TimeSpan.FromSeconds(1);
             if (anti.HolderCount > 0) _broken = true;
             return [new ProcessCpuSample(100, "ollama", _cpu)];
@@ -885,26 +901,22 @@ public class InferenceHoldWorkerTests
         var anti = new AntiStandbyService(sink);
         var opt = Inf.Options(enforce: true) with { TickInterval = TimeSpan.FromMilliseconds(20) };
         var state = new InferenceHoldState(opt);
-        var worker = new InferenceHoldWorker(new BreaksAfterEngagingSampler(anti), anti, state, opt,
+        var sampler = new BreaksAfterEngagingSampler(anti);
+        var worker = new InferenceHoldWorker(sampler, anti, state, opt,
             NullLogger<InferenceHoldWorker>.Instance);
 
         await worker.StartAsync(CancellationToken.None);
         try
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-            bool everHeld = false;
-            while (DateTime.UtcNow < deadline)
-            {
-                // The sink's count as well as the live holder count: at 20 ms ticks the hold can be
-                // taken and released between two 20 ms polls, and under a loaded full-suite run a poll
-                // that only sampled HolderCount missed it and failed "never produced a hold" (seen once,
-                // 2026-09-24). An engagement the sink recorded is the same evidence, and it cannot be missed.
-                if (anti.HolderCount > 0 || sink.Engaged > 0) everHeld = true;
-                if (everHeld && anti.HolderCount == 0) break;
-                await Task.Delay(20);
-            }
+            // Wait on the loop's own progress, not on wall-clock polling. The old 20 ms poll broke out
+            // the moment HolderCount hit 0, which happens inside Tick BEFORE that same Tick publishes
+            // the state, so under a loaded full-suite run it read a stale Holding/Unmeasured and
+            // failed. Settled fires only once whole ticks, publish included, have completed.
+            var settled = await Task.WhenAny(sampler.Settled.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+            Assert.True(settled == sampler.Settled.Task,
+                "the sampler never produced a hold and then failed, so the test proved nothing");
 
-            Assert.True(everHeld, "the sampler never produced a hold, so the test proved nothing");
+            Assert.Equal(1, sink.Engaged);
             Assert.Equal(0, anti.HolderCount);
             Assert.Equal(1, sink.Released);
 

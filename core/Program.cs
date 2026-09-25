@@ -846,7 +846,10 @@ builder.Services.AddHostedService<ForgeWorker>();
 // The fan's own loop: a fixed 1 s timer over the sampler's cached temperature, so a slow ryzenadj
 // apply in ForgeWorker's tick can never delay a fan response (see core/Fan/FanWorker.cs). Always
 // registered: IGpdFanController is the no-op stand-in whenever the fan gates are closed.
-builder.Services.AddHostedService<FanWorker>();
+// It reads the active power mode each tick so `ai` runs the chosen curve sustained (ROADMAP Phase 3,
+// the thermal half of ProfileShaper's flat power); it adds no write path the gates do not cover.
+builder.Services.AddHostedService(sp => ActivatorUtilities.CreateInstance<FanWorker>(sp,
+    (Func<bool>)(() => FanWorker.IsSustainedMode(sp.GetRequiredService<ModeState>().Active))));
 
 // Auto-profiles: switch the active mode based on the foreground app. ON by default (the app is
 // "automatic"); disable with GPDFORGE_AUTO_PROFILES=0. Updates the mode label only; applying a

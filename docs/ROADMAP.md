@@ -62,7 +62,7 @@ Control to refuse. Everything this section listed as blocked has since shipped:
 | `Fan/` runtime EC read | shipped — daemon reads real RPM (4608 measured 2026-08-30, 3328 on 2026-08-31) |
 | `Fan/` boot/resume re-init + hysteresis curves | shipped — `core/Fan/FanCurve.cs`, driven every tick from `ForgeWorker` |
 | The `fan` step of the resume restore | shipped — reaches `IGpdFanController`; verified by effect (`"the EC responded (duty reads 203)"`) |
-| "Sustained" fan curve for AI mode (Phase 3) | **unblocked, not built** — see *Open* at the end of this file |
+| "Sustained" fan curve for AI mode (Phase 3) | shipped 2026-09-25 — `FanCurve.SustainedHysteresisC`, applied by `FanWorker` while the active mode is `Sustained` |
 
 🔴 **This paragraph used to say the opposite, and it was wrong.** It claimed the optional richer
 telemetry "goes through LibreHardwareMonitor, which loads a Ring0-family driver", and that moving it
@@ -169,13 +169,15 @@ decision note and never re-verified. See [ADR-0001 § Consequences](adr/0001-paw
       the mode switch, the auto-profile worker, the standby restore and the resume worker alike.
       The Power page drops the fast/slow sliders for this mode rather than offering two controls that
       change nothing.
-- [ ] "Sustained" fan curve for AI mode — **unblocked 2026-08-30, and now genuinely open.** It is a
-      fan *write*, so it used to sit under the driver decision with no checkbox. That decision is
-      resolved: the write path works and was verified by effect. This is the one item the driver
-      question was actually holding, and it is now work someone can pick up. The power half of
-      sustained shaping shipped 2026-08-29 (`ProfileShaper`); the thermal half is this.
-      ⚠️ Subject to the double gate (`GPDFORGE_ENABLE_HARDWARE` **and** `GPDFORGE_ENABLE_FAN_CONTROL`)
-      and the probe-with-auto-restore pattern. This is the phase where a mistake spins a fan wrong.
+- [x] **"Sustained" fan curve for AI mode — shipped 2026-09-25 (F7).** The thermal half of
+      sustained shaping (`ProfileShaper` flattened the power on 2026-08-29). While the active mode is
+      one the catalogue flags `Sustained` (today `ai`), `FanWorker` runs the user's chosen curve with
+      `FanCurve.SustainedHysteresisC` (10 °C instead of 5 °C), so a steady inference load holds its duty
+      through the few-degree dips between batches instead of hunting down and back up. It adds **no
+      write path**: it only widens the drop band of a curve mode the user already picked, never
+      touches Auto or Manual, never delays a rise (hysteresis applies to drops only), and runs inside
+      the existing double gate. Pinned by `FanTickPolicyTests` (the `Sustained` block) and
+      `FanWorkerTests.The_ai_mode_runs_the_curve_sustained`.
 - [x] **Anti-Modern-Standby during inference — now covers inference we did not start.** The hold
       existed but only `JobsState` (GPD Forge's own queue) and the manual toggle ever took one, so a
       hand-started `ollama serve`, LM Studio or training script got nothing. Newly urgent: until
@@ -282,10 +284,13 @@ Everything here is reachable today; none of it waits on a driver or a decision.
       refused, naming both numbers, and **checked on both endpoints** — a rule enforced on one door is
       one you walk around through the other. Refused rather than silently adjusted: quietly moving
       someone's target or cap applies a setting they did not choose and hides which one changed.
-- [ ] **Resident overlay hotkey bound to a Home button** — `scripts/overlay-hotkey.ps1` and
-      `forge-hotkeys.ps1` exist and the installer can make them resident (`-EnableHotkeys`, opt-in
-      because a global hotkey is a claim on a combination the whole machine shares). What does not
-      exist is the binding to a WinControls-mapped Home button (L4/R4/Menu). **Open, no blocker.**
+- [x] **Resident overlay hotkey bound to a Home button — done 2026-09-25 (F7).** The installer takes
+      `-OverlayHotkey` (a bare key or a `Mod+Key` chord, validated, key name checked at install time)
+      beside `-EnableHotkeys`, and writes it into the headless startup shortcut, so an L4/R4/Menu
+      button mapped to F24 in GPD's WinControls opens the overlay with no hand-made shortcut:
+      `install-gpd-forge.ps1 -EnableHotkeys -OverlayHotkey F24`. The elevated relaunch now forwards
+      valued parameters too (it forwarded switches only). Steps in
+      [`overlay-home-button.md`](overlay-home-button.md); pinned by `InstallerOverlayHotkeyTests`.
 - ⛔ **Topmost over exclusive fullscreen** — *split out of the line above on 2026-08-31, because one
       checkbox covering an open item and a blocked one hides both.* Blocked on a decision, not on
       work — see *Blocked* at the end.
@@ -313,7 +318,7 @@ Where the work actually lives, verified against the tree on 2026-08-31:
 | `Fan/` runtime EC read | done | daemon reports live RPM on device |
 | Boot/resume re-init + hysteresis curves | done | `core/Fan/FanCurve.cs`, driven from `ForgeWorker` |
 | The `fan` step of the resume restore | done | fixed 2026-08-30; verified by effect, not by log |
-| AI mode's sustained fan curve | **open** | the only one left — tracked in Phase 3 |
+| AI mode's sustained fan curve | done 2026-09-25 | `core/Fan/FanCurve.cs` (`SustainedHysteresisC`), `core/Fan/FanWorker.cs` |
 
 The description was wrong about the shape too: `IBroker`/`NullBroker` were never used by any of it.
 The fan path talks to PawnIO directly, and the abstraction the phase was named after did not earn
@@ -359,12 +364,35 @@ at `13b2fe3`. The sequenced plan for what comes next is
 shipped — in the section immediately above that warns this is the role that rots. Noted rather than
 quietly corrected, because it is the second time this file has been wrong about its own status.)*
 
+## Phase 9 — In-game performance  *(F0–F7, 2026-09-24/25)*
+
+Plan: [`superpowers/plans/2026-09-24-rendimiento-en-juego-plan.md`](superpowers/plans/2026-09-24-rendimiento-en-juego-plan.md).
+What shipped, and where it lives:
+
+| Phase | What | Code |
+|---|---|---|
+| F0 | One 1 Hz telemetry sampler, everything else reads its cache; the fan on its own 1 s loop; TDP applied at start, reasserted only on a readback mismatch, manual TDP remembered | `core/Telemetry/TelemetrySampler.cs`, `core/Fan/FanWorker.cs`, `core/Tdp/TdpReadbackRule.cs` |
+| F0 | PresentMon follows the foreground game the session agent reports, not the busiest presenter | `POST`/`GET /session/foreground`, `core/Telemetry/` |
+| F1 | Per-game profiles: overrides on app rules (TDP, cap, fan, GPU, freeze), Games page, profile-applied notice, save-as-profile from the overlay | `core/Profiles/GameProfileApplier.cs`, `GET /profiles/active` |
+| F2 | Frame pacing: 1 % / 0.1 % lows, frametime stddev, stutters/min; overlay graph; per-session pacing and energy | `core/Telemetry/FramePacing.cs`, `GET /frames` |
+| F3 | Forge Advisor: rules over live pacing, profile, refresh and thermals; Apply from the overlay; learned thermal ceiling | `core/Advisor/AdvisorRules.cs`, `/advisor/*` |
+| F4 | Radeon Super Resolution and Image Sharpening applied through ADLX | `core/Gpu/AdlxSettings.cs`, `POST /gpu/image` |
+| F4 | Per-mode processor policy (EPP, boost, max state) on the active power scheme | `core/Power/ProcessorPowerPolicy.cs`, `GET /power-policy` |
+| F5 | Background apps frozen while a game plays, always thawed; never a user's own freeze | `core/Profiles/GameFreezer.cs`, `GET /freezer/candidates` |
+| F6 | Per-game battery budget and the `gaming` vs `gaming-battery` comparison | `core/Sessions/SessionMath.cs`, `GET /battery/budget` |
+| F7 | Overlay on a WinControls-mapped Home button; `ai` mode's sustained fan curve; the flaky hold test fixed | `scripts/install-gpd-forge.ps1`, `core/Fan/FanCurve.cs` |
+
+Still open from this plan: the in-game measurement session and the `ryzenadj --info` capture (both
+in *Open*), splitting ADLX performance metrics from the session host (H5), and the 0.4.0 release.
+
 ## Open — work someone can pick up today
 
 | Item | Where | Note |
 |---|---|---|
-| Sustained fan curve for AI mode | Phase 3 | Unblocked 2026-08-30. The double gate and probe-with-auto-restore are mandatory. |
-| Resident overlay hotkey bound to a Home button | Phase 5 | The listener scripts exist and are installable; the WinControls binding does not. |
+| ~~Sustained fan curve for AI mode~~ | done 2026-09-25 | Wider drop hysteresis on the user's own curve while the mode is `Sustained`; no new write path, so the double gate is the existing one. Phase 3. |
+| ~~Resident overlay hotkey bound to a Home button~~ | done 2026-09-25 | `install-gpd-forge.ps1 -EnableHotkeys -OverlayHotkey F24` with a paddle mapped to F24 in WinControls. Phase 5. |
+| ⚠️ Measure F1–F3 in a real game session | *(open, needs Alex)* | The in-game plan's gate: a 10-minute session comparing 1 % low, stutters/min and temperature against the 2026-09-24 baseline (uncapped 1 % low 2–17; capped at 60 ~30). |
+| ⚠️ Capture real `ryzenadj --info` output | *(open, needs elevation)* | `core.tests/RyzenAdjFixtures.cs` is a reconstruction, not a capture. `dotnet GpdForge.Service.dll --probe-tdp` from an elevated console, pasted verbatim. |
 | ~~Packaged-shell E2E~~ | done 2026-08-31 | `tests/desktop/` — pywinauto/UIA over the installed binary. Scope is the window layer only: UIA cannot see the WebView2 DOM. **Skips on CI** (no installation there), so it is a post-install check, not a CI gate. |
 | ~~Mock↔daemon contract parity~~ | done 2026-08-31 | `tests/contract/api-contract.json` is the arbiter; the real daemon and the mock are each validated against it, never against each other. |
 | ~~Charge guard~~ | done 2026-09-01 | `GET`/`POST /battery/charge-guard` — counts hours spent plugged in at high charge, warns once per episode, and optionally holds a cooler ceiling while the pack sits full. **It cannot stop charging and says so**: `canStopCharging` is in the contract as a permanent `false`. Attacks the reachable half of lithium ageing (temperature), since the threshold is an EC/BIOS value with no verified path. Phase G3. |
@@ -387,10 +415,13 @@ quietly corrected, because it is the second time this file has been wrong about 
 
 ## Flaky — seen failing under load, passes in isolation
 
-- ⚠️ `InferenceHoldWorkerTests.A_sampler_that_fails_forever_releases_the_hold_instead_of_freezing_it`
-  failed once during a full-suite run on 2026-09-01 and passed 3/3 in isolation and on the next full
-  run. Recorded rather than ignored: a test that fails at random teaches people to re-run the suite
-  instead of reading it, which is how a real failure gets waved through.
+- ✅ `InferenceHoldWorkerTests.A_sampler_that_fails_forever_releases_the_hold_instead_of_freezing_it`
+  failed once during a full-suite run on 2026-09-01 and passed 3/3 in isolation. **Fixed 2026-09-25
+  (F7), and it was a test race, not a product one:** the test polled every 20 ms and stopped as soon as
+  the holder count reached 0, but `anti.Stop()` runs inside a Tick *before* that same Tick publishes
+  the state, so a loaded run could read a stale `Holding`/`Unmeasured`. The test now waits on the
+  worker's own progress: the sampler signals on its 8th failing call, which proves the earlier ticks,
+  publish included, have finished. No wall-clock polling is left in it.
 - ✅ **The "flaky" visual `sections` failures were not flaky, and calling them that was wrong.**
   On 2026-09-02 three consecutive full runs failed a *different* subset of `sections` baselines while
   every one passed in isolation, and they were dismissed as load-related twice before being

@@ -27,7 +27,8 @@ service in session 0 cannot register a user-session hotkey, and cannot reach ADL
   cannot see from session 0 (the FPS target and the per-app rules need it). With
   `-EnableGpuProfiles` it also applies the Radeon profile for the active mode; without it, it never
   touches ADLX.
-- **Hotkeys** (`-EnableHotkeys`) — `Ctrl+Alt+Home` toggles the overlay; `Ctrl+Alt+Up`/`Down` step TDP;
+- **Hotkeys** (`-EnableHotkeys`) — `Ctrl+Alt+Home` toggles the overlay (`-OverlayHotkey F24` binds
+  it to a back paddle or Menu mapped to F24 in WinControls instead; see `docs/overlay-home-button.md`); `Ctrl+Alt+Up`/`Down` step TDP;
   `Ctrl+Alt+M` cycles mode. Opt-in because a global hotkey is a claim on chords the whole machine
   shares. Test either without going resident with `-SelfTest`.
 

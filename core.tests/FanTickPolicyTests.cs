@@ -193,4 +193,62 @@ public class FanTickPolicyTests
         p.Reset();
         Assert.Equal(FanCommand.DutyOf(Curve("Balanced", 50)), p.Next("Balanced", 128, 50, 20));
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Sustained (the `ai` mode's thermal half)
+    // ---------------------------------------------------------------------------------------------
+
+    // Settles at 75 °C, then dips to 68 °C for long enough that smoother and ramp are both done.
+    private static int SettleThenDip(bool sustained)
+    {
+        var p = new FanTickPolicy();
+        int duty = 0;
+        for (int s = 0; s < 120; s++) duty = p.Next("Balanced", 128, 75, s, sustained).Duty;
+        Assert.Equal(Curve("Balanced", 75), duty);
+        for (int s = 120; s < 400; s++) duty = p.Next("Balanced", 128, 68, s, sustained).Duty;
+        return duty;
+    }
+
+    [Fact]
+    public void A_sustained_load_holds_its_duty_through_a_dip_that_a_normal_curve_follows_down()
+    {
+        // An inference run dips a few degrees between batches. The normal band follows that down and
+        // back up every batch, which is the audible hunting the sustained curve exists to remove.
+        Assert.True(SettleThenDip(sustained: false) < Curve("Balanced", 75));
+        Assert.Equal(Curve("Balanced", 75), SettleThenDip(sustained: true));
+    }
+
+    [Fact]
+    public void A_sustained_curve_never_delays_a_rise()
+    {
+        // The wider band only ever holds a duty up; it must never cost cooling on the way up.
+        var normal = new FanTickPolicy();
+        var sustained = new FanTickPolicy();
+        foreach (var (s, t) in new[] { (0, 50.0), (1, 60.0), (2, 70.0), (3, 80.0), (4, 88.0), (5, 95.0), (6, 95.0) })
+            Assert.Equal(normal.Next("Balanced", 128, t, s).Duty, sustained.Next("Balanced", 128, t, s, sustained: true).Duty);
+    }
+
+    [Fact]
+    public void A_sustained_load_still_lets_the_fan_down_once_the_work_is_really_over()
+    {
+        var p = new FanTickPolicy();
+        for (int s = 0; s < 120; s++) p.Next("Balanced", 128, 80, s, sustained: true);
+        int duty = 0;
+        for (int s = 120; s < 600; s++) duty = p.Next("Balanced", 128, 45, s, sustained: true).Duty;
+        // Hysteresis may park the duty anywhere within one band of the curve (so can the normal one),
+        // but never above what 45 °C plus the sustained band calls for: the hold is released.
+        Assert.True(duty < Curve("Balanced", 80));
+        Assert.InRange(duty, Curve("Balanced", 45), FanCurve.Interpolate(45 + FanCurve.SustainedHysteresisC, FanCurve.Balanced));
+    }
+
+    [Fact]
+    public void Sustained_leaves_Auto_and_Manual_exactly_as_they_were()
+    {
+        // Sustained shapes a curve the user already chose. It never takes a fan the user left to
+        // firmware, nor overrides a pinned manual duty.
+        var p = new FanTickPolicy();
+        Assert.Equal(FanCommand.Auto, p.Next("Auto", 128, 60, 0, sustained: true));
+        Assert.Equal(FanCommand.None, p.Next("Auto", 128, 60, 1, sustained: true));
+        Assert.Equal(FanCommand.DutyOf(140), p.Next("Manual", 140, 60, 2, sustained: true));
+    }
 }

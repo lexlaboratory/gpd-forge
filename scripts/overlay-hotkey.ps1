@@ -10,7 +10,7 @@
 # Run resident (leave it running; press Ctrl+Alt+Home to toggle):
 #   powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File scripts\overlay-hotkey.ps1
 param(
-  [string]$Modifiers = "Ctrl,Alt",     # any of Ctrl,Alt,Shift,Win (comma-separated); empty for none
+  [string]$Modifiers = "Ctrl,Alt",     # any of Ctrl,Alt,Shift,Win (comma-separated); empty or None for none
   [string]$Key = "Home",               # a VK name: Home, F24, Insert, etc.
   [string]$Url = "http://127.0.0.1:8787/overlay.html",
   [int]$Width = 380,

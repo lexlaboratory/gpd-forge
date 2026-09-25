@@ -195,7 +195,9 @@ public class FanWorkerTests
     public void Program_registers_the_fan_worker_as_a_hosted_service()
     {
         var source = File.ReadAllText(ProgramRoutes.FindProgramCs());
-        Assert.Contains("AddHostedService<FanWorker>()", source);
+        // A factory since the sustained fan: it hands the worker the active power mode.
+        Assert.Matches(@"AddHostedService\(sp => ActivatorUtilities\.CreateInstance<FanWorker>\(sp,", source);
+        Assert.Contains("FanWorker.IsSustainedMode(sp.GetRequiredService<ModeState>().Active)", source);
     }
 
     private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout)
@@ -207,6 +209,37 @@ public class FanWorkerTests
             await Task.Delay(50);
         }
     }
+
+    [Fact]
+    public void The_ai_mode_runs_the_curve_sustained()
+    {
+        // ROADMAP "sustained fan curve for AI mode": the worker asks the active power mode, so an
+        // `ai` session holds its duty through a dip that `windows` follows down.
+        int DutyAfterDip(string powerMode)
+        {
+            var source = new ScriptedTelemetrySource();
+            var fan = new RecordingFanController();
+            var clock = new ManualTimeProvider();
+            var worker = new FanWorker(source, new FanState { Mode = "Balanced" }, fan,
+                NullLogger<FanWorker>.Instance, clock, sustained: () => FanWorker.IsSustainedMode(powerMode));
+            for (int s = 0; s < 120; s++) { source.Publish(Temp(75)); worker.Tick(); clock.Advance(TimeSpan.FromSeconds(1)); }
+            for (int s = 0; s < 280; s++) { source.Publish(Temp(68)); worker.Tick(); clock.Advance(TimeSpan.FromSeconds(1)); }
+            return int.Parse(fan.Calls[^1].Split(':')[1]);
+        }
+
+        Assert.Equal(Curve("Balanced", 75), DutyAfterDip("ai"));
+        Assert.True(DutyAfterDip("windows") < Curve("Balanced", 75));
+    }
+
+    [Theory]
+    [InlineData("ai", true)]
+    [InlineData("AI", true)]
+    [InlineData("gaming", false)]
+    [InlineData("windows", false)]
+    [InlineData(null, false)]
+    [InlineData("nonsense", false)]
+    public void Only_a_sustained_catalogue_mode_runs_the_curve_sustained(string? mode, bool expected) =>
+        Assert.Equal(expected, FanWorker.IsSustainedMode(mode));
 }
 
 /// <summary>A source a test publishes into by hand. Waiters wake on publish, or time out to Latest.</summary>
