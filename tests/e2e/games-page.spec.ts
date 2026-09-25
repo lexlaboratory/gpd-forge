@@ -137,6 +137,40 @@ test.describe('Games page', () => {
     expect(rule.overrides).toMatchObject({ stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null } })
   })
 
+  // F5: the freeze checklist lists what runs (the mock: ollama, onedrive, chrome, discord), ticks the
+  // measured suggestions on first switch-on, and saves the ticked names on the game's own rule.
+  test('freeze while playing: suggested running apps are ticked, others can be added, and it is saved', async ({ page, request }) => {
+    await openGames(page)
+    await openSheet(page, 'hades2')
+    await expect(page.getByTestId('game-freeze-list')).toHaveCount(0)   // nothing fetched until asked
+    await page.getByTestId('game-freeze-toggle').click()
+    await expect(page.getByTestId('game-freeze-ollama')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('game-freeze-onedrive')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('game-freeze-chrome')).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByTestId('game-freeze-lm-studio')).toHaveCount(0)   // suggested, but not running
+    await page.getByTestId('game-freeze-chrome').click()
+    await page.getByTestId('game-freeze-onedrive').click()
+    await page.getByTestId('game-save').click()
+    await expect(page.getByTestId('games-card-hades2')).toContainText('freezes ollama, chrome')
+
+    const rule = (await rulesNow(request)).find((r) => r.match === 'hades2')!
+    expect(rule.overrides?.freeze).toEqual(['ollama', 'chrome'])
+
+    // Reopened, a stored name is shown ticked; switching the section off saves no list at all.
+    await page.getByTestId('game-sheet-close').click()
+    await openSheet(page, 'hades2')
+    await expect(page.getByTestId('game-freeze-chrome')).toHaveAttribute('aria-pressed', 'true')
+    await page.getByTestId('game-freeze-toggle').click()
+    await page.getByTestId('game-save').click()
+    await expect.poll(async () => (await rulesNow(request)).find((r) => r.match === 'hades2')?.overrides?.freeze ?? null).toBeNull()
+  })
+
+  test('the freeze checklist keeps the game itself out', async ({ request }) => {
+    const r = await (await request.get(`${API}/freezer/candidates?game=chrome`)).json()
+    expect(r.suggested).toContain('ollama')
+    expect(r.running.map((c: { name: string }) => c.name)).not.toContain('chrome')
+  })
+
   test('Chill and Anti-Lag cannot both be on: the driver refuses the pair', async ({ page }) => {
     await openGames(page)
     await page.getByTestId('games-card-cyberpunk2077').click()

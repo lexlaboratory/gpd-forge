@@ -7,9 +7,16 @@
 // A side sheet beside the list from 1100px, stacked full width above it below that (styles.css,
 // GAMES). It is in the page flow rather than floating over it, so the d-pad's spatial walk and a
 // finger reach it the same way as everything else, and nothing behind it can take focus unseen.
+//
+// F5 (2026-09-25): "Freeze while playing" — a checklist of the heavy background apps running now
+// (GET /freezer/candidates), fetched only when the section is switched on: the sheet opens often, the
+// process walk is not free, and most games never use it. Switching it on ticks the measured suggestions
+// that are running (Ollama, OneDrive…); a stored name that is not running stays listed, so it can be
+// unticked instead of silently kept.
 import { useEffect, useId, useRef, useState } from 'react'
-import type { AppRule, AppRulesInfo, GameSummary, ModeId, Preset, RuleFanMode, RuleOverrides } from '../types'
-import { Button, Segmented, Stepper, Toggle, Unavailable } from '../components'
+import type { AppRule, AppRulesInfo, FreezeCandidate, GameSummary, ModeId, Preset, RuleFanMode, RuleOverrides } from '../types'
+import { Button, Chip, Segmented, Stepper, Toggle, Unavailable } from '../components'
+import { getFreezeCandidates } from '../api'
 import { Icon } from '../components/Icon'
 import { useToast } from '../Toast'
 import { CANCEL_EVENT } from '../hooks/useSpatialNav'
@@ -31,6 +38,7 @@ const FANS: RuleFanMode[] = ['Auto', 'Quiet', 'Balanced', 'Aggressive']
 // only when a game turns a feature on without a stored value.
 const DEFAULT_SHARPNESS = 75
 const clampS = (v: number) => Math.min(100, Math.max(0, Math.round(v)))
+const freezeTestid = (name: string) => `game-freeze-${name.replace(/[^a-z0-9]+/g, '-')}`
 
 /** A feature's sharpness while it is on: the same slider-plus-stepper as the TDP row. */
 function SharpnessRow({ name, testid, value, onChange }: { name: string; testid: string; value: number; onChange: (v: number) => void }) {
@@ -42,6 +50,33 @@ function SharpnessRow({ name, testid, value, onChange }: { name: string; testid:
       <Stepper label={`${name} sharpness`} value={value} unit="%" min={0} max={100} step={5} onChange={onChange}
         testid={testid} decTestid={`${testid}-dec`} incTestid={`${testid}-inc`} />
     </div>
+  )
+}
+
+/** The freeze checklist: running heavy apps, then chosen names that are not running now. */
+function FreezeList({ candidates, error, chosen, onToggle }: {
+  candidates: FreezeCandidate[] | null; error: string | null; chosen: readonly string[]; onToggle: (name: string) => void
+}) {
+  if (error) return <Unavailable testid="game-freeze-error" reason={`The running apps could not be listed: ${error}`} />
+  if (!candidates) return <p className="muted" data-testid="game-freeze-loading">Looking for heavy background apps…</p>
+  const absent = chosen.filter((n) => !candidates.some((c) => c.name === n))
+  return (
+    <>
+      <div className="row" data-testid="game-freeze-list" role="group" aria-label="Apps to freeze while playing">
+        {candidates.map((c) => (
+          <Chip key={c.name} on={chosen.includes(c.name)} onClick={() => onToggle(c.name)} testid={freezeTestid(c.name)}>
+            {c.name} · {c.memoryMb >= 1024 ? `${(c.memoryMb / 1024).toFixed(1)} GB` : `${c.memoryMb} MB`}
+          </Chip>
+        ))}
+        {absent.map((n) => (
+          <Chip key={n} on onClick={() => onToggle(n)} testid={freezeTestid(n)} title="Not running now">{n} · not running</Chip>
+        ))}
+      </div>
+      {candidates.length === 0 && absent.length === 0 && (
+        <p className="muted" data-testid="game-freeze-empty">No heavy background app is running right now.</p>
+      )}
+      <p className="muted">Suspended while the game is in front, resumed when you leave it or change mode. System processes are never offered.</p>
+    </>
   )
 }
 
@@ -77,7 +112,25 @@ export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = t
   const [rsrSharp, setRsrSharp] = useState(clampS(stored?.gpu?.rsrSharpness ?? DEFAULT_SHARPNESS))
   const [ris, setRis] = useState(stored?.gpu?.ris === true)
   const [risSharp, setRisSharp] = useState(clampS(stored?.gpu?.risSharpness ?? DEFAULT_SHARPNESS))
+  const [freezeOn, setFreezeOn] = useState((stored?.freeze?.length ?? 0) > 0)
+  const [freeze, setFreeze] = useState<readonly string[]>(stored?.freeze ?? [])
+  const [candidates, setCandidates] = useState<FreezeCandidate[] | null>(null)
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!freezeOn || candidates) return
+    let live = true
+    getFreezeCandidates(game.app)
+      .then((c) => {
+        if (!live) return
+        setCandidates(c.running)
+        // First switch-on with nothing chosen: tick the measured suggestions that are running now.
+        setFreeze((f) => (f.length > 0 ? f : c.running.filter((r) => r.suggested).map((r) => r.name)))
+      })
+      .catch((e: unknown) => { if (live) setCandidatesError(e instanceof Error ? e.message : 'unavailable') })
+    return () => { live = false }
+  }, [freezeOn, candidates, game.app])
 
   // Focus moves in on open, so the next d-pad press acts inside the editor rather than on the card
   // behind it — onto the selected mode, where editing starts, not the close button. Below 1100px the
@@ -122,7 +175,7 @@ export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = t
       frameCapFps: cap === DEFAULT ? null : Number(cap),
       fanMode: fan === DEFAULT ? null : (fan as RuleFanMode),
       gpu: Object.values(gpu).every((v) => v == null) ? null : gpu,
-      freeze: stored?.freeze ?? null,   // F5's list: not editable here yet, and never wiped by a save
+      freeze: freezeOn && freeze.length > 0 ? [...freeze] : null,
     }
   }
 
@@ -230,6 +283,12 @@ export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = t
           game to a lower fullscreen resolution for it to act. Turns Radeon Boost off. Off leaves the driver's own
           setting; what a game changes is put back when you leave it.
         </p>
+      </div>
+
+      <div className="sheet-field" data-testid="game-freeze">
+        <Toggle on={freezeOn} onClick={() => setFreezeOn(!freezeOn)} label="Freeze background apps while playing" testid="game-freeze-toggle" />
+        {freezeOn && <FreezeList candidates={candidates} error={candidatesError} chosen={freeze}
+          onToggle={(n) => setFreeze(freeze.includes(n) ? freeze.filter((x) => x !== n) : [...freeze, n])} />}
       </div>
 
       {autoProfiles ? (

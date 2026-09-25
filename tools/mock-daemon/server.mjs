@@ -763,8 +763,18 @@ function appRulesInfo() {
 const profileSince = new Map()
 const INACTIVE_PROFILE = {
   active: false, game: null, ruleId: null, match: null, mode: null,
-  applied: null, skipped: [], superseded: [], freeze: [], sinceUtc: null,
+  applied: null, skipped: [], superseded: [], freeze: [], frozen: [], sinceUtc: null,
 }
+/** F5: what the mock pretends is running, for GET /freezer/candidates and a profile's `frozen`.
+ *  Mirrors core/System/FreezeCandidates: the measured suggestions first, then by memory. `lm studio` is
+ *  suggested but not running, so a profile asking for it shows the "not running" path. */
+const FREEZE_SUGGESTED = ['ollama', 'lm studio', 'onedrive', 'googledrivefs']
+const MOCK_RUNNING_HEAVY = [
+  { name: 'ollama', memoryMb: 5200, suggested: true },
+  { name: 'onedrive', memoryMb: 140, suggested: true },
+  { name: 'chrome', memoryMb: 1300, suggested: false },
+  { name: 'discord', memoryMb: 420, suggested: false },
+]
 /** Mirrors RuleOverrides.IsEmpty: a rule whose overrides set nothing only picks a mode, and the daemon
  *  records no profile for it (F1 audit round 1 — it used to announce "mode settings" for steam). */
 function hasOverrides(o) {
@@ -796,7 +806,10 @@ function activeProfile() {
       },
     },
     skipped: [], superseded: manualOver ? ['stapmW'] : [],
-    freeze: o.freeze ?? [], sinceUtc: profileSince.get(rule.id) ?? null,
+    freeze: o.freeze ?? [],
+    // Only what runs is frozen (GameFreezer); a name frozen by hand on the Monitor page is not the game's.
+    frozen: (o.freeze ?? []).filter((n) => MOCK_RUNNING_HEAVY.some((p) => p.name === n) && !state.frozen.includes(n)),
+    sinceUtc: profileSince.get(rule.id) ?? null,
   }
 }
 
@@ -1244,6 +1257,12 @@ async function handle(req, res) {
   })
 
   if (method === 'GET' && path === '/freezer') return send(res, 200, { frozen: state.frozen })
+  if (method === 'GET' && path === '/freezer/candidates') {
+    const game = url.searchParams.get('game')
+    if (game != null && game.length > 120) return err(res, 400, 'bad_game', 'game is at most 120 characters')
+    const g = normalizeMatch(game ?? '')
+    return send(res, 200, { suggested: FREEZE_SUGGESTED, running: MOCK_RUNNING_HEAVY.filter((p) => !g || !p.name.includes(g)) })
+  }
   if (method === 'POST' && path === '/freezer/freeze') {
     const body = await readBody(req)
     if (!body?.name) return err(res, 400, 'bad_name', 'name required')

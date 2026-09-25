@@ -15,7 +15,7 @@ import type {
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, GpuImageRequest, StandbyRestoreOutcome,
   AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, FramesResponse, TdpInfo, RuleOverrides, AdvisorView,
-  PowerPolicy,
+  PowerPolicy, FreezeCandidates,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -102,6 +102,9 @@ export const setChargeGuard = (p: Partial<Pick<ChargeGuard, 'enabled' | 'highSoc
 export const getFrozen = async () => (await json<{ frozen: string[] }>('/freezer')).frozen
 export const freeze = (name: string) => json<{ name: string; suspended: number; frozen: string[] }>('/freezer/freeze', post({ name }))
 export const thaw = (name: string) => json<{ name: string; resumed: number; frozen: string[] }>('/freezer/thaw', post({ name }))
+/** F5: running heavy apps a game profile can freeze, `game` (the rule's match) left out. */
+export const getFreezeCandidates = (game?: string) =>
+  json<FreezeCandidates>(`/freezer/candidates${game ? `?game=${encodeURIComponent(game)}` : ''}`)
 
 // --- auto-TDP to FPS ---
 export const getAutoFps = () => json<AutoFps>('/auto-fps')

@@ -53,7 +53,7 @@ export function profileState(rules: readonly AppRule[], app: string): { kind: Pr
   return { kind: rule == null ? 'none' : hasOverrides(rule.overrides) ? 'profile' : 'rule', rule }
 }
 
-type Summarised = Pick<RuleOverrides, 'stapmW' | 'frameCapFps' | 'fanMode'> & { gpu: GpuOverrides | null }
+type Summarised = Pick<RuleOverrides, 'stapmW' | 'frameCapFps' | 'fanMode'> & { gpu: GpuOverrides | null; freeze?: string[] | null }
 
 /** "RSR 80 %", "RIS", "RSR off" — a feature with its sharpness when one is set (F4). */
 function imagePart(label: string, on: boolean | null | undefined, sharpness: number | null | undefined): string | null {
@@ -77,6 +77,9 @@ export function describeOverrides(o: Summarised | null | undefined): string {
   if (o.gpu?.chill === false) parts.push('Chill off')
   for (const part of [imagePart('RSR', o.gpu?.rsr, o.gpu?.rsrSharpness), imagePart('RIS', o.gpu?.ris, o.gpu?.risSharpness)])
     if (part) parts.push(part)
+  // A rule's list (F5), for the saved/Games-card summary. The live notice has no `freeze` on `applied`;
+  // it names what was actually frozen instead (noticeParts).
+  if ((o.freeze?.length ?? 0) > 0) parts.push(`freezes ${o.freeze!.join(', ')}`)
   return parts.length > 0 ? parts.join(' · ') : 'mode settings'
 }
 
@@ -106,9 +109,12 @@ export function noticeParts(p: ActiveGameProfile): { lead: string; detail: strin
   const applied = changed.length > 0 && described === 'mode settings'
     ? `${changed.join(', ')} changed by you`
     : changed.length > 0 ? `${described} · ${changed.join(', ')} changed by you` : described
-  if (p.skipped.length === 0) return { lead, detail: applied }
+  // F5: what was suspended for the game, so a sync client that stopped is never a mystery. After the
+  // settings: it is what the profile did around the game, not to it.
+  const frozen = (p.frozen ?? []).length > 0 ? `${applied} · froze ${(p.frozen ?? []).join(', ')}` : applied
+  if (p.skipped.length === 0) return { lead, detail: frozen }
   const refused = p.skipped.map((s) => `${FIELD_LABEL[s.field] ?? s.field} not applied: ${s.reason}`).join('; ')
-  return { lead, detail: `${applied} — ${refused}` }
+  return { lead, detail: `${frozen} — ${refused}` }
 }
 
 /** Identity of one application of a profile. It changes when the rule is re-applied (an edit mid-game

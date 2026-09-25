@@ -48,8 +48,9 @@ test.describe('game profile logic', () => {
   })
 
   test('the summary reads like the notice Alex asked for, and never invents a field', () => {
-    expect(describeOverrides(PROFILE)).toBe('22 W · 60 FPS · Aggressive · Anti-Lag')
-    expect(describeOverrides({ ...PROFILE, stapmW: null, frameCapFps: 0, fanMode: null, gpu: { antiLag: false, chill: true } }))
+    // F5: the freeze list acts now, so the summary says so.
+    expect(describeOverrides(PROFILE)).toBe('22 W · 60 FPS · Aggressive · Anti-Lag · freezes discord')
+    expect(describeOverrides({ ...PROFILE, stapmW: null, frameCapFps: 0, fanMode: null, gpu: { antiLag: false, chill: true }, freeze: null }))
       .toBe('no FPS cap · Chill · Anti-Lag off')
     expect(describeOverrides(null)).toBe('mode settings')
   })
@@ -67,6 +68,9 @@ test.describe('game profile logic', () => {
     expect(noticeParts(active)).toEqual({ lead: 'Profile eldenring applied:', detail: '22 W · 60 FPS · Aggressive' })
     // The key changes when the profile is re-applied (an edit mid-game), not on every poll.
     expect(profileKey(active)).toBe('r1@2026-09-25T10:00:00Z')
+    // F5: what was actually frozen is named after the settings, before any refusal.
+    expect(noticeParts({ ...active, frozen: ['ollama', 'onedrive'], skipped: [{ field: 'fanMode', reason: 'off' }] }).detail)
+      .toBe('22 W · 60 FPS · Aggressive · froze ollama, onedrive — fan not applied: off')
     expect(profileKey({ ...active, active: false })).toBeNull()
   })
 

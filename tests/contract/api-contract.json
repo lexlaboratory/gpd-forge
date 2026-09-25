@@ -169,9 +169,10 @@
         "skipped": { "type": "array", "items": { "field": "string", "reason": "string" } },
         "superseded": "array",
         "freeze": "array",
+        "frozen": "array",
         "sinceUtc": "string|null"
       },
-      "$comment": "F1 (2026-09-25). The game profile in force, in memory: `active:false` with every field null after a restart and whenever auto-profiles are off, and for a rule that only picks a mode. `applied` is what the profile still holds, checked against each owner when asked; `skipped` what the rule asked for and was refused or is being held off, with why; `superseded` (audit round 1) names the fields the user changed since (stapmW, fanMode, frameCapFps), which leave `applied`; `freeze` is stored only until F5. core.tests/Profiles/ActiveGameProfileWireTests validates a POPULATED answer here."
+      "$comment": "F1 (2026-09-25). The game profile in force, in memory: `active:false` with every field null after a restart and whenever auto-profiles are off, and for a rule that only picks a mode. `applied` is what the profile still holds, checked against each owner when asked; `skipped` what the rule asked for and was refused or is being held off, with why; `superseded` (audit round 1) names the fields the user changed since (stapmW, fanMode, frameCapFps), which leave `applied`; `freeze` is the rule's list as stored and `frozen` (F5) the names actually suspended for the game while it plays. core.tests/Profiles/ActiveGameProfileWireTests validates a POPULATED answer here."
     },
     {
       "method": "GET",
@@ -441,6 +442,15 @@
       "method": "GET",
       "path": "/freezer",
       "shape": { "frozen": "array" }
+    },
+    {
+      "method": "GET",
+      "path": "/freezer/candidates",
+      "shape": {
+        "suggested": "array",
+        "running": { "type": "array", "items": { "name": "string", "memoryMb": "number", "suggested": "boolean" } }
+      },
+      "$comment": "F5 (2026-09-25). The Games editor's freeze checklist: the measured suggestions, and the running heavy apps (suggested ones first, then by memory, at most 12), never the protected list. Optional ?game= leaves the game itself out."
     },
     {
       "method": "GET",

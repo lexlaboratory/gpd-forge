@@ -7,6 +7,10 @@
 // It also must not depend on the panel being open. Health history is the input to every future
 // battery decision, and a history that only accumulates when someone happens to look at a page is
 // worst on exactly the machines that would benefit most — the ones left running unattended.
+//
+// F5 (2026-09-25): a sample due during a game waits for it to end (GamePause). The first one spawns
+// `powercfg /batteryreport`, and a curve that moves over months loses nothing to a two-hour delay.
+using GpdForge.Profiles;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -15,7 +19,8 @@ namespace GpdForge.Battery;
 public sealed class BatteryHealthSampler(
     IBatteryHealthProbe probe,
     BatteryHealthHistory history,
-    ILogger<BatteryHealthSampler>? logger = null) : BackgroundService
+    ILogger<BatteryHealthSampler>? logger = null,
+    ActiveGameProfileState? game = null) : BackgroundService
 {
     /// <summary>Four attempts a day against a store that accepts one. The redundancy is the point:
     /// a handheld is asleep or off for most of the day, so a single daily attempt at a fixed hour
@@ -33,6 +38,8 @@ public sealed class BatteryHealthSampler(
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            try { await GamePause.WaitUntilIdleAsync(game, stoppingToken); }
+            catch (OperationCanceledException) { return; }
             try
             {
                 var reading = probe.Read();

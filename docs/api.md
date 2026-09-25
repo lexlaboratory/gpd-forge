@@ -361,7 +361,8 @@ endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on the
       back on exit unless the user changed the fan meanwhile.
     - `gpu` Anti-Lag / Chill over the mode's Radeon profile (`GET /gpu/desired` carries them to the
       agent). Both `true` is refused: AMD's driver excludes the pair.
-    - `freeze` bare process names, at most 32. **Stored only** until F5 acts on it.
+    - `freeze` bare process names, at most 32: suspended while the game plays and resumed when it
+      leaves (F5; see "Freeze while playing" under `GET /freezer`).
     
     Leaving the game (after the same ~4.5 s hysteresis as a mode switch, so an alt-tab restores
     nothing) removes the layer: the previous cap, fan mode and Radeon profile come back, and TDP goes
@@ -406,14 +407,14 @@ wrong JSON type (`"stapmW": "22"`) gets the field's code too, not a framework er
 ### `GET /profiles/active`  (the game profile in force)
 `→ { active: boolean, game: string | null, ruleId: guid | null, match: string | null,
 mode: ModeId | null, applied: { stapmW, frameCapFps, fanMode, gpu: { antiLag, chill, rsr, rsrSharpness, ris, risSharpness } } | null,
-skipped: { field, reason }[], superseded: string[], freeze: string[], sinceUtc: string | null }`
+skipped: { field, reason }[], superseded: string[], freeze: string[], frozen: string[], sinceUtc: string | null }`
 (F1, 2026-09-25).
 
 What the focus loop layered for the ruled game settled in front — the source of the "Elden Ring
 profile applied: 22 W · 60 FPS · Aggressive" notice. `applied` lists what the profile still holds
 (null fields were left to the mode; `frameCapFps: 0` = cap turned off), `skipped` what the rule asked
-for and was refused or is being held off, with the reason, `freeze` the stored list (nothing is
-frozen before F5). `game` is the app that decided — the game under the overlay, not the overlay. In
+for and was refused or is being held off, with the reason, `freeze` the rule's list as stored and
+`frozen` (F5) the names actually suspended for this game (see "Freeze while playing" below). `game` is the app that decided — the game under the overlay, not the overlay. In
 memory only: `active: false` with every field null after a restart until the loop settles again,
 always while `GPDFORGE_AUTO_PROFILES=0`, and for a rule that only picks a mode (no overrides).
 
@@ -771,6 +772,21 @@ Suspend/resume background processes to free CPU/RAM during a game or a heavy inf
 - `POST /freezer/freeze { name: string } → { name, suspended: number, frozen: string[] }` — suspends every
   matching process. Critical system processes are on a protected list and are never suspended.
 - `POST /freezer/thaw { name: string } → { name, resumed: number, frozen: string[] }` — resumes them.
+- `GET /freezer/candidates?game=<match> → { suggested: string[], running: { name, memoryMb, suggested }[] }`
+  (F5) — the Games editor's checklist: `suggested` are the measured heavy apps (`ollama`, `lm studio`,
+  `onedrive`, `googledrivefs`); `running` the ones of them that run plus any other app over 200 MB,
+  suggested first then by memory, at most 12. Never the protected list or session plumbing (audio,
+  input, shell hosts); `game` (at most 120 characters, else `400 bad_game`) leaves the game itself out.
+
+**Freeze while playing (F5).** A game rule's `overrides.freeze` is acted on while its profile is in
+force: the listed apps that are running are suspended, and `GET /profiles/active` `frozen` names them.
+Never a protected process, and never a name already frozen here by hand (the game leaving must not
+thaw it). They are resumed when the profile comes off — the game leaves the front or exits, the mode
+changes — on every exit path, including a failure while applying or removing the profile and a clean
+stop. The PIDs are kept in `game-freeze.json` while frozen, so after a crash or a kill the next start
+resumes them. While a game profile is in force the daemon also holds its own heavy periodic work —
+the sleep study (`powercfg /sleepstudy`) and the battery-health sample (`powercfg /batteryreport`) —
+until the game ends.
 
 ### `GET /auto-fps`  ·  `POST /auto-fps`  (Auto-TDP to a target FPS)
 - `GET → { enabled: boolean, targetFps: number }`

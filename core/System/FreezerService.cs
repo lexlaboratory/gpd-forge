@@ -139,6 +139,13 @@ public sealed class FreezerService(
         get { lock (_gate) { return _frozen.Keys.ToArray(); } }
     }
 
+    /// <summary>The PIDs suspended under <paramref name="name"/> (empty when none). Read by the game
+    /// freezer to put them on disk, so a crash cannot leave them suspended past the next start.</summary>
+    public IReadOnlyList<int> PidsFor(string name)
+    {
+        lock (_gate) { return _frozen.TryGetValue(NormalizeName(name), out var pids) ? pids.ToArray() : []; }
+    }
+
     /// <summary>True if the process name is on the never-freeze list (accepts an ".exe" suffix).</summary>
     public static bool IsProtected(string name) => ProtectedNames.Contains(NormalizeName(name));
 

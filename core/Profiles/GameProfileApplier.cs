@@ -11,7 +11,8 @@
 //                 target (FrameRateGovernance) exactly as POST /gpu/frame-cap checks it.
 //   fanMode     → FanState, through FanOverride: never saved to fan.json, and put back on exit.
 //   gpu         → GpuDesiredState's Anti-Lag / Chill, merged over the mode's profile by the agent.
-//   freeze      → recorded only; F5 acts on it.
+//   freeze      → GameFreezer (F5): suspends the listed background apps that are running, and thaws
+//                 them in End's finally — whatever else End does, or fails to do.
 //
 // Restores are conditional: each one undoes ONLY what is still this profile's. A cap the user set
 // mid-game, a fan they changed, stay theirs — the game leaving is not a reason to undo them.
@@ -38,6 +39,10 @@
 // F1 audit round 4: the cap to restore is kept on disk (CapRestoreStore) from Begin to End, and
 // replayed at startup (RecoverPendingCap). FRTC is a persisted driver setting, so a restart with a
 // capped game in front used to leave the game's cap on the driver for good.
+//
+// F5 (2026-09-25): the freeze list goes on LAST in Begin — after every override that could refuse or
+// throw — and a Begin that throws after it thaws before the exception leaves. End thaws in a finally.
+// A suspended process is the one override that does not heal itself: nothing else resumes it.
 using GpdForge.Api;
 using GpdForge.Fan;
 using GpdForge.Gpu;
@@ -57,7 +62,8 @@ public sealed class GameProfileApplier(
     ILogger<GameProfileApplier>? logger = null,
     IGpdFanController? fanController = null,
     Func<bool>? gpuGateOpen = null,
-    CapRestoreStore? capStore = null)
+    CapRestoreStore? capStore = null,
+    GameFreezer? freezer = null)
 {
     public const string FanOffReason = "Fan control is not enabled on this device, so the fan keeps its own mode.";
     public const string GpuGateOffReason = "Radeon control is off: install with -EnableGpuProfiles to let GPD Forge set it.";
@@ -94,6 +100,16 @@ public sealed class GameProfileApplier(
         _rule = rule;
         var o = rule.Overrides;
         if (o is null || o.IsEmpty) return false;   // the mode did everything this rule asks for
+        try { return Layer(rule, o, game, mode); }
+        catch
+        {
+            freezer?.Thaw();
+            throw;
+        }
+    }
+
+    private bool Layer(AppRule rule, RuleOverrides o, string game, string mode)
+    {
 
         var skipped = new List<SkippedOverride>();
         var now = _time.GetUtcNow();
@@ -143,18 +159,23 @@ public sealed class GameProfileApplier(
             }
         }
 
+        // Last, so nothing above can fail with processes already suspended. Only what was running and
+        // actually suspended is reported: the notice names what was frozen, not what was asked.
+        var frozen = o.Freeze is { Count: > 0 } asked && freezer is not null ? freezer.Freeze(asked) : [];
+
         active.Set(new ActiveGameProfile(
             game, rule.Id, rule.Match, mode,
             new AppliedOverrides(stapm, capApplied, fanMode, antiLag, chill, image),
-            skipped, o.Freeze ?? [], now) { CapVersion = _capVersion, ImageVersion = _imageVersion });
+            skipped, o.Freeze ?? [], now) { CapVersion = _capVersion, ImageVersion = _imageVersion, Frozen = frozen });
 
         // ASCII separators: the service console writes in the OEM code page, where a middle dot became
         // byte 0xFA and turned the log into "binary" for grep (measured on the daemon, 2026-09-25).
-        logger?.LogInformation("Game profile '{Match}' applied for {Game} in {Mode}: {Stapm}, {Cap}, fan {Fan}{Skipped}",
+        logger?.LogInformation("Game profile '{Match}' applied for {Game} in {Mode}: {Stapm}, {Cap}, fan {Fan}{Frozen}{Skipped}",
             rule.Match, game, mode,
             stapm is int s ? $"{s} W" : "mode TDP",
             capApplied switch { null => "mode cap", 0 => "cap off", int c => $"{c} FPS" },
             fanMode ?? "unchanged",
+            frozen.Count == 0 ? "" : ", froze " + string.Join(", ", frozen),
             skipped.Count == 0 ? "" : " (skipped: " + string.Join("; ", skipped.Select(x => $"{x.Field}: {x.Reason}")) + ")");
 
         return stapm is not null;
@@ -243,6 +264,12 @@ public sealed class GameProfileApplier(
     private bool End(string modeAfter, bool keepCapRecord)
     {
         if (_rule is null) return false;
+        try { return Unlayer(_rule, modeAfter, keepCapRecord); }
+        finally { freezer?.Thaw(); }   // every way out of End — see the header
+    }
+
+    private bool Unlayer(AppRule rule, string modeAfter, bool keepCapRecord)
+    {
         var now = _time.GetUtcNow();
 
         bool tdpWasInForce = intent.Game(modeAfter) is not null;
@@ -251,7 +278,7 @@ public sealed class GameProfileApplier(
         fanOverride.Restore(fan);
 
         bool capStillOurs = _capVersion is long v && gpu.CapVersion == v;
-        if (capStillOurs) RestoreCap(now, _rule.Match);
+        if (capStillOurs) RestoreCap(now, rule.Match);
         // Kept on a clean stop only while the cap is still the game's: one the user picked mid-game
         // is theirs, and the next start must not replay the pre-game cap over it.
         if (_capPersisted && !(keepCapRecord && capStillOurs)) capStore?.Clear();
@@ -260,7 +287,7 @@ public sealed class GameProfileApplier(
         RestoreImage();
 
         if (active.Current is not null)
-            logger?.LogInformation("Game profile '{Match}' removed; back to the mode's settings.", _rule.Match);
+            logger?.LogInformation("Game profile '{Match}' removed; back to the mode's settings.", rule.Match);
         _rule = null;
         _capVersion = null;
         _capRestore = null;

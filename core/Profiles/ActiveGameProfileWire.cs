@@ -69,6 +69,10 @@ public sealed record ActiveGameProfileWire(
 {
     public static readonly ActiveGameProfileWire Inactive = new(false, null, null, null, null, null, [], [], [], null);
 
+    /// <summary>What F5 suspended for this game while it plays (GameFreezer): the notice lists it, so the
+    /// user knows why OneDrive stopped syncing. <see cref="Freeze"/> stays the rule's list as stored.</summary>
+    public IReadOnlyList<string> Frozen { get; init; } = [];
+
     /// <summary>
     /// How long after the profile went on an agent report must be before it can contradict it. The
     /// agent posts what the driver holds and THEN reconciles, every 3 s (GpuAgentLoop.Tick), so the
@@ -127,7 +131,7 @@ public sealed record ActiveGameProfileWire(
         return new ActiveGameProfileWire(
             true, p.Game, p.RuleId, p.Match, p.Mode,
             new AppliedWire(stapm, cap, fanMode, new GpuFeaturesWire(antiLag, chill, rsr, rsrSharp, ris, risSharp)),
-            skipped, superseded, p.Freeze, p.SinceUtc);
+            skipped, superseded, p.Freeze, p.SinceUtc) { Frozen = p.Frozen };
     }
 
     /// <summary>Whether the agent's report can speak for the driver now, and whether it is late enough

@@ -168,6 +168,31 @@ public class SleepStudyWorkerTests
         return cache;
     }
 
+    /// <summary>F5: a run due during a game waits for the game profile to come off, then happens.</summary>
+    [Fact]
+    public async Task The_worker_holds_its_powercfg_run_while_a_game_profile_is_in_force()
+    {
+        var game = new GpdForge.Profiles.ActiveGameProfileState();
+        game.Set(new GpdForge.Profiles.ActiveGameProfile("eldenring", Guid.NewGuid(), "eldenring", "gaming",
+            new GpdForge.Profiles.AppliedOverrides(22, null, null, null, null), [], [], DateTimeOffset.UtcNow));
+        var runner = new FakeRunner(Report);
+        var cache = new SleepStudyCache();
+        var worker = new SleepStudyWorker(cache, runner, logger: null, interval: TimeSpan.FromHours(1),
+            initialDelay: TimeSpan.Zero, game: game, gamePoll: TimeSpan.FromMilliseconds(10));
+
+        using var cts = new CancellationTokenSource();
+        await worker.StartAsync(cts.Token);
+        await Task.Delay(200);
+        Assert.Equal(0, runner.Calls);                  // playing: powercfg is not spawned
+
+        game.Clear();
+        for (var i = 0; i < 200 && !cache.Read().Ran; i++) await Task.Delay(10);
+        await cts.CancelAsync();
+        await worker.StopAsync(CancellationToken.None);
+        Assert.Equal(1, runner.Calls);                  // ...and runs once the game is over
+        Assert.True(cache.Read().Ran);
+    }
+
     [Fact]
     public async Task The_worker_surfaces_the_night_the_machine_did_not_wake_up()
     {

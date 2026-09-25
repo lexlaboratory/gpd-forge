@@ -311,7 +311,7 @@ export interface AlertSummary {
 // --- per-app profile rules (mirror of core/Profiles/AppRule.cs, GET/POST /app-rules) -------------
 /** Per-game settings a rule layers over its mode while the game is in front (F1, core/Profiles/
  *  RuleOverrides.cs). Every field null = the mode decides. `frameCapFps: 0` turns the cap off.
- *  `freeze` is stored only until F5 acts on it. */
+ *  `freeze` (F5) names background apps suspended while the game plays and resumed when it leaves. */
 export type RuleFanMode = 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive'
 export interface RuleOverrides {
   stapmW: number | null
@@ -354,8 +354,14 @@ export interface ActiveGameProfile {
    *  profile's, so they are not in `applied`. Optional: a daemon before F1 audit round 1 omits it. */
   superseded?: string[]
   freeze: string[]
+  /** F5: the names actually suspended for this game (running, not protected, not frozen by hand).
+   *  Optional: a daemon before F5 omits it. */
+  frozen?: string[]
   sinceUtc: string | null
 }
+/** GET /freezer/candidates (F5) — the Games editor's freeze checklist. */
+export interface FreezeCandidate { name: string; memoryMb: number; suggested: boolean }
+export interface FreezeCandidates { suggested: string[]; running: FreezeCandidate[] }
 /** What decided the mode on the daemon's most recent foreground tick. `ruleId` is null when nothing
  *  matched and the mode came from the AC/battery fallback — the UI must be able to say which. */
 export interface AppRuleMatch {

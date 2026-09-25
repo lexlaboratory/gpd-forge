@@ -27,7 +27,7 @@ public sealed record SkippedOverride(string Field, string Reason);
 public sealed record TdpHold(ApplyOutcome Outcome, IReadOnlyList<string> Rivals);
 
 /// <param name="Game">The process the focus loop judged (the game under the overlay, not the overlay).</param>
-/// <param name="Freeze">The rule's freeze list, reported as STORED: nothing is frozen until F5.</param>
+/// <param name="Freeze">The rule's freeze list, as stored. What was actually suspended is <see cref="Frozen"/>.</param>
 public sealed record ActiveGameProfile(
     string Game,
     Guid RuleId,
@@ -45,6 +45,10 @@ public sealed record ActiveGameProfile(
     /// <summary>GpuDesiredState.ImageVersion right after this profile's RSR / RIS request; null when it
     /// made none. Anything else there later means the Display page asked for something since.</summary>
     public long? ImageVersion { get; init; }
+
+    /// <summary>The names F5 actually suspended for this game (running, not protected, not frozen by
+    /// hand already). Empty when it froze nothing.</summary>
+    public IReadOnlyList<string> Frozen { get; init; } = [];
 
     /// <summary>Set when the TDP write that should have carried the game's watts did not happen.</summary>
     public TdpHold? TdpHold { get; init; }

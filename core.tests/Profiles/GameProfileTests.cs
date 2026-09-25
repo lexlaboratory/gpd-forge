@@ -57,7 +57,7 @@ public sealed partial class GameProfileTests : IDisposable
     private Rig Build(string? foreground, RuleOverrides? overrides = null, GuardianService? guardian = null,
         string fanMode = "Balanced", bool noOverrides = false, bool gpuGate = true,
         IGpdFanController? fanController = null, IPowerControllerDetector? detector = null,
-        CapRestoreStore? capStore = null)
+        CapRestoreStore? capStore = null, GameFreezer? freezer = null)
     {
         var fg = new FakeForeground(foreground);
         var tdp = new RecordingTdp();
@@ -72,7 +72,7 @@ public sealed partial class GameProfileTests : IDisposable
         var autoFps = new AutoFpsState();
         var agent = new GpuAgentState();
         var games = new GameProfileApplier(intent, fan, fanOverride, gpu, agent, autoFps, active,
-            fanController: fanController, gpuGateOpen: () => gpuGate, capStore: capStore);
+            fanController: fanController, gpuGateOpen: () => gpuGate, capStore: capStore, freezer: freezer);
         var applier = new ProfileApplier(tdp, detector ?? new NoRivals(), intent: intent, guardian: guardian);
         var telemetry = new FixedTelemetrySource(TelemetrySnapshot.Unmeasured with { AcConnected = true, AcUnknown = false });
         var loop = new FocusProfileLoop(fg, telemetry, mode, applier, rules, isRunning: _ => true, games: games, intent: intent);

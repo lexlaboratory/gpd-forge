@@ -874,6 +874,12 @@ builder.Services.AddSingleton<ActiveGameProfileState>();
 // The cap a game profile owes back, on disk so a restart mid-game cannot leave the game's cap on the
 // driver for good (F1 audit round 4). Replayed once at startup, below, whatever the auto-profiles gate.
 builder.Services.AddSingleton(_ => new CapRestoreStore(DataRoot.Current));
+// F5: a game's "freeze in background" list, frozen through the same FreezerService and thawed on every
+// exit path; the PIDs are on disk while frozen, so a crash is recovered at the next start (below).
+builder.Services.AddSingleton(_ => new FreezeRecordStore(DataRoot.Current));
+builder.Services.AddSingleton(sp => new GameFreezer(sp.GetRequiredService<FreezerService>(),
+    sp.GetRequiredService<IProcessSuspender>(), lister: null, sp.GetRequiredService<FreezeRecordStore>(),
+    sp.GetService<ILogger<GameFreezer>>()));
 builder.Services.AddSingleton<GameProfileApplier>();
 
 if (autoProfiles)
@@ -896,6 +902,9 @@ var app = builder.Build();
 // Before any worker can ask for a cap: a request made after this is newer and wins anyway, but one made
 // before it would make the replay skip itself for no reason.
 app.Services.GetRequiredService<GameProfileApplier>().RecoverPendingCap();
+// Before the focus loop can freeze anything new: resume what a crashed or killed run left suspended.
+try { app.Services.GetRequiredService<GameFreezer>().RecoverAtStartup(); }
+catch (Exception ex) { app.Logger.LogWarning(ex, "Game freeze recovery failed."); }
 app.UseCors();
 // Serve the web UI (wwwroot) so it can be opened in a browser at http://127.0.0.1:8787 — no
 // unsigned desktop binary needed (works under Smart App Control).
@@ -1968,6 +1977,12 @@ app.MapGet("/battery/health", (IBatteryHealthProbe probe, BatteryHealthHistory h
 
 // Freezer: suspend/resume background processes (critical processes are protected).
 app.MapGet("/freezer", (FreezerService f) => Results.Json(new { frozen = f.Frozen }));
+// F5: what the Games editor offers to freeze while a game plays — the measured suggestions and any heavy
+// app that is running, never the protected list. `game` (the rule's match) keeps the game itself out.
+app.MapGet("/freezer/candidates", (string? game) =>
+    game is { Length: > AppRulePolicy.MaxMatchLength }
+        ? Results.BadRequest(new { error = new { code = "bad_game", message = $"game is at most {AppRulePolicy.MaxMatchLength} characters" } })
+        : Results.Json(new { suggested = GameFreezer.Suggested, running = FreezeCandidates.Rank(FreezeCandidates.Snapshot(), game) }));
 app.MapPost("/freezer/freeze", (FreezerRequest req, FreezerService f) =>
     string.IsNullOrWhiteSpace(req.Name)
         ? Results.BadRequest(new { error = new { code = "bad_name", message = "name required" } })

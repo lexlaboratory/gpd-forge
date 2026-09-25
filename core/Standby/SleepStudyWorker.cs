@@ -4,6 +4,10 @@
 // user's sleep habits, so this runs rarely and never on the request path. The first run is delayed:
 // the daemon starts with the machine, and generating a sleep study while Windows is still bringing
 // services up would compete with the boot it is meant to observe.
+//
+// F5 (2026-09-25): nor during a game. A run due while a game profile is in force waits for it to end
+// (GamePause), so tens of seconds of powercfg never land inside a session's 22 W.
+using GpdForge.Profiles;
 using GpdForge.Tdp;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,7 +21,9 @@ public sealed class SleepStudyWorker(
     TimeSpan? interval = null,
     TimeSpan? initialDelay = null,
     Func<DateTimeOffset>? now = null,
-    int days = 7) : BackgroundService
+    int days = 7,
+    ActiveGameProfileState? game = null,
+    TimeSpan? gamePoll = null) : BackgroundService
 {
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromHours(12);
     private static readonly TimeSpan DefaultInitialDelay = TimeSpan.FromMinutes(2);
@@ -34,6 +40,7 @@ public sealed class SleepStudyWorker(
             await Task.Delay(_initialDelay, stoppingToken);
             while (!stoppingToken.IsCancellationRequested)
             {
+                await GamePause.WaitUntilIdleAsync(game, stoppingToken, gamePoll);
                 await RunOnceAsync(stoppingToken);
                 await Task.Delay(_interval, stoppingToken);
             }

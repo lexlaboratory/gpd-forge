@@ -51,6 +51,16 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Freeze background apps while playing (plan F5).** A game's profile editor on the Games page has
+  a "Freeze background apps while playing" checklist of the heavy apps running now
+  (`GET /freezer/candidates`): Ollama, LM Studio, OneDrive and Google Drive are suggested, and
+  system processes are never offered. While the game's profile is in force the ticked apps that are
+  running are suspended, and the profile notice says "froze ollama, onedrive". They are resumed when
+  you leave the game, it exits or the mode changes, on every exit path including errors and a clean
+  stop. If the daemon crashes or is killed, the next start resumes them from `game-freeze.json`. An
+  app you froze by hand on the Monitor page is never taken over or thawed by a game. While a game
+  profile is in force the daemon also waits to run its own heavy background work (the sleep study
+  and the battery report) until the game ends.
 - **Processor power policy per mode (plan F4, roadmap H4).** Each mode now sets the CPU's energy
   preference (EPP), boost mode and maximum state on the active Windows power scheme: gaming uses
   efficient boost with EPP 33, so the 22-25 W budget is not spent on clock spikes the thermal limit
