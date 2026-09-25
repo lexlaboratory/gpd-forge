@@ -49,7 +49,8 @@ public readonly record struct TelemetrySnapshot(
 {
     /// <summary>
     /// True when the battery query failed, so <see cref="AcConnected"/> is the cautious fallback
-    /// ("on battery") rather than a reading. Set only by the hardware reader; false everywhere else.
+    /// ("on battery") rather than a reading. Set by the hardware reader when the battery query fails, and
+    /// on <see cref="Unmeasured"/>, where nothing was read at all.
     ///
     /// Added in the 2026-09-24 audit. The fallback is cached for 5 s like any other answer, and
     /// ForgeWorker read it as an AC edge: one WMI glitch on a plugged-in machine switched the mode to
@@ -69,10 +70,19 @@ public readonly record struct TelemetrySnapshot(
     /// </summary>
     public bool AcKnown => !AcUnknown;
 
-    /// <summary>Nothing measured: every sensor null, on battery (the conservative answer), no TDP write.</summary>
+    /// <summary>
+    /// Nothing measured: every sensor null, on battery (the conservative answer) and marked as NOT
+    /// known, no TDP write.
+    ///
+    /// <see cref="AcUnknown"/> since audit round 3 (2026-09-24). This is what GET /telemetry serves
+    /// when the sampler's first hardware read hangs past FirstSampleTimeout, and without the flag it
+    /// went out as <c>acKnown: true</c> with no sample time: every client drew a confident, current
+    /// "on battery" on a machine that had never been read. A snapshot built from this one with a real
+    /// power source must say so (<c>AcUnknown = false</c>) — which is what the hardware reader does.
+    /// </summary>
     public static TelemetrySnapshot Unmeasured { get; } = new(
         null, null, null, null, null, null, null, null, null, null,
-        AcConnected: false, TdpVerified: null);
+        AcConnected: false, TdpVerified: null) { AcUnknown = true };
 }
 
 /// <summary>

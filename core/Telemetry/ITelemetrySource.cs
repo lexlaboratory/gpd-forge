@@ -54,3 +54,14 @@ public static class TelemetrySourceExtensions
             : source.WaitForNewerAsync(0, FirstSampleTimeout, ct);
     }
 }
+
+/// <summary>
+/// A consumer that must see EVERY published reading, not merely the newest: handed each one by
+/// <see cref="TelemetrySampler"/> on its own thread, right after publishing. Must be quick and must
+/// not block — it runs inside the 1 Hz sampling loop. Audit round 3 (2026-09-24): /history was fed
+/// from ForgeWorker's tick, which skips any sample superseded while a ryzenadj write is in flight.
+/// </summary>
+public interface ITelemetrySink
+{
+    void Accept(TelemetryReading reading);
+}

@@ -718,6 +718,15 @@ async function handle(req, res) {
     // like `_test_blind`, for a reading `_test_stale_ms` old: the stalled-sampler case the UI must
     // show as stale (2026-09-24), which the mock could otherwise never produce.
     const staleMs = Number(url.searchParams.get('_test_stale_ms')) || 0
+    // `_test_unsampled`, per request: what the daemon serves when its sampler's FIRST hardware read
+    // hangs past the 5 s first-sample timeout — every sensor null, no sample time, and (since audit
+    // round 3, 2026-09-24) the power source marked NOT known rather than a confident "on battery".
+    if (url.searchParams.get('_test_unsampled') === '1') {
+      return send(res, 200, {
+        ...telemetry(true), acConnected: false, acKnown: false, tdpVerified: null,
+        sampledAtMs: null, sampleAgeMs: null,
+      })
+    }
     return send(res, 200, { ...t, sampledAtMs: Date.now() - staleMs, sampleAgeMs: staleMs })
   }
   // What TDP is in force and WHO set it. Mirrors core/Tdp/TdpState.cs. The mock reports a real

@@ -81,6 +81,37 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **A PM-table row that ignores writes no longer fails every TDP write.** The slow limit and Tctl
+  are judged since the reassert learned to read them, but neither row has ever been seen on the
+  HX 370. A firmware that printed a fixed Tctl would have made every write — manual ones included —
+  unverified after four retries, and the 30 s reassert would have rewritten the limits every check.
+  Each row is now judged until the first write it follows, and dropped from the judgement, with a
+  warning in the service log, after a write it never once followed while STAPM and fast held.
+- **Starting beside MotionAssistant or GPD Tool no longer loses the mode.** The startup apply yields
+  to them, and nothing applied the mode once they exited — until you picked a mode again. The 30 s
+  reassert now applies it, as it already did for a mode switch that yielded mid-session.
+- **`/history` records every sample.** It was filled by the TDP worker's tick, which takes only the
+  newest sample and waits on `ryzenadj` writes, so under auto-FPS or a tuner sweep samples went
+  missing and the rate the history showed fell below the sampler's real 1 Hz. The sampler now feeds
+  the history and the session tracker directly.
+- **A reading the daemon never took says so.** When the first hardware read hangs, `GET /telemetry`
+  answers with an all-null placeholder that claimed a known power source, so the panel, the overlay
+  and the MCP tool showed a live "Battery --%". It is now `acKnown: false`; the panel and the overlay
+  show "No reading yet", the power source reads unknown, and `get_telemetry` reports
+  `unsampled: true`.
+- **The TDP controls show what is in force.** The Dashboard slider re-reads the TDP after you switch
+  mode (it kept showing the manual value the switch had ended), shows a 36–40 W override as it is
+  instead of clamping it to 35 W (the slider now spans the daemon's 5–40 W manual band, like the
+  overlay), and when it could not read the TDP at open it says so and retries instead of staying
+  disabled at "--". The overlay stepper no longer opens on a made-up 20 W. Both "verified" marks
+  follow telemetry after a write, so a limit the firmware reverted and the reassert could not hold
+  stops saying "verified". A mode switch that fails in the overlay is reported and undone instead of
+  showing the new mode's TDP as applied.
+- **A sensor's own timeout no longer stops the daemon.** A cancellation raised inside a telemetry
+  read was re-thrown as if the service were shutting down, which ends the host — guardian, fan and
+  TDP with it. It is now a failed read: logged once, last sample kept.
+- **PresentMon cannot be started twice.** The frame probe is read from more than one thread, and two
+  readers that both saw PresentMon exit could each start one; the extra one was never stopped.
 - **A restart keeps your mode.** The daemon applies the active mode's TDP when it starts, but the
   active mode was held only in memory and began as `windows` — so rebooting while in `gaming`
   actively wrote windows' 15/20/17 W. The mode you pick is now saved and is what the next start

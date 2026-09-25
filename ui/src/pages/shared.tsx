@@ -47,14 +47,43 @@ export const STALE_AFTER_MS = 3000
 export const staleSeconds = (t: Telemetry | null | undefined): number | null =>
   t?.sampleAgeMs != null && t.sampleAgeMs > STALE_AFTER_MS ? Math.round(t.sampleAgeMs / 1000) : null
 
+/**
+ * True when the daemon answered but has never read the hardware: `sampledAtMs` is PRESENT and null.
+ * GET /telemetry serves that when the sampler's first read hangs, and `staleSeconds` reads its null
+ * `sampleAgeMs` as "not stale" — so until audit round 3 (2026-09-24) the panel, the overlay and the
+ * MCP tool all showed an all-null reading as live and current. Absent key (an older daemon, a history
+ * row) is not evidence of anything, as with `staleSeconds`.
+ */
+export const unsampled = (t: Telemetry | null | undefined): boolean =>
+  t != null && 'sampledAtMs' in t && t.sampledAtMs == null
+
 /** What the TDP controls open on: the manual override in force, else the last write, else nothing. */
 export const tdpInForce = (t: TdpInfo | null | undefined): number | null =>
   t == null ? null : (t.manualStapmW ?? t.stapmW)
+
+/** The result of a TDP write made from this window, and when (browser clock, Unix ms). */
+export interface TdpWrite { verified: boolean | null; atMs: number }
+
+/**
+ * Whether the TDP in force is verified: this window's own write result until a telemetry sample
+ * taken AFTER that write arrives, then the daemon's `tdpVerified`. Audit round 3 (2026-09-24): the
+ * badge was pinned to the last POST /tdp for the life of the page, so when the 30 s reassert later
+ * found the firmware had reverted the limit and could not hold it — or the guardian took over — it
+ * still said "verified". Without `sampledAtMs` (an older daemon) the write result stands, as before.
+ */
+export const tdpVerifiedNow = (tele: Telemetry | null | undefined, write: TdpWrite | null): boolean | null => {
+  if (write && (tele?.sampledAtMs == null || tele.sampledAtMs < write.atMs)) return write.verified
+  return tele?.tdpVerified ?? write?.verified ?? null
+}
+
+/** How long the TDP controls wait before asking again when nothing said what is in force. */
+export const TDP_SEED_RETRY_MS = 2000
 
 export interface Shared {
   tele: Telemetry | null
   active: ModeId
   auto: boolean
   setAuto: (v: boolean) => void
-  pickMode: (id: ModeId) => void
+  /** Resolves true once the daemon accepted the mode, false if POST /mode failed. */
+  pickMode: (id: ModeId) => Promise<boolean>
 }

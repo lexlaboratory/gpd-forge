@@ -11,7 +11,7 @@ import {
   MODES, DashboardPage, PowerPage, FanPage, HardwarePage, DisplayPage,
   ProfilesPage, MonitorPage, SessionsPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
-import { staleSeconds } from './pages/shared'
+import { staleSeconds, unsampled } from './pages/shared'
 import { Wizard, isSetupDone } from './Wizard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { CommandPalette } from './CommandPalette'
@@ -130,7 +130,12 @@ export function App() {
     return () => { alive = false; clearInterval(id) }
   }, [])
 
-  const pickMode = (id: ModeId) => { setAuto(false); setActive(id); apiSetMode(id).catch(() => {}) }
+  // Resolves with whether the daemon took it, so a page that shows what the mode put in force (the
+  // Dashboard's TDP control) can re-read it once the mode has actually been applied.
+  const pickMode = (id: ModeId) => {
+    setAuto(false); setActive(id)
+    return apiSetMode(id).then(() => true, () => false)
+  }
   const shared: Shared = { tele, active, auto, setAuto, pickMode }
   const connLabel = connected ? 'Live' : 'Offline'
   const activeMode = MODES.find((m) => m.id === active)
@@ -138,9 +143,12 @@ export function App() {
   // hardware read hung the request and the panel went Offline; now a stalled sampler serves the same
   // numbers forever with a normal 200, and `sampleAgeMs` is the only thing that says so.
   const staleS = connected ? staleSeconds(tele) : null
+  // Answering, but the hardware has never been read: an all-null reading must not pass for a live one
+  // (audit round 3, 2026-09-24 — staleSeconds reads its null age as "not stale").
+  const noReading = connected && unsampled(tele)
 
   return (
-    <div className="shell" ref={shellRef} data-stale={staleS != null || undefined}>
+    <div className="shell" ref={shellRef} data-stale={staleS != null || noReading || undefined}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="nav">
         <div className="nav-brand">
@@ -173,6 +181,12 @@ export function App() {
               <span className="conn conn-stale" data-testid="telemetry-stale" role="status"
                     aria-label={`Telemetry stalled — last reading ${staleS} s ago`}>
                 Stalled · {staleS} s ago
+              </span>
+            )}
+            {noReading && (
+              <span className="conn conn-stale" data-testid="telemetry-unsampled" role="status"
+                    aria-label="No telemetry yet — the daemon has not read the hardware">
+                No reading yet
               </span>
             )}
             <PowerPill tele={tele} />

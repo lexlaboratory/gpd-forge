@@ -364,6 +364,33 @@ public class PresentMonFrameRateProbeTests
     }
 
     [Fact]
+    public async Task Concurrent_readers_and_a_dispose_never_throw_and_never_read_after_dispose()
+    {
+        // Audit round 3 (2026-09-24): the probe is read from the sampler's thread and from request
+        // threads (IFrameTimeSource), and EnsureRunning/Dispose check-then-act on the PresentMon
+        // process without a lock — two readers could both start one, and a start could follow a
+        // Dispose. With the lifecycle under one lock, a storm of reads racing a Dispose is quiet, and
+        // everything after the Dispose is "no reading".
+        var probe = new PresentMonFrameRateProbe(@"C:\nonexistent\PresentMon.exe");
+        using var go = new ManualResetEventSlim();
+        var readers = Enumerable.Range(0, 8).Select(i => Task.Run(() =>
+        {
+            go.Wait();
+            for (int n = 0; n < 200; n++)
+            {
+                if (i % 2 == 0) probe.TryRead(out _); else probe.TryGetFrameTimes(out _);
+            }
+        })).ToArray();
+
+        go.Set();
+        probe.Dispose();
+        await Task.WhenAll(readers);   // any exception from a reader fails the test here
+
+        Assert.False(probe.TryRead(out _));
+        Assert.False(probe.TryGetFrameTimes(out _));
+    }
+
+    [Fact]
     public void The_frame_time_span_is_ten_seconds()
     {
         Assert.Equal(TimeSpan.FromSeconds(10), IFrameTimeSource.Span);

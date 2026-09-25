@@ -165,6 +165,32 @@ public class RyzenAdjBackendTests
     }
 
     [Fact]
+    public async Task A_table_whose_thm_row_ignores_tctl_temp_does_not_fail_every_write()
+    {
+        // Audit round 3 (2026-09-24). The slow and THM rows have never been seen on the HX 370 (see
+        // RyzenAdjFixtures), and one plausible Strix Point shape is a THM LIMIT CORE that prints the
+        // firmware's own fixed Tctl whatever --tctl-temp says. Judged strictly, every write — manual
+        // ones included — came back unverified after four retries, and the reassert rewrote the limits
+        // every 30 s. The row is disowned after the first write it never followed, with a warning.
+        var runner = new FakeRunner
+        {
+            Output = RyzenAdjFixtures.StrixPointInfo.Replace("|    92.000 | tctl-temp ", "|   100.000 | tctl-temp "),
+        };
+        var rule = new TdpReadbackRule();
+        var controller = new ClosedLoopTdpController(new RyzenAdjBackend(runner, "ryzenadj.exe"), new NoWait(), rule: rule);
+
+        var first = await controller.ApplyAsync(new TdpProfile(15, 20, 17, 92), TdpOwner.Mode, CancellationToken.None);
+        var second = await controller.ApplyAsync(new TdpProfile(15, 20, 17, 92), TdpOwner.Manual, CancellationToken.None);
+
+        Assert.True(first.Verified);
+        Assert.Equal(100, first.Observed.TctlC);
+        Assert.Equal(RowTracking.Untracked, rule.Tracking(ReadbackRow.Tctl));
+        Assert.Equal(RowTracking.Tracks, rule.Tracking(ReadbackRow.Slow));
+        Assert.True(second.Verified);
+        Assert.Equal(1, second.Attempts);
+    }
+
+    [Fact]
     public async Task ReadAsync_parses_runner_output()
     {
         var backend = new RyzenAdjBackend(new FakeRunner { Output = SampleInfo }, "ryzenadj.exe");

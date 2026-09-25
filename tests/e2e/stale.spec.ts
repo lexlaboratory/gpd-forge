@@ -56,4 +56,44 @@ test.describe('Stalled telemetry', () => {
     await expect(badge).toBeVisible()
     await expect(badge).toContainText('9 s')
   })
+
+  // Audit round 3 (2026-09-24): when the sampler's FIRST hardware read hangs, the daemon answers with
+  // an all-null placeholder, `sampledAtMs: null`. Its null age read as "not stale", and its power
+  // source went out as known, so every client showed a live, current "Battery --%".
+  const unsampledRoute = async (page: Page) => {
+    await page.route('**/telemetry', (route) => {
+      const u = new URL(route.request().url())
+      u.searchParams.set('_test_unsampled', '1')
+      return route.continue({ url: u.toString() })
+    })
+  }
+
+  test('a reading the daemon never took is "no reading yet", not live and not on battery', async ({ page }) => {
+    await unsampledRoute(page)
+    await new DashboardPage(page).goto()
+
+    await expect(page.getByTestId('telemetry-unsampled')).toBeVisible()
+    await expect(page.getByTestId('telemetry-unsampled')).toContainText('No reading yet')
+    await expect(page.getByTestId('telemetry-stale')).toHaveCount(0)
+    await expect(page.getByTestId('conn')).toHaveText('Live')   // the daemon IS answering
+    await expect(page.locator('.shell')).toHaveAttribute('data-stale', 'true')
+
+    const pill = page.getByTestId('power-source')
+    await expect(pill).toHaveAttribute('data-state', 'unknown')
+    await expect(pill).not.toContainText('Battery')
+  })
+
+  test('the overlay says so too', async ({ page }) => {
+    await unsampledRoute(page)
+    await page.goto('/overlay.html')
+
+    await expect(page.getByTestId('qam-unsampled')).toBeVisible()
+    await expect(page.getByTestId('qam-stale')).toHaveCount(0)
+  })
+
+  test('a live reading is never "no reading yet"', async ({ page }) => {
+    await new DashboardPage(page).goto()
+    await expect(page.getByTestId('stat-cpu')).toContainText(/\d/)
+    await expect(page.getByTestId('telemetry-unsampled')).toHaveCount(0)
+  })
 })

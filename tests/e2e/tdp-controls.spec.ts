@@ -134,4 +134,121 @@ test.describe('TDP controls', () => {
 
     await expect(page.getByTestId('tdp-badge')).toHaveText('unknown')
   })
+
+  // --- Audit round 3 (2026-09-24) -------------------------------------------------------------------
+
+  test('switching mode on the Dashboard re-reads the TDP: the ended override is not left on the slider', async ({ page, request }) => {
+    // The seed ran once per mount. Picking a mode ends a manual override in the daemon and applies the
+    // mode's preset, and the slider went on showing the override.
+    await request.post(`${API}/mode`, { data: { name: 'windows' } })
+    await request.post(`${API}/tdp`, { data: { stapmW: 12 } })
+    await new DashboardPage(page).goto()
+    await expect(page.getByTestId('tdp-value')).toHaveText('12 W')
+
+    await page.getByTestId('mode-gaming').click()
+
+    await expect(page.getByTestId('tdp-value')).toHaveText('25 W')   // gaming's preset
+  })
+
+  test('a 36-40 W override in force is shown as it is, on the Dashboard and the overlay alike', async ({ page }) => {
+    // The daemon accepts manual 5..40 W, and the Dashboard seeded through a 35 W clamp: a 38 W
+    // override read "35 W" there and "38W" in the overlay.
+    await page.route('**/tdp', (route) => route.request().method() === 'GET'
+      ? route.fulfill({ json: { stapmW: 38, owner: 'manual', verified: false, backend: 'ryzenadj', observedStapmW: 30,
+          observedPptW: null, attempts: 3, atUtc: new Date().toISOString(), manualStapmW: 38 } })
+      : route.continue())
+
+    await new DashboardPage(page).goto()
+    await expect(page.getByTestId('tdp-value')).toHaveText('38 W')
+    await expect(page.getByTestId('tdp-slider')).toHaveAttribute('max', '40')
+
+    await page.goto('/overlay.html')
+    await expect(page.getByTestId('qam-tdp')).toContainText('38')
+  })
+
+  test('a seed that failed at mount says so and recovers on its own', async ({ page }) => {
+    // Ran once: a daemon unreachable at mount left the control disabled at '--' for the life of the
+    // page, with nothing on screen saying why.
+    const down = (route: import('@playwright/test').Route) => route.abort()
+    await page.route('**/tdp', down)
+    await page.route('**/profiles', down)
+    await new DashboardPage(page).goto()
+    await expect(page.getByTestId('tdp-value')).toHaveText('--')
+    await expect(page.getByTestId('tdp-unavailable')).toContainText('retrying')
+
+    await page.unroute('**/tdp', down)
+    await page.unroute('**/profiles', down)
+
+    await expect(page.getByTestId('tdp-slider')).toBeEnabled({ timeout: 8000 })
+    await expect(page.getByTestId('tdp-value')).toHaveText('15 W')
+    await expect(page.getByTestId('tdp-unavailable')).toHaveCount(0)
+  })
+
+  test('the overlay stepper is unknown, not 20 W, until the seed resolves, and then recovers', async ({ page }) => {
+    const down = (route: import('@playwright/test').Route) => route.abort()
+    await page.route('**/tdp', down)
+    await page.route('**/profiles', down)
+    await page.goto('/overlay.html')
+    await expect(page.getByTestId('qam')).toBeVisible()
+
+    await expect(page.getByTestId('qam-tdp')).toContainText('--')
+    await expect(page.getByTestId('qam-tdp')).not.toContainText('20')
+    await expect(page.getByTestId('qam-tdp-inc')).toBeDisabled()
+
+    await page.unroute('**/tdp', down)
+    await page.unroute('**/profiles', down)
+    await expect(page.getByTestId('qam-tdp')).toContainText('15', { timeout: 8000 })
+    await expect(page.getByTestId('qam-tdp-inc')).toBeEnabled()
+  })
+
+  test('the Dashboard badge follows telemetry after a write, so a reassert that failed shows', async ({ page, request }) => {
+    // The badge was pinned to the last POST /tdp result for the life of the page.
+    await request.post(`${API}/mode`, { data: { name: 'windows' } })
+    await new DashboardPage(page).goto()
+    await expect(page.getByTestId('tdp-value')).toHaveText('15 W')
+    await page.getByTestId('tdp-inc').click()
+    await expect(page.getByTestId('tdp-badge')).toHaveText('verified')
+
+    // Later, the daemon reports the limit no longer verified (the 30 s reassert could not hold it).
+    await page.route('**/telemetry', async (route) => {
+      const res = await route.fetch()
+      return route.fulfill({ response: res, json: { ...(await res.json()), tdpVerified: false, sampledAtMs: Date.now(), sampleAgeMs: 0 } })
+    })
+
+    await expect(page.getByTestId('tdp-badge')).toHaveText('unverified')
+  })
+
+  test('the overlay verified mark follows telemetry too', async ({ page, request }) => {
+    await request.post(`${API}/mode`, { data: { name: 'windows' } })
+    await page.goto('/overlay.html')
+    await expect(page.getByTestId('qam-tdp')).toContainText('15')
+    await page.getByTestId('qam-tdp-inc').click()
+    await expect(page.getByTestId('qam-verified')).toBeVisible()
+
+    await page.route('**/telemetry', async (route) => {
+      const res = await route.fetch()
+      return route.fulfill({ response: res, json: { ...(await res.json()), tdpVerified: false, sampledAtMs: Date.now(), sampleAgeMs: 0 } })
+    })
+
+    await expect(page.getByTestId('qam-verified')).toHaveCount(0)
+  })
+
+  test('a failed mode switch in the overlay is reported and changes neither the mode nor the stepper', async ({ page, request }) => {
+    // The failure was swallowed, then the stepper showed the new mode's preset, recorded it as
+    // applied, and toasted "Mode: Gaming".
+    await request.post(`${API}/mode`, { data: { name: 'windows' } })
+    await page.route('**/mode', (route) => route.request().method() === 'POST'
+      ? route.fulfill({ status: 500, json: { error: { code: 'internal', message: 'boom' } } })
+      : route.continue())
+    await page.goto('/overlay.html')
+    await expect(page.getByTestId('qam-tdp')).toContainText('15')
+
+    await page.getByTestId('qam-mode-gaming').click()
+
+    await expect(page.getByTestId('toast-error')).toContainText('Mode was not changed')
+    await expect(page.getByTestId('qam-mode-gaming')).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByTestId('qam-mode-windows')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('qam-tdp')).toContainText('15')
+    await expect(page.getByTestId('qam-tdp')).not.toContainText('25')
+  })
 })

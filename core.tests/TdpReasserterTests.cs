@@ -85,30 +85,34 @@ public class TdpReasserterTests
     private sealed record Rig(
         FakeSilicon Silicon, SerializedTdpController Tdp, TdpState State, SwitchableDetector Detector,
         ManualTimeProvider Clock, TdpReasserter Reasserter, ModeState Mode, TdpIntent Intent,
-        ProfileApplier Applier);
+        ProfileApplier Applier, TdpReadbackRule Rule);
 
     /// <summary>The production stack over a fake SMU: write gate → audit decorator → closed loop →
     /// backend, so the owner and the TdpState record come from the real code rather than from the test.</summary>
-    private static Rig Build()
+    private static Rig Build(ITdpBackend? backend = null)
     {
         var silicon = new FakeSilicon();
+        var smu = backend ?? silicon;
         var state = new TdpState();
+        // One rule for the closed loop and the reassert, as in the daemon's DI.
+        var rule = new TdpReadbackRule();
         var tdp = new SerializedTdpController(new AuditingTdpController(
-            new ClosedLoopTdpController(silicon, new NoWait()), new HardwareAuditLog(), state, "test"), state);
+            new ClosedLoopTdpController(smu, new NoWait(), rule: rule), new HardwareAuditLog(), state, "test"), state);
         var detector = new SwitchableDetector();
         var clock = new ManualTimeProvider();
         var mode = new ModeState();
         var intent = new TdpIntent();
         return new Rig(silicon, tdp, state, detector, clock,
-            new TdpReasserter(silicon, tdp, state, detector, intent, mode, clock), mode, intent,
-            new ProfileApplier(tdp, detector, intent: intent, state: state));
+            new TdpReasserter(smu, tdp, state, detector, intent, mode, clock, rule: rule), mode, intent,
+            new ProfileApplier(tdp, detector, intent: intent, state: state), rule);
     }
 
     [Fact]
     public async Task With_nothing_written_there_is_nothing_to_reassert_and_nothing_is_read()
     {
-        // A daemon that yielded at startup owns no limit. Adopting whatever the hardware says, or
-        // writing the mode preset "because nothing else did", would be taking over from a rival.
+        // Nothing written and nothing yielded: there is no limit to keep, and adopting whatever the
+        // hardware says would be taking over from whoever set it. (A startup apply that YIELDED is a
+        // different case — the mode is still owed; see A_startup_apply_that_yielded_...)
         var rig = Build();
 
         Assert.Equal(ReassertOutcome.NothingOwned, await rig.Reasserter.ReassertAsync(CancellationToken.None));
@@ -316,6 +320,38 @@ public class TdpReasserterTests
     }
 
     [Fact]
+    public async Task A_startup_apply_that_yielded_is_completed_once_the_rival_exits()
+    {
+        // Audit round 3 (2026-09-24). The daemon boots in `gaming` beside MotionAssistant: the startup
+        // apply yields and writes nothing, so TdpState.Last is null. The reassert answered NothingOwned
+        // before it looked at Stale, so the persisted mode was never applied once MotionAssistant
+        // exited — while the same yield mid-session WAS completed. The two cases now agree.
+        var rig = Build();
+        var ct = CancellationToken.None;
+        rig.Mode.Active = "gaming";
+        rig.Detector.Rival = true;
+        Assert.Equal(ApplyOutcome.SkippedConflict, await rig.Applier.ApplyAsync("gaming", ct));
+        Assert.Null(rig.State.Last);
+
+        // Still running: nothing read, nothing written.
+        Assert.Equal(ReassertOutcome.Yielded, await rig.Reasserter.ReassertAsync(ct));
+        Assert.Equal(0, rig.Silicon.Writes);
+
+        rig.Silicon.Limits = new TdpReadout(18, 22);   // what MotionAssistant left
+        rig.Detector.Rival = false;
+
+        Assert.Equal(ReassertOutcome.Reasserted, await rig.Reasserter.ReassertAsync(ct));
+        var gaming = ModeProfiles.For("gaming")!.Value;
+        Assert.Equal(new TdpReadout(gaming.StapmW, gaming.FastW), rig.Silicon.Limits);
+        Assert.Equal(gaming, rig.State.Last!.Value.Requested);
+
+        // From then on it is an ordinary owned write: the next check reads and leaves it alone.
+        int writes = rig.Silicon.Writes;
+        Assert.Equal(ReassertOutcome.Holding, await rig.Reasserter.ReassertAsync(ct));
+        Assert.Equal(writes, rig.Silicon.Writes);
+    }
+
+    [Fact]
     public async Task After_a_yielded_switch_limits_already_at_the_new_mode_are_left_alone()
     {
         var rig = Build();
@@ -451,6 +487,81 @@ public class TdpReasserterTests
         Assert.True(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, null, null), want, 1));
         Assert.False(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, 25, 92), want, 1));
         Assert.False(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, 17, 100), want, 1));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Rows the APU may not report (audit round 3, 2026-09-24): slow and Tctl have never been seen on
+    // the HX 370 — ryzenadj --info needs elevation and was never captured there. A row that ignores
+    // writes must not fail every write and have the reassert rewrite the limits every 30 s.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_tctl_row_that_never_follows_a_write_stops_being_judged_by_the_write_and_the_reassert()
+    {
+        // A firmware that prints a fixed Tctl whatever --tctl-temp says.
+        var smu = new FixedTctlSilicon(tctl: 100);
+        var rig = Build(smu);
+        var ct = CancellationToken.None;
+
+        var first = await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, ct);
+        Assert.True(first.Verified);                     // STAPM, fast and slow all held
+        Assert.Equal(RowTracking.Untracked, rig.Rule.Tracking(ReadbackRow.Tctl));
+        Assert.Equal(RowTracking.Tracks, rig.Rule.Tracking(ReadbackRow.Slow));
+
+        // Every later write verifies on its first readback, instead of four retries each.
+        var second = await rig.Tdp.ApplyAsync(new TdpProfile(12, 14, 13, 92), TdpOwner.Manual, ct);
+        Assert.True(second.Verified);
+        Assert.Equal(1, second.Attempts);
+
+        // And the reassert agrees it holds: no rewrite every 30 s.
+        int writes = smu.Writes;
+        for (int i = 0; i < 5; i++) Assert.Equal(ReassertOutcome.Holding, await rig.Reasserter.ReassertAsync(ct));
+        Assert.Equal(writes, smu.Writes);
+    }
+
+    [Fact]
+    public async Task A_tctl_row_that_has_followed_a_write_is_still_judged_and_its_revert_caught()
+    {
+        // The rule must not become "ignore Tctl": once the row has shown it follows writes, a later
+        // mismatch is the firmware putting its own back, and that is reasserted as in round 2.
+        var rig = Build();
+        rig.Silicon.FullTable = true;
+        var ct = CancellationToken.None;
+        await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, ct);
+        Assert.Equal(RowTracking.Tracks, rig.Rule.Tracking(ReadbackRow.Tctl));
+
+        rig.Silicon.Limits = rig.Silicon.Limits with { TctlC = 100 };
+
+        Assert.Equal(ReassertOutcome.Reasserted, await rig.Reasserter.ReassertAsync(ct));
+        Assert.Equal(92, rig.Silicon.Limits.TctlC);
+    }
+
+    [Fact]
+    public async Task A_write_whose_stapm_did_not_land_is_no_evidence_about_the_other_rows()
+    {
+        // The firmware refusing the whole write: STAPM is off, so a Tctl mismatch says nothing about Tctl.
+        var rig = Build(new StubbornSilicon(new TdpReadout(30, 30, 30, 100)));
+
+        var r = await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, CancellationToken.None);
+
+        Assert.False(r.Verified);
+        Assert.Equal(RowTracking.Unknown, rig.Rule.Tracking(ReadbackRow.Tctl));
+        Assert.Equal(RowTracking.Unknown, rig.Rule.Tracking(ReadbackRow.Slow));
+    }
+
+    /// <summary>Takes STAPM, fast and slow; prints the same Tctl whatever was written.</summary>
+    private sealed class FixedTctlSilicon(int tctl) : ITdpBackend
+    {
+        private readonly Lock _gate = new();
+        private TdpReadout _limits = new(null, null);
+        public int Writes { get { lock (_gate) return _writes; } }
+        private int _writes;
+        public Task ApplyAsync(TdpProfile p, CancellationToken ct)
+        {
+            lock (_gate) { _writes++; _limits = new TdpReadout(p.StapmW, p.FastW, p.SlowW, tctl); }
+            return Task.CompletedTask;
+        }
+        public Task<TdpReadout> ReadAsync(CancellationToken ct) { lock (_gate) return Task.FromResult(_limits); }
     }
 
     private sealed class StubbornSilicon(TdpReadout stuckAt) : ITdpBackend

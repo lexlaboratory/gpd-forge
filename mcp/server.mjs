@@ -47,11 +47,15 @@ const STALE_AFTER_MS = 3000
 const tools = [
   {
     name: 'get_telemetry',
-    description: 'Live handheld telemetry: CPU/GPU °C, package watts, CPU clock, fan RPM, FPS, battery %, discharge W, AC state, and whether the current TDP is verified. Also sampleAgeMs (how old the daemon\'s last hardware reading is) and stale: true when that is over 3 s — the daemon then keeps serving its last numbers, so do not treat a stale reading as current.',
+    description: 'Live handheld telemetry: CPU/GPU °C, package watts, CPU clock, fan RPM, FPS, battery %, discharge W, AC state, and whether the current TDP is verified. Also sampleAgeMs (how old the daemon\'s last hardware reading is) and stale: true when that is over 3 s — the daemon then keeps serving its last numbers, so do not treat a stale reading as current. unsampled: true (and stale: true) means the daemon has not read the hardware at all yet, so every value is a placeholder; acKnown: false means acConnected is a fallback, not a reading.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     call: async () => {
       const t = await api('/telemetry')
-      return { ...t, stale: num(t?.sampleAgeMs) && t.sampleAgeMs > STALE_AFTER_MS }
+      // A reading the daemon never took: `sampledAtMs` present and null (its first hardware read hung).
+      // Its null age made `stale` false, so an agent saw an all-null "on battery" reading as live and
+      // current (audit round 3, 2026-09-24). An older daemon without the field is not flagged.
+      const unsampled = t != null && typeof t === 'object' && 'sampledAtMs' in t && t.sampledAtMs == null
+      return { ...t, unsampled, stale: unsampled || (num(t?.sampleAgeMs) && t.sampleAgeMs > STALE_AFTER_MS) }
     },
   },
   {

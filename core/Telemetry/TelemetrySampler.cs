@@ -8,6 +8,13 @@
 //
 // Now there is one reader. It samples at 1 Hz and publishes an immutable reading; every consumer
 // reads the last one for the cost of a field load.
+//
+// Consumers that must see EVERY sample, not merely the newest — /history and the session recorder —
+// are sinks, handed each reading here on publish (audit round 3, 2026-09-24). They were fed by
+// ForgeWorker's tick, which only ever takes the newest sample and awaits closed-loop ryzenadj writes
+// in the same iteration (measured up to ~1.7 s a tick): every sample published while a write was in
+// flight and superseded before the tick came back never reached /history, so the plan's
+// "≥ 0.95 samples/s, measured with get_history" could fail with the sampler itself at 1 Hz.
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -16,11 +23,14 @@ namespace GpdForge.Telemetry;
 public sealed class TelemetrySampler(
     ITelemetryService reader,
     ILogger<TelemetrySampler>? logger = null,
-    TimeProvider? time = null) : BackgroundService, ITelemetrySource
+    TimeProvider? time = null,
+    IEnumerable<ITelemetrySink>? sinks = null) : BackgroundService, ITelemetrySource
 {
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
+    private readonly ITelemetrySink[] _sinks = sinks?.ToArray() ?? [];
+    private bool _sinkFailing;   // loop-only, like _failing
     private TelemetryReading _latest = TelemetryReading.Unsampled;
     private bool _failing;   // touched only by SampleOnceAsync, which only the loop calls
 
@@ -34,7 +44,11 @@ public sealed class TelemetrySampler(
     /// <summary>
     /// One hardware read, published on success. A failed read keeps the previous reading — which then
     /// ages visibly through <see cref="TelemetryReading.SampledAt"/> — instead of replacing good data
-    /// with nothing or taking the loop down. Cancellation is the one exception that propagates.
+    /// with nothing or taking the loop down. Cancellation — of THIS call's token — is the one exception
+    /// that propagates. An OperationCanceledException a reader raises for its own reasons (a timeout
+    /// inside a sensor, an HttpClient-based source) is a failed read like any other: until audit round 3
+    /// (2026-09-24) it was rethrown, escaped ExecuteAsync, and under .NET's default
+    /// BackgroundServiceExceptionBehavior.StopHost took the whole daemon down — guardian, fan and TDP.
     /// </summary>
     public async Task SampleOnceAsync(CancellationToken ct)
     {
@@ -43,7 +57,7 @@ public sealed class TelemetrySampler(
         {
             snapshot = await reader.ReadAsync(ct);
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             // Warn once per outage, not once a second: a broken provider would otherwise write 3600
@@ -57,8 +71,30 @@ public sealed class TelemetrySampler(
         if (_failing) logger?.LogInformation("Telemetry reads recovered.");
         _failing = false;
         var previous = Latest;
-        Volatile.Write(ref _latest, new TelemetryReading(snapshot, _time.GetUtcNow(), previous.Sequence + 1));
+        var reading = new TelemetryReading(snapshot, _time.GetUtcNow(), previous.Sequence + 1);
+        Volatile.Write(ref _latest, reading);
         Interlocked.Exchange(ref _published, NewSignal()).TrySetResult();
+        Deliver(reading);
+    }
+
+    /// <summary>
+    /// Hands the reading to every sink, on this thread, after it is published — so a slow sink never
+    /// delays the readers of <see cref="Latest"/>. A sink that throws costs its own row, never the
+    /// sampler: every consumer in the daemon depends on this loop continuing.
+    /// </summary>
+    private void Deliver(TelemetryReading reading)
+    {
+        bool failed = false;
+        foreach (var sink in _sinks)
+        {
+            try { sink.Accept(reading); }
+            catch (Exception ex)
+            {
+                failed = true;
+                if (!_sinkFailing) logger?.LogWarning(ex, "A telemetry consumer ({Sink}) failed on a sample; the sampler carries on.", sink.GetType().Name);
+            }
+        }
+        _sinkFailing = failed;
     }
 
     public async Task<TelemetryReading> WaitForNewerAsync(long afterSequence, TimeSpan timeout, CancellationToken ct)

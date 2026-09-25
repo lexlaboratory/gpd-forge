@@ -1,5 +1,6 @@
 // GPD Forge UI — the power-source pill in the top bar. GPL-3.0-or-later.
 import type { Telemetry } from './types'
+import { unsampled } from './pages/shared'
 
 /**
  * AC, battery with its percentage, or — when the daemon's battery query failed — unknown.
@@ -9,12 +10,19 @@ import type { Telemetry } from './types'
  * "Battery --%" in the battery colour on a machine plugged into the wall. `acKnown: false` says the
  * value is a fallback; it is shown as unknown, muted, with the reason in the tooltip. An older daemon
  * without the field means known, which is what it always meant.
+ *
+ * A reading the daemon never took (`sampledAtMs: null` — its first hardware read hung) is unknown
+ * too, whatever `acKnown` says: an older daemon sent it as `acKnown: true`, and this pill drew a
+ * confident "Battery --%" from a reading that was never made (audit round 3, 2026-09-24).
  */
 export function PowerPill({ tele }: { tele: Telemetry | null }) {
-  if (tele?.acKnown === false) {
+  const never = unsampled(tele)
+  if (tele?.acKnown === false || never) {
     return (
       <span className="power-pill unknown" data-testid="power-source" data-state="unknown"
-            title="The power source could not be read. The AC/battery mode switch and the per-app rules are paused until it can.">
+            title={never
+              ? 'No telemetry yet: the daemon has not read the hardware, so the power source is not known.'
+              : 'The power source could not be read. The AC/battery mode switch and the per-app rules are paused until it can.'}>
         Power --
       </span>
     )

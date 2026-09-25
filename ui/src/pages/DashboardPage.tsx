@@ -1,6 +1,6 @@
 // GPD Forge UI — Dashboard page (telemetry, modes, TDP, AI card, auto-tuner). GPL-3.0-or-later.
 import { useEffect, useRef, useState } from 'react'
-import type { AiInfo, InferenceHold, TuneGoal, TunerInfo } from '../types'
+import type { AiInfo, InferenceHold, ModeId, TuneGoal, TunerInfo } from '../types'
 import {
   setTdp as apiSetTdp, getTdp, getProfiles, getMode, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
 } from '../api'
@@ -8,12 +8,15 @@ import { Badge, Button, Frame, Icon, Readout, Segmented, Slider, Toggle, type To
 import { useToast } from '../Toast'
 import { JobsPanel } from '../JobsPanel'
 import { StandbyPanel } from '../StandbyPanel'
-import { MODES, reading, fractionOf, tdpInForce, type Shared } from './shared'
+import { MODES, reading, fractionOf, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type Shared, type TdpWrite } from './shared'
 import { BatteryBudgetCard } from './SystemPage'
 
 // Ceilings the fill bars are read against. The TDP one is the slider's own maximum, so the bar and
-// the control can never disagree about what "full" means.
-const MAX_TDP_W = 35
+// the control can never disagree about what "full" means. 40 W is the daemon's manual band
+// (TdpIntent.ManualMaxW) and the overlay stepper's maximum. It was 35 until audit round 3
+// (2026-09-24): a 36–40 W override in force was seeded through a clamp and shown as "35 W" — a value
+// not in force, disagreeing with the overlay, and the one a refused write then rolled back to.
+const MAX_TDP_W = 40
 const MAX_CPU_C = 100
 
 // Undefined tone for an absent reading: a tile with no data must not be coloured as if it were
@@ -24,7 +27,6 @@ const battTone = (p: number | null): Tone | undefined =>
   p == null ? undefined : p < 15 ? 'danger' : p < 30 ? 'warn' : 'ok'
 
 // --- Dashboard -----------------------------------------------------------------
-const clampTdp = (w: number) => Math.min(MAX_TDP_W, Math.max(5, Math.round(w)))
 
 // The badge's three states. Null — nothing written or verified yet — is its own grey state: it was
 // defaulted to 'verified', which claimed a confirmation nobody had given.
@@ -38,28 +40,55 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
   // with that fixed, a GET /tdp with nothing written yet (the startup apply yielded to a rival) or a
   // failed request still left 20 on screen while the overlay showed the mode preset (audit round 2).
   const [tdp, setTdp] = useState<number | null>(null)
-  const [tdpResult, setTdpResult] = useState<TdpResult | null>(null)
+  // This window's last write: the badge shows it only until a newer telemetry sample (tdpVerifiedNow).
+  const [tdpWrite, setTdpWrite] = useState<TdpWrite | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Set once the user moves the control, so a GET /tdp that answers late cannot yank it back.
   const touched = useRef(false)
   // The last value the daemon accepted: where the control returns to when a write is refused.
   const applied = useRef<number | null>(null)
+  // Bumped to read the TDP in force again: after a mode change, and while a seed found nothing.
+  const [seedRound, setSeedRound] = useState(0)
+  const [seedFailed, setSeedFailed] = useState(false)
 
   // Seeded exactly as the overlay seeds its stepper, so the two controls cannot disagree: the manual
   // override, else the last write, else the ACTIVE mode's preset. The mode is asked for here rather
   // than taken from Shared.active, which reads 'windows' until the shell's own GET /mode answers.
+  //
+  // Not once per mount (audit round 3, 2026-09-24). A seed that found nothing — the daemon briefly
+  // unreachable at mount — left the control disabled at '--' for the life of the page with nothing
+  // saying why; it now says so and asks again every TDP_SEED_RETRY_MS. And a mode change ends a manual
+  // override in the daemon, but the slider kept showing it: it is re-read once the mode is applied.
+  // The value is shown as the daemon states it, never through the slider's clamp.
   useEffect(() => {
     let alive = true
+    let retry: ReturnType<typeof setTimeout> | null = null
     Promise.allSettled([getTdp(), getProfiles(), getMode()]).then(([t, p, m]) => {
       if (!alive) return
       const preset = p.status === 'fulfilled' && m.status === 'fulfilled' ? p.value[m.value]?.stapmW : undefined
       const w = tdpInForce(t.status === 'fulfilled' ? t.value : null) ?? preset
-      if (w == null) return
-      applied.current = clampTdp(w)
-      if (!touched.current) setTdp(clampTdp(w))
+      if (w == null) {
+        setSeedFailed(true)
+        retry = setTimeout(() => setSeedRound((r) => r + 1), TDP_SEED_RETRY_MS)
+        return
+      }
+      setSeedFailed(false)
+      applied.current = Math.round(w)
+      if (!touched.current) setTdp(Math.round(w))
     })
-    return () => { alive = false; if (timer.current) clearTimeout(timer.current) }
-  }, [])
+    return () => { alive = false; if (retry) clearTimeout(retry) }
+  }, [seedRound])
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+
+  const onPickMode = (id: ModeId) => {
+    pickMode(id).then((ok) => {
+      if (!ok) return
+      // The mode's preset is in force now, and this window's write result describes the old value.
+      touched.current = false
+      setTdpWrite(null)
+      setSeedRound((r) => r + 1)
+    })
+  }
 
   const onTdp = (v: number) => {
     touched.current = true
@@ -67,7 +96,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       apiSetTdp(v)
-        .then((r) => { applied.current = v; setTdpResult(r) })
+        .then((r: TdpResult) => { applied.current = v; setTdpWrite({ verified: r.verified, atMs: Date.now() }) })
         .catch((e: unknown) => {
           // Said, not swallowed: a 400 bad_tdp or a daemon that went away left the slider showing a
           // value that was never applied, with nothing on screen saying so.
@@ -76,7 +105,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
         })
     }, 120)
   }
-  const badge = tdpBadge(tdpResult ? tdpResult.verified : (tele?.tdpVerified ?? null))
+  const badge = tdpBadge(tdpVerifiedNow(tele, tdpWrite))
 
   return (
     <>
@@ -96,7 +125,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
         <div className="mode-grid" role="listbox" aria-label="Usage mode">
           {MODES.map((m) => (
             <button key={m.id} role="option" aria-selected={active === m.id} data-testid={`mode-${m.id}`}
-              className={`mode-card ${active === m.id ? 'active' : ''}`} onClick={() => pickMode(m.id)}>
+              className={`mode-card ${active === m.id ? 'active' : ''}`} onClick={() => onPickMode(m.id)}>
               {auto && active === m.id && <span className="mode-auto" data-testid="mode-auto">AUTO</span>}
               <span className="mode-icon"><Icon name={m.id} size={22} /></span>
               <span className="mode-label">{m.label}</span>
@@ -122,6 +151,11 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
               disabled={tdp == null || tdp >= MAX_TDP_W} onClick={() => tdp != null && onTdp(Math.min(MAX_TDP_W, tdp + 1))}>+</button>
           </div>
         </div>
+        {tdp == null && seedFailed && (
+          <p className="muted" data-testid="tdp-unavailable" role="status">
+            Could not read the TDP in force — retrying.
+          </p>
+        )}
         <p className="muted">Applied with a closed loop — GPD Forge re-reads the PM table and warns if the firmware reverts it.</p>
       </Frame>
 

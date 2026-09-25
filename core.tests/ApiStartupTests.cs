@@ -33,14 +33,20 @@ namespace GpdForge.Core.Tests;
 /// per test would multiply a 10-second cost by every route.</summary>
 public sealed class DaemonUnderTest : IDisposable
 {
-    /// <summary>An unusual port on purpose: 8787 belongs to a real installed service, and 8790 was
-    /// found occupied by something else entirely on the reference machine.</summary>
-    public const int Port = 8846;
+    /// <summary>
+    /// A free ephemeral port, picked per fixture. It was the constant 8846 (never 8787, which belongs
+    /// to the installed service), and WaitForPort counted ANY listener as "started". Audit round 3
+    /// (2026-09-24): with two suites running at once — parallel auditors and implementers do exactly
+    /// that — the second daemon could not bind, and this fixture silently attached to the FIRST
+    /// suite's daemon, whose state the other run was mutating. Stateful tests (manual TDP, audit
+    /// counts, /session/foreground) went red for no reason in the code.
+    /// </summary>
+    public int Port { get; } = FreePort();
 
     private readonly Process? _process;
     private readonly string _dataDir;
 
-    public string BaseUrl { get; } = $"http://127.0.0.1:{Port}";
+    public string BaseUrl { get; }
     public HttpClient Client { get; }
     public string StartupLog => _log.ToString();
 
@@ -48,6 +54,7 @@ public sealed class DaemonUnderTest : IDisposable
 
     public DaemonUnderTest()
     {
+        BaseUrl = $"http://127.0.0.1:{Port}";
         Client = new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(20) };
 
         // Isolated state, for two reasons that are easy to conflate.
@@ -96,6 +103,19 @@ public sealed class DaemonUnderTest : IDisposable
 
     public bool Started { get; private set; }
 
+    /// <summary>
+    /// Asks the OS for a port nobody holds, then releases it for the daemon. There is a window between
+    /// the release and the daemon's bind; <see cref="WaitForPort"/> is what catches the rare loss of
+    /// that race, by refusing to count a listener that is not this fixture's live process.
+    /// </summary>
+    public static int FreePort()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        try { return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port; }
+        finally { listener.Stop(); }
+    }
+
     private void WaitForPort(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -106,11 +126,57 @@ public sealed class DaemonUnderTest : IDisposable
             {
                 using var probe = new TcpClient();
                 probe.Connect("127.0.0.1", Port);
-                Started = true;
+                // Something accepts — but only OUR daemon counts. One that failed to bind exits (the
+                // host stops on a bind error); give it a moment to do so before trusting the listener.
+                Thread.Sleep(250);
+                Started = _process is { HasExited: false } && OwnsPort();
                 return;
             }
             catch (SocketException) { Thread.Sleep(250); }
         }
+    }
+
+    /// <summary>
+    /// Whether the listener on <see cref="Port"/> is this fixture's process. Read from the TCP table
+    /// (Windows only: `netstat -ano` would work too, but IPGlobalProperties has no owning PID), so on
+    /// another OS this trusts the process-alive check alone.
+    /// </summary>
+    private bool OwnsPort()
+    {
+        if (!OperatingSystem.IsWindows() || _process is null) return true;
+        try
+        {
+            var psi = new ProcessStartInfo("netstat", "-ano -p TCP")
+            {
+                RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true,
+            };
+            using var netstat = Process.Start(psi);
+            if (netstat is null) return true;
+            string table = netstat.StandardOutput.ReadToEnd();
+            netstat.WaitForExit(5000);
+            var owners = PortOwners(table, Port);
+            // No row is inconclusive (a netstat that printed nothing), not a foreign daemon.
+            return owners.Count == 0 || owners.Contains(_process.Id);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return true;   // no netstat: fall back to the process-alive check
+        }
+    }
+
+    /// <summary>The PIDs listening on 127.0.0.1/0.0.0.0:<paramref name="port"/> in `netstat -ano` output.</summary>
+    public static HashSet<int> PortOwners(string netstatTable, int port)
+    {
+        var owners = new HashSet<int>();
+        foreach (var raw in netstatTable.Split('\n'))
+        {
+            var cols = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            // Proto, Local Address, Foreign Address, State, PID
+            if (cols.Length < 5 || !cols[3].Equals("LISTENING", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!cols[1].EndsWith($":{port}", StringComparison.Ordinal)) continue;
+            if (int.TryParse(cols[4], out int pid)) owners.Add(pid);
+        }
+        return owners;
     }
 
     /// <summary>
@@ -149,10 +215,10 @@ public sealed class DaemonUnderTest : IDisposable
 }
 
 /// <summary>
-/// Shares ONE daemon across every class that needs it. It has to be a collection fixture rather than
-/// a class fixture: xUnit constructs a class fixture per class, and the daemon binds a fixed port, so
-/// the second class to run would get a daemon that could not listen — reported as twenty unrelated
-/// assertion failures rather than as "the port was taken".
+/// Shares ONE daemon across every class that needs it. It was a collection fixture first because the
+/// daemon bound a fixed port and a second one could not listen; the port is now picked per fixture
+/// (audit round 3, 2026-09-24), and one shared daemon stays because starting a process costs ~10 s
+/// and the classes in this collection are written against one daemon's state.
 /// </summary>
 [CollectionDefinition(Name)]
 public sealed class DaemonCollection : ICollectionFixture<DaemonUnderTest>
@@ -240,5 +306,52 @@ public class ApiStartupTests(DaemonUnderTest daemon)
 
         Assert.False(res.IsSuccessStatusCode,
             $"An unknown route answered {(int)res.StatusCode}, so 'every route answers' would prove nothing.");
+    }
+}
+
+/// <summary>
+/// The fixture's own guards (audit round 3, 2026-09-24): it attached to ANOTHER suite's daemon on the
+/// shared fixed port 8846 whenever two runs overlapped, and the stateful endpoint tests went red.
+/// </summary>
+public class DaemonFixtureTests
+{
+    [Fact]
+    public void Each_fixture_gets_a_port_nobody_is_listening_on()
+    {
+        int port = DaemonUnderTest.FreePort();
+        Assert.NotEqual(8787, port);
+
+        // Free means bindable right now.
+        var listener = new TcpListener(System.Net.IPAddress.Loopback, port);
+        listener.Start();
+        listener.Stop();
+    }
+
+    [Fact]
+    public void Two_fixtures_never_share_a_port_while_both_hold_one()
+    {
+        var held = new TcpListener(System.Net.IPAddress.Loopback, DaemonUnderTest.FreePort());
+        held.Start();
+        try
+        {
+            int heldPort = ((System.Net.IPEndPoint)held.LocalEndpoint).Port;
+            Assert.NotEqual(heldPort, DaemonUnderTest.FreePort());
+        }
+        finally { held.Stop(); }
+    }
+
+    [Fact]
+    public void The_listener_owner_is_read_from_the_tcp_table()
+    {
+        // `netstat -ano -p TCP`, trimmed. A connection that merely TOUCHES the port is not its owner.
+        const string table =
+            "\r\nActive Connections\r\n\r\n" +
+            "  Proto  Local Address          Foreign Address        State           PID\r\n" +
+            "  TCP    127.0.0.1:8846         0.0.0.0:0              LISTENING       30608\r\n" +
+            "  TCP    127.0.0.1:51234        127.0.0.1:8846         ESTABLISHED     32388\r\n" +
+            "  TCP    0.0.0.0:18846          0.0.0.0:0              LISTENING       4\r\n";
+
+        Assert.Equal([30608], DaemonUnderTest.PortOwners(table, 8846));
+        Assert.Empty(DaemonUnderTest.PortOwners(table, 846));
     }
 }

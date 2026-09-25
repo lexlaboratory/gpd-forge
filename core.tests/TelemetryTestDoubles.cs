@@ -34,7 +34,7 @@ public sealed class CountingTelemetryReader : ITelemetryService
 {
     private int _reads;
     public int Reads => Volatile.Read(ref _reads);
-    public TelemetrySnapshot Next { get; set; } = TelemetrySnapshot.Unmeasured with { CpuTempC = 55, AcConnected = true };
+    public TelemetrySnapshot Next { get; set; } = TelemetrySnapshot.Unmeasured with { CpuTempC = 55, AcConnected = true, AcUnknown = false };
     public Exception? Throw { get; set; }
 
     public Task<TelemetrySnapshot> ReadAsync(CancellationToken ct)

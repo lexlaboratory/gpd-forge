@@ -65,6 +65,12 @@ Regla de trabajo en todas las fases:
      elevación falla con `WinRing0 Err: Driver not loaded`, y `core.tests/RyzenAdjFixtures.cs` es una
      reconstrucción del formato de ryzenadj, no una captura. Para cerrarlo: desde una consola elevada,
      `dotnet GpdForge.Service.dll --probe-tdp` (solo lectura) y pegar la salida literal como fixture.
+     **Sigue ABIERTO tras la auditoría 3 (2026-09-24)** — la captura exige elevación (UAC), decisión de
+     Alex. Mitigado: desde la ronda 2 la verificación también compara `PPT LIMIT SLOW` y `THM LIMIT CORE`,
+     nunca vistas en el HX 370. `core/Tdp/TdpReadbackRule.cs` hace que cada una se gane su sitio: se juzga
+     hasta que sigue una escritura (y entonces para siempre) y se descarta, con un aviso en el log ("no
+     longer used to judge"), si en una escritura con STAPM y fast correctos nunca sigue el valor escrito.
+     Así un Tctl fijo del firmware no deja cada escritura sin verificar ni reescribe el límite cada 30 s.
 
 **Criterios:**
 - ≥0.95 muestras/s bajo carga y `GET /telemetry` < 5 ms.

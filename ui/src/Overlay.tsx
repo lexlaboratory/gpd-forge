@@ -18,7 +18,9 @@ import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
 // nullable on 2026-09-01 because an unreadable sensor used to arrive as a confident zero.
-import { reading, staleSeconds, tdpInForce } from './pages/shared'
+import {
+  reading, staleSeconds, unsampled, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type TdpWrite,
+} from './pages/shared'
 import { Icon } from './components/Icon'
 
 const QMODES: { id: ModeId; label: string }[] = [
@@ -67,10 +69,17 @@ export function OverlayApp() {
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [mode, setModeS] = useState<ModeId>('windows')
   const [presets, setPresets] = useState<Record<string, { stapmW: number }>>({})
-  const [tdp, setTdp_] = useState(20)
+  // Null until the daemon says what is in force, shown as '--' with the stepper disabled — as on the
+  // Dashboard. It was a hardcoded 20 that flashed before every seed and stayed on screen, looking like
+  // the value in force, whenever the seed failed (audit round 3, 2026-09-24).
+  const [tdp, setTdp_] = useState<number | null>(null)
   // Null until the daemon says: the "verified" mark used to show from the first frame, before anything
-  // had been written or read back.
-  const [verified, setVerified] = useState<boolean | null>(null)
+  // had been written or read back. `seedVerified` is GET /tdp's answer at open; after that the mark
+  // follows telemetry (tdpVerifiedNow), so a limit the 30 s reassert could not hold stops saying
+  // "verified" — it used to change only when this window wrote.
+  const [seedVerified, setSeedVerified] = useState<boolean | null>(null)
+  const [tdpWrite, setTdpWrite] = useState<TdpWrite | null>(null)
+  const [seedRound, setSeedRound] = useState(0)
   // The user has pressed the stepper: a late seed from GET /tdp must not move it back.
   const tdpTouched = useRef(false)
   // The last value the daemon accepted, to return to when a write is refused.
@@ -88,22 +97,6 @@ export function OverlayApp() {
     let alive = true
     const tick = () => getTelemetry().then((t) => alive && setTele(t)).catch(() => {})
     tick(); const id = setInterval(tick, 1000)
-    // The stepper opens on what is IN FORCE: the manual override the daemon remembers (TdpIntent), else
-    // its last write, else the active mode's preset. It used to open on the preset of the initial
-    // 'windows' state whatever the mode, so a remembered 12 W showed as 15.
-    Promise.allSettled([getMode(), getProfiles(), getTdp()]).then(([m, p, t]) => {
-      if (!alive) return
-      if (m.status === 'fulfilled') setModeS(m.value)
-      const presetsNow = p.status === 'fulfilled' ? p.value : {}
-      if (p.status === 'fulfilled') setPresets(presetsNow)
-      const info = t.status === 'fulfilled' ? t.value : null
-      if (info) setVerified(info.verified)
-      const seed = tdpInForce(info) ?? (m.status === 'fulfilled' ? presetsNow[m.value]?.stapmW : undefined)
-      if (seed != null) {
-        tdpApplied.current = seed
-        if (!tdpTouched.current) setTdp_(seed)
-      }
-    })
     getFan().then((f) => alive && setFanS(f)).catch(() => {})
     getBrightness().then((b) => alive && b != null && setBright(b)).catch(() => {})
     // The cap row only appears when the driver actually offers one. Hidden rather than disabled: on a
@@ -121,15 +114,51 @@ export function OverlayApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // The stepper opens on what is IN FORCE: the manual override the daemon remembers (TdpIntent), else
+  // its last write, else the active mode's preset. It used to open on the preset of the initial
+  // 'windows' state whatever the mode, so a remembered 12 W showed as 15. A seed that finds nothing
+  // asks again every TDP_SEED_RETRY_MS rather than leaving the stepper dead (audit round 3).
+  useEffect(() => {
+    let alive = true
+    let retry: ReturnType<typeof setTimeout> | null = null
+    Promise.allSettled([getMode(), getProfiles(), getTdp()]).then(([m, p, t]) => {
+      if (!alive) return
+      if (m.status === 'fulfilled') setModeS(m.value)
+      const presetsNow = p.status === 'fulfilled' ? p.value : {}
+      if (p.status === 'fulfilled') setPresets(presetsNow)
+      const info = t.status === 'fulfilled' ? t.value : null
+      if (info) setSeedVerified(info.verified)
+      const seed = tdpInForce(info) ?? (m.status === 'fulfilled' ? presetsNow[m.value]?.stapmW : undefined)
+      if (seed == null) {
+        retry = setTimeout(() => setSeedRound((r) => r + 1), TDP_SEED_RETRY_MS)
+        return
+      }
+      tdpApplied.current = seed
+      if (!tdpTouched.current) setTdp_(seed)
+    })
+    return () => { alive = false; if (retry) clearTimeout(retry) }
+  }, [seedRound])
+
   // Same 2-D walk as the main window. The old linear version made Left and Down do the same thing,
   // which on a grid of five mode squares is close to unusable.
   useSpatialNav(rootRef, { onCancel: closeOverlay })
 
   const pickMode = async (m: ModeId) => {
+    const previous = mode
     setModeS(m)
-    try { await setMode(m) } catch { /* ignore */ }
+    try {
+      await setMode(m)
+    } catch (e) {
+      // Said, and undone: a failed switch used to be swallowed, then the stepper showed the new mode's
+      // preset and recorded it as applied — a value a later refused write rolled back to (audit round 3).
+      setModeS(previous)
+      toast.push({ kind: 'error', message: `Mode was not changed — ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
     // A mode change ends the manual override, so the preset is what is now in force.
     if (presets[m]) { setTdp_(presets[m].stapmW); tdpApplied.current = presets[m].stapmW }
+    else { tdpTouched.current = false; setSeedRound((r) => r + 1) }   // no preset known: ask the daemon
+    setTdpWrite(null)
     toast.push({ kind: 'info', message: `Mode: ${QMODES.find((x) => x.id === m)?.label ?? m}` })
   }
   const applyTdp = async (next: number) => {
@@ -140,7 +169,7 @@ export function OverlayApp() {
       // What the firmware holds, when it could be read back; else the request stands. `observed` is
       // null on an unreadable readback, and writing that into the stepper blanked it.
       const held = r.observed ?? next
-      setTdp_(held); tdpApplied.current = held; setVerified(r.verified)
+      setTdp_(held); tdpApplied.current = held; setTdpWrite({ verified: r.verified, atMs: Date.now() })
     } catch (e) {
       // Said, not swallowed: a refused value (400 bad_tdp) or an unreachable daemon left the stepper
       // on a number that was never applied.
@@ -170,6 +199,9 @@ export function OverlayApp() {
   // The daemon answers GET /telemetry from its sampler's cache, so a sampler whose hardware read hangs
   // keeps serving the same numbers with a normal 200. Its age is what says so.
   const staleS = staleSeconds(tele)
+  // Answering, but the hardware has never been read (audit round 3): not stale, and not live either.
+  const noReading = unsampled(tele)
+  const verified = tele ? tdpVerifiedNow(tele, tdpWrite) : (tdpWrite?.verified ?? seedVerified)
 
   return (
     <div className="qam" ref={rootRef} data-testid="qam">
@@ -183,11 +215,18 @@ export function OverlayApp() {
               Stalled · {staleS} s ago
             </span>
           )}
-          <span className={`qam-dot ${tele && staleS == null ? 'on' : ''}`} title={staleS == null ? 'live' : 'stalled'} />
+          {noReading && (
+            <span className="qam-stale" data-testid="qam-unsampled" role="status"
+                  aria-label="No telemetry yet — the daemon has not read the hardware">
+              No reading yet
+            </span>
+          )}
+          <span className={`qam-dot ${tele && staleS == null && !noReading ? 'on' : ''}`}
+                title={noReading ? 'no reading yet' : staleS == null ? 'live' : 'stalled'} />
         </div>
         {/* The live triple is the first thing a player looks at, so it gets the largest type in the
             panel and its own bracketed frame. Dimmed when stale: a frozen reading must not look live. */}
-        <div className="qam-live" data-stale={staleS != null || undefined}>
+        <div className="qam-live" data-stale={staleS != null || noReading || undefined}>
           <div className="qam-stat">
             <span className="qam-stat-v">{reading(tele?.cpuTempC)}<i>°C</i></span>
             <span className="qam-stat-k">CPU</span>
@@ -216,7 +255,7 @@ export function OverlayApp() {
       <div className="qam-line">
         <span className="qam-label">TDP {verified === true && <em className="qam-ok" data-testid="qam-verified">verified</em>}</span>
         <Stepper
-          label="TDP" value={tdp} unit="W" min={5} max={40} onChange={applyTdp}
+          label="TDP" value={tdp} unit="W" min={5} max={40} onChange={applyTdp} disabled={tdp == null}
           testid="qam-tdp" decTestid="qam-tdp-dec" incTestid="qam-tdp-inc"
         />
       </div>

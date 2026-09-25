@@ -22,6 +22,17 @@
 // `dotnet GpdForge.Service.dll --probe-tdp`, which prints ryzenadj's output verbatim between two
 // marker lines and then the parse; paste the verbatim part here as StrixPointInfo and keep the
 // synthetic variants below as extra cases.
+//
+// Audit round 3 (2026-09-24) re-checked this and it is STILL open: the audit ran non-elevated again,
+// and a UAC prompt is Alex's call, not a test run's. What changed is that the daemon no longer
+// depends on the unverified rows being right. Since round 2 the readback judges `PPT LIMIT SLOW` and
+// `THM LIMIT CORE` too, and neither has ever been seen on the HX 370 (the live /audit only proves
+// STAPM and PPT FAST). core/Tdp/TdpReadbackRule.cs now makes each of those rows earn its place: judged
+// until the first write it demonstrably follows (then for good), disowned with a warning after a
+// write it never once followed while STAPM and fast held. A fixed firmware Tctl therefore costs one
+// write's retries and one log line, not every write and a rewrite every 30 s. When the capture is
+// taken, check the service log for "no longer used to judge" — if it is there, the row does not
+// track on this APU and the capture will show why.
 namespace GpdForge.Core.Tests;
 
 public static class RyzenAdjFixtures

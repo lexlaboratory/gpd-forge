@@ -7,7 +7,8 @@
 // Reading the frame probe a second time in the same tick is deliberate and free: the probe
 // aggregates a trailing window that is not consumed by reading, and the target (FrameTarget) is
 // chosen the same way both times, so the recorder sees the sample the telemetry snapshot was built
-// from — including the presenting process name, which the snapshot itself does not carry.
+// from — including the presenting process name, which the snapshot itself does not carry. Since
+// audit round 3 (2026-09-24) both reads happen on the sampler's thread (core/History/SampleRecorder.cs).
 using GpdForge.Telemetry;
 using Microsoft.Extensions.Logging;
 
@@ -20,6 +21,9 @@ public sealed class SessionRecorder(
     ILogger<SessionRecorder>? logger = null)
 {
     private readonly SessionTracker _tracker = new(policy);
+    // Observe runs on the sampler's thread, Flush on ForgeWorker's at shutdown; the tracker is not
+    // thread-safe, and the two can meet while the host stops.
+    private readonly Lock _gate = new();
 
     /// <summary>
     /// False when no frame-rate probe is registered at all — the GPDFORGE_ENABLE_FPS gate is closed,
@@ -28,19 +32,26 @@ public sealed class SessionRecorder(
     /// </summary>
     public bool FpsAvailable => probe is not null;
 
-    public string? CurrentApp => _tracker.CurrentApp;
+    public string? CurrentApp { get { lock (_gate) return _tracker.CurrentApp; } }
 
-    /// <summary>Feeds one worker tick. Returns the session this tick closed, if any.</summary>
+    /// <summary>Feeds one telemetry sample. Returns the session it closed, if any.</summary>
     public GameSession? Observe(in TelemetrySnapshot snapshot, DateTimeOffset now)
     {
         FpsSample? frames = null;
         if (probe is not null && probe.TryRead(out var sample)) frames = sample;
-        return Record(_tracker.Observe(SessionTick.From(snapshot, frames, now)));
+        GameSession? closed;
+        lock (_gate) closed = _tracker.Observe(SessionTick.From(snapshot, frames, now));
+        return Record(closed);
     }
 
     /// <summary>Files the in-flight session, if any — call on shutdown so quitting the service does
     /// not silently lose the evening.</summary>
-    public GameSession? Flush(DateTimeOffset now) => Record(_tracker.Flush(now));
+    public GameSession? Flush(DateTimeOffset now)
+    {
+        GameSession? closed;
+        lock (_gate) closed = _tracker.Flush(now);
+        return Record(closed);
+    }
 
     private GameSession? Record(GameSession? closed)
     {

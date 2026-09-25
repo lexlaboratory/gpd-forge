@@ -79,7 +79,7 @@ public sealed class ForgeWorkerStallTests : IDisposable
             new AuditingTdpController(new ClosedLoopTdpController(silicon, new NoWait()), new HardwareAuditLog(), state, "test"), state);
         _worker = new ForgeWorker(
             _log, tdp, new StubFanController(), _source, mode, new AutoFpsState(),
-            new FpsTdpController(), new FreezerService(new NullSuspender()), new GuardianService(), new TelemetryHistory(),
+            new FpsTdpController(), new FreezerService(new NullSuspender()), new GuardianService(),
             new ProfileApplier(tdp, detector, intent: intent, state: state), new PowerSourceState(), new TunerState(),
             new AlertService(new AlertStore(_dir)), new ChargeGuardService(new MemoryChargeGuardStore()),
             new SessionRecorder(new SessionStore(_dir)),

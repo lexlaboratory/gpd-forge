@@ -31,7 +31,6 @@ public sealed class ForgeWorkerTdpTests : IDisposable
     private readonly SwitchableDetector _detector = new();
     private readonly ManualTimeProvider _clock = new();
     private readonly ScriptedTelemetrySource _source = new();
-    private readonly TelemetryHistory _history = new();
     private readonly ModeState _mode = new();
     private readonly AutoFpsState _autoFps = new();
     private readonly GuardianService _guardian = new();
@@ -46,7 +45,7 @@ public sealed class ForgeWorkerTdpTests : IDisposable
             new AuditingTdpController(new ClosedLoopTdpController(_silicon, new NoWait()), _audit, _state, "test"), _state);
         _worker = new ForgeWorker(
             NullLogger<ForgeWorker>.Instance, tdp, new StubFanController(), _source, _mode, _autoFps,
-            new FpsTdpController(), new FreezerService(new NullSuspender()), _guardian, _history,
+            new FpsTdpController(), new FreezerService(new NullSuspender()), _guardian,
             new ProfileApplier(tdp, _detector, intent: _intent, state: _state), _powerSource, new TunerState(),
             new AlertService(new AlertStore(_dir)), new ChargeGuardService(new MemoryChargeGuardStore()),
             new SessionRecorder(new SessionStore(_dir)),
@@ -61,7 +60,7 @@ public sealed class ForgeWorkerTdpTests : IDisposable
     }
 
     private static TelemetrySnapshot Cool(double? fps = null) =>
-        TelemetrySnapshot.Unmeasured with { CpuTempC = 55, BatteryPct = 60, Fps = fps };
+        TelemetrySnapshot.Unmeasured with { CpuTempC = 55, BatteryPct = 60, Fps = fps, AcUnknown = false };
 
     private IEnumerable<string> Writes(string owner) =>
         _audit.Recent(500).Where(w => w.Subsystem == "tdp" && w.Detail.StartsWith($"[{owner}]")).Select(w => w.Detail);

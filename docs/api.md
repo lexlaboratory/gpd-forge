@@ -79,7 +79,13 @@ did its own full read — four WMI queries, an `Update()` of every LHM device an
   response was built; normally under 1000. A value that keeps growing means the sampler has stalled
   and the numbers are the last ones it managed to take. Both are **null before the first sample**,
   when every sensor is null too (the endpoint waits up to 5 s for that first sample at startup
-  rather than answering with nothing).
+  rather than answering with nothing). That placeholder also carries `acKnown: false` (audit round 3,
+  2026-09-24): it went out as `acKnown: true`, a confident "on battery" nobody had read. A client
+  should treat `sampledAtMs` present and null as "no reading yet" — neither live nor stale — as the
+  UI, the overlay and the MCP tool (`unsampled: true`) do.
+- Every published sample becomes one `GET /history` row: the history is fed by the sampler itself,
+  not by the worker's tick, which skips samples superseded while a TDP write is in flight (audit
+  round 3). Rows per second in `/history` are therefore the sampler's real rate.
 - Battery, discharge and the ACPI thermal zone are queried **every 5 s** and served from cache in
   between (also re-read immediately after a suspend). `acConnected` rides on the battery query, so a
   plug-in shows up within 5 s.
@@ -237,6 +243,18 @@ the comparison and the re-apply run as one step under the TDP write gate, so the
 beside another writer's ryzenadj on the SMU mailbox (until audit round 2 it ran outside the gate). A
 re-apply appears in `GET /tdp` and `GET /audit` as owner `reassert`. Not during a guardian throttle,
 which re-asserts its own ceiling.
+
+Audit round 3 (2026-09-24), two refinements:
+- **Rows this APU may not report.** Neither the slow row nor `THM LIMIT CORE` has been seen on the HX
+  370 (reading the PM table needs elevation, and no capture exists). Each one is judged until the
+  first write it demonstrably follows — from then on for good — and stops being judged, with one
+  warning in the service log ("no longer used to judge"), after a write whose STAPM and fast held on
+  every attempt while that row never came back at the value written. So a firmware that prints a
+  fixed Tctl costs one write's retries, not an unverified write every time and a rewrite every 30 s.
+- **A startup apply that yielded is completed.** When MotionAssistant or GPD Tool is running at boot,
+  the startup apply yields and writes nothing; once the rival exits, the reassert applies the active
+  mode (or its manual override), exactly as it completes a mode switch that yielded mid-session.
+  Before, nothing was written until the user picked a mode again.
 
 ### `GET /audit`  (every hardware write the daemon has made)
 `200 → { capacity: 500, total: number, failed: number, unconfirmed: number,

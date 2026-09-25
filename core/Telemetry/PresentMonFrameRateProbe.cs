@@ -11,8 +11,8 @@
 // once. Intel signs its PresentMon releases, and SAC does run signed, reputable binaries.
 //
 // Every failure mode — PresentMon missing, blocked by SAC, exiting, emitting nothing — lands in the
-// same place: TryRead returns false and telemetry reports fps 0, meaning "not available". We never
-// invent a frame rate.
+// same place: TryRead returns false and telemetry reports fps null ("n/a") — never 0, which would
+// claim a measured idle. We never invent a frame rate.
 using System.Diagnostics;
 using GpdForge.Profiles;
 using Microsoft.Extensions.Logging;
@@ -33,8 +33,14 @@ public sealed class PresentMonFrameRateProbe : IFrameRateProbe, IFrameTimeSource
     private readonly ILogger? _logger;
     private readonly string _exePath;
     private readonly CancellationTokenSource _cts = new();
+    // Guards the PresentMon process: EnsureRunning and Dispose both check-then-act on _process. The
+    // probe is read from the sampler's thread and, through IFrameTimeSource, from request threads;
+    // unguarded, two readers that both saw an exited PresentMon both started one, and the overwritten
+    // Process was never killed or disposed while its pump kept feeding the shared feed (audit round 3,
+    // 2026-09-24). The feed has its own lock; this one covers only the process lifecycle.
+    private readonly Lock _procGate = new();
     private Process? _process;
-    private bool _disposed;
+    private volatile bool _disposed;
     private bool _startFailureLogged;
 
     /// <param name="foreground">Names the foreground process. Null (or a null answer) leaves the
@@ -127,6 +133,13 @@ public sealed class PresentMonFrameRateProbe : IFrameRateProbe, IFrameTimeSource
     /// </summary>
     private void EnsureRunning()
     {
+        lock (_procGate) EnsureRunningLocked();
+    }
+
+    private void EnsureRunningLocked()
+    {
+        // Checked inside the lock: a Dispose that won the race must not be followed by a fresh start.
+        if (_disposed) return;
         if (_process is { HasExited: false }) return;
 
         try
@@ -197,19 +210,23 @@ public sealed class PresentMonFrameRateProbe : IFrameRateProbe, IFrameTimeSource
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        lock (_procGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
 
-        try { _cts.Cancel(); } catch (ObjectDisposedException) { }
-        try
-        {
-            if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true);
+            try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+            try
+            {
+                if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+            {
+                _logger?.LogDebug(ex, "PresentMon did not stop cleanly");
+            }
+            _process?.Dispose();
+            _process = null;
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
-        {
-            _logger?.LogDebug(ex, "PresentMon did not stop cleanly");
-        }
-        _process?.Dispose();
         _cts.Dispose();
     }
 }

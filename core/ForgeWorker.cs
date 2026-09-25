@@ -4,7 +4,6 @@
 using GpdForge.Api;
 using GpdForge.Fan;
 using GpdForge.Guardian;
-using GpdForge.History;
 using GpdForge.Profiles;
 using GpdForge.SystemControl;
 using GpdForge.Tdp;
@@ -24,7 +23,9 @@ namespace GpdForge;
 /// the active mode once at start, and every 30 s reads the limits back and re-applies the last write
 /// only if it moved (TdpReasserter). Thaws
 /// any frozen processes on stop. The fan is not driven from here: it has its own 1 s loop
-/// (core/Fan/FanWorker.cs), so a slow ryzenadj apply in this tick can never delay it.
+/// (core/Fan/FanWorker.cs), so a slow ryzenadj apply in this tick can never delay it. Nor are
+/// /history and the session tracker: they need every sample, and this tick takes only the newest
+/// one, so the sampler feeds them (core/History/SampleRecorder.cs, audit round 3).
 /// </summary>
 public sealed class ForgeWorker(
     ILogger<ForgeWorker> logger,
@@ -36,7 +37,6 @@ public sealed class ForgeWorker(
     FpsTdpController fpsController,
     FreezerService freezer,
     GuardianService guardian,
-    TelemetryHistory history,
     ProfileApplier profileApplier,
     PowerSourceState powerSource,
     TunerState tuner,
@@ -84,7 +84,7 @@ public sealed class ForgeWorker(
                 // own followed by Delay(1 s). A tick that overran (a slow ryzenadj) simply picks up the
                 // newest sample next; a sampler that stalls leaves the tick waiting, exactly as the
                 // old blocking read did, rather than re-processing a stale snapshot as if it were new
-                // (which would put duplicate rows in the history and feed the guardian old data).
+                // (which would feed the guardian old data twice).
                 var reading = await telemetry.WaitForNewerAsync(lastSequence, SampleWait, stoppingToken);
                 if (reading.Sequence == lastSequence)
                 {
@@ -98,11 +98,6 @@ public sealed class ForgeWorker(
                     logger.LogInformation("Telemetry samples resumed; the guardian and the rest of the tick are running again.");
                 lastSequence = reading.Sequence;
                 var snapshot = reading.Snapshot;
-                var sampledAt = reading.SampledAt ?? DateTimeOffset.UtcNow;
-
-                // Stamped with when the hardware was READ, not when this tick got round to it.
-                history.Add(new HistorySample(sampledAt.ToUnixTimeMilliseconds(), snapshot));
-                sessions.Observe(snapshot, sampledAt);
 
                 // Per-power-source auto mode-switch — only on the AC/battery edge, mirroring how
                 // POST /mode applies: flip ModeState.Active, then apply it through the same
@@ -292,8 +287,10 @@ public sealed class ForgeWorker(
     /// TDP was written only when the mode CHANGED, so after a reboot or a service restart the machine
     /// ran on whatever the last writer — or the firmware default — had left, while `GET /mode` named a
     /// mode whose limits were not in force. Through ProfileApplier, so it yields exactly as a mode
-    /// switch does when MotionAssistant or GPD Tool is running. A failure is logged and the loop starts
-    /// anyway: the rest of this worker (guardian, history, sessions) must not depend on one ryzenadj run.
+    /// switch does when MotionAssistant or GPD Tool is running — and that yield is not the end of it: it
+    /// marks the TDP state stale, so once the rival exits the 30 s reassert applies the mode (audit round
+    /// 3, 2026-09-24; it used to be dropped until the user picked a mode again). A failure is logged and the loop starts
+    /// anyway: the rest of this worker (guardian, charge guard, reassert) must not depend on one ryzenadj run.
     /// <para>
     /// "The active mode" is the one the user last picked, read back from disk (ModeState over
     /// ModeStore). It was an in-memory `windows` until audit round 2 (2026-09-24), so a restart while

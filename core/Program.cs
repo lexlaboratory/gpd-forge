@@ -568,6 +568,10 @@ else
 }
 
 builder.Services.AddSingleton<TdpState>();
+// Which PM-table rows judge "the write held". ONE instance for the closed loop and the 30 s reassert, so
+// a slow/Tctl row this APU turns out not to report stops being judged by both at once
+// (core/Tdp/TdpReadbackRule.cs, audit round 3).
+builder.Services.AddSingleton<TdpReadbackRule>();
 // Outermost: one write at a time (core/Tdp/SerializedTdpController.cs). Five writers run on their
 // own threads, and two overlapping closed loops fight retry by retry; the 30 s reassert also needs
 // its "nothing wrote since I read" check to be atomic with its write.
@@ -792,6 +796,10 @@ builder.Services.AddSingleton(sp => new SessionRecorder(
     sp.GetRequiredService<SessionStore>(),
     sp.GetService<IFrameRateProbe>(),
     logger: sp.GetService<ILogger<SessionRecorder>>()));
+// /history and the session tracker are fed by the SAMPLER, one row per published sample
+// (core/History/SampleRecorder.cs). ForgeWorker fed them from its tick, which skips any sample
+// superseded while a ryzenadj write is in flight (audit round 3, 2026-09-24).
+builder.Services.AddSingleton<ITelemetrySink, SampleRecorder>();
 
 builder.Services.AddHostedService<ForgeWorker>();
 
