@@ -114,7 +114,7 @@ public sealed class ForgeWorker(
                         string? desired = PowerSourceProfiles.Resolve(snapshot.AcConnected, powerSource.Config, mode.Active);
                         if (desired is not null)
                         {
-                            mode.Active = desired;
+                            mode.SwitchAutomatically(desired);   // not restored as the user's pick (audit round 3)
                             await profileApplier.ApplyAsync(mode.Active, stoppingToken);
                         }
                     }

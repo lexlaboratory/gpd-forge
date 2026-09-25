@@ -81,6 +81,17 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **Opening the overlay over a game no longer switches the mode.** Now that the session agent reports
+  the real foreground, the overlay — an Edge window — became the app auto-profiles judged, so about
+  4.5 s after opening it over a game a rule had put in `gaming` the mode flipped to `windows`, wrote
+  its preset and threw away the TDP just set with the overlay's own stepper; closing it flipped back.
+  A known non-game window (the overlay, GPD Forge, the shell, Steam's overlay) now leaves the game
+  underneath deciding for as long as that game is running.
+- **Auto-profiles follow the power source again after a restart.** Every mode switch was saved as if
+  you had picked it, so a `battery` auto-profiles chose unplugged came back after a boot on AC — 8 W
+  on the charger, even under an unruled game — until a ruled app or pulling the charger. Only a mode
+  you pick is restored now; after an automatic switch the daemon starts in `windows` and auto-profiles
+  decide from what is true at the new start.
 - **The overlay says Offline when the daemon stops answering.** A failed poll kept the last good
   reading, whose age was fresh when the daemon served it and never aged afterwards, so a crashed
   daemon — and with it the guardian, the fan loop and TDP control — left a green "live" dot over

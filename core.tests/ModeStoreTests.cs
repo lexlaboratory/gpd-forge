@@ -79,4 +79,52 @@ public sealed class ModeStoreTests : IDisposable
 
         Assert.Equal("gaming", state.Active);
     }
+
+    [Fact]
+    public void A_mode_switched_automatically_is_saved_but_not_restored()
+    {
+        // Audit round 3 (2026-09-25): an automatic switch is a reaction to the power source or the
+        // app in front, both of which may differ at the next start; only a user's pick is restored.
+        var state = new ModeState(new ModeStore(_dir));
+        state.SwitchAutomatically("battery");
+
+        Assert.Equal("battery", state.Active);
+        Assert.Equal(new ModeStore.Entry("battery", ChosenByUser: false), new ModeStore(_dir).ReadEntry());
+        var after = new ModeState(new ModeStore(_dir));
+        Assert.False(after.Restored);
+        Assert.Equal(ModeCatalogue.Windows, after.Active);
+    }
+
+    [Fact]
+    public void Re_picking_the_mode_an_automatic_switch_chose_makes_it_the_users()
+    {
+        var state = new ModeState(new ModeStore(_dir));
+        state.SwitchAutomatically("gaming");
+        state.Active = "gaming";   // POST /mode with the mode already active
+
+        var after = new ModeState(new ModeStore(_dir));
+        Assert.True(after.Restored);
+        Assert.Equal("gaming", after.Active);
+    }
+
+    [Fact]
+    public void An_automatic_switch_to_the_users_mode_leaves_it_the_users()
+    {
+        var state = new ModeState(new ModeStore(_dir)) { Active = "gaming" };
+        state.SwitchAutomatically("gaming");
+
+        Assert.True(new ModeState(new ModeStore(_dir)).Restored);
+    }
+
+    [Fact]
+    public void A_file_saved_before_the_source_was_recorded_is_the_users_choice()
+    {
+        // Round 2 files carry only the mode; they were written for the user's pick, so they keep it.
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "mode.json"), "{ \"active\": \"gaming\" }");
+
+        var state = new ModeState(new ModeStore(_dir));
+        Assert.True(state.Restored);
+        Assert.Equal("gaming", state.Active);
+    }
 }

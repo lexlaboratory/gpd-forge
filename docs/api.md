@@ -227,7 +227,10 @@ behavior that replaces MotionAssistant's blind 30s re-apply).
   the preset; a guardian throttle is a ceiling under the override, never above it. Any `POST /mode`
   ends it. It is held in memory: after a restart the preset of the mode last picked applies (the
   active mode itself IS kept across restarts, in `mode.json` under the data directory — before audit
-  round 2, 2026-09-24, a restart always started, and wrote, `windows`).
+  round 2, 2026-09-24, a restart always started, and wrote, `windows`). Only a mode picked with
+  `POST /mode` is restored: when the last switch was automatic (auto-profiles, the AC/battery switch),
+  the daemon starts in `windows` and auto-profiles re-derive the mode from the power source and the
+  app in front (audit round 3, 2026-09-25 — a `battery` picked unplugged held 8 W after a boot on AC).
 - `409 { error: { code: "tdp_superseded" } }` when a `POST /mode` (or a later `POST /tdp`) landed
   while this write waited for the TDP write gate. The mode change ended the override and wrote its own
   preset; writing this one anyway left the old mode's manual profile in force under the new mode, with
@@ -337,7 +340,11 @@ endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on the
     acConnected: boolean, atUtc: string }` — what decided the mode on the daemon's most recent
     foreground tick. `ruleId: null` means no rule matched and the mode came from the AC/battery
     fallback, so the UI can say so instead of implying a rule is in charge. `null` until the focus
-    worker has run at all (it does not run when `autoProfiles` is false).
+    worker has run at all (it does not run when `autoProfiles` is false). `process` is the app that
+    decided, which is not always the foreground: a known non-game window over a game that is still
+    running — the overlay (an Edge `--app` window), GPD Forge itself, the shell, Steam's overlay —
+    leaves the game deciding, so opening the overlay does not switch the mode (audit round 3,
+    2026-09-25).
 - `POST { match, mode, enabled? } → (the GET shape)` — appends a rule at **lowest** precedence.
 - `PUT /app-rules/:id { match, mode, enabled } → (the GET shape)` — replaces the rule in place,
   keeping its position. `404` if the id is unknown.
