@@ -269,6 +269,87 @@ public class TdpReasserterTests
         Assert.False(state.Last!.Value.Verified);
     }
 
+    // Audit round 1 of F0 (2026-09-25): a limit the firmware refuses (POST /tdp 35 on a firmware that
+    // caps STAPM at 30) read as "moved" on every check, so every 30 s the reassert ran a full closed
+    // loop — four applies and ~9 s of backoff, inline in ForgeWorker's tick and holding the write gate.
+
+    private static (CountingStubborn Smu, SerializedTdpController Tdp, TdpState State, TdpReasserter Reasserter)
+        BuildStubborn(TdpReadout stuckAt, TdpState? state = null)
+    {
+        var smu = new CountingStubborn(stuckAt);
+        state ??= new TdpState();
+        var tdp = new SerializedTdpController(new AuditingTdpController(
+            new ClosedLoopTdpController(smu, new NoWait()), new HardwareAuditLog(), state, "test"), state);
+        var reasserter = new TdpReasserter(smu, tdp, state, new SwitchableDetector(), new TdpIntent(),
+            new ModeState(), new ManualTimeProvider());
+        return (smu, tdp, state, reasserter);
+    }
+
+    [Fact]
+    public async Task A_write_the_firmware_refused_is_not_rewritten_every_thirty_seconds()
+    {
+        var (smu, tdp, state, reasserter) = BuildStubborn(new TdpReadout(30, 30));
+        var ct = CancellationToken.None;
+        var r = await tdp.ApplyAsync(new TdpProfile(35, 40, 35, 92), TdpOwner.Manual, ct);
+        Assert.False(r.Verified);
+        int writes = smu.Writes;
+
+        Assert.Equal(ReassertOutcome.Refused, await reasserter.ReassertAsync(ct));
+        Assert.Equal(ReassertOutcome.Refused, await reasserter.ReassertAsync(ct));
+        Assert.Equal(writes, smu.Writes);
+        Assert.Equal(TdpOwner.Manual, state.Last!.Value.Owner);   // still the user's write, unchanged
+    }
+
+    [Fact]
+    public async Task Two_checks_against_a_firmware_that_refuses_the_limit_write_at_most_once()
+    {
+        // The limit was verified once and has since moved to a value the firmware then refuses to leave:
+        // one re-apply (that is what the reassert is for), then no more until the reading changes again.
+        var rig = Build();
+        var ct = CancellationToken.None;
+        await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, ct);
+        Assert.True(rig.State.Last!.Value.Verified);
+        var (smu, _, _, reasserter) = BuildStubborn(new TdpReadout(25, 30), rig.State);
+
+        Assert.Equal(ReassertOutcome.NotHeld, await reasserter.ReassertAsync(ct));
+        int afterFirst = smu.Writes;
+        Assert.True(afterFirst > 0);
+        Assert.Equal(ReassertOutcome.Refused, await reasserter.ReassertAsync(ct));
+        Assert.Equal(afterFirst, smu.Writes);
+    }
+
+    [Fact]
+    public async Task A_refused_limit_is_tried_again_once_the_reading_changes()
+    {
+        // Something moved the limits since the refusal (a power event, another tool): that is new
+        // evidence, and the firmware may take the limit now. One re-apply, not a loop.
+        var (smu, tdp, _, reasserter) = BuildStubborn(new TdpReadout(30, 30));
+        var ct = CancellationToken.None;
+        await tdp.ApplyAsync(new TdpProfile(35, 40, 35, 92), TdpOwner.Manual, ct);
+        smu.StuckAt = new TdpReadout(22, 25);
+        int writes = smu.Writes;
+
+        Assert.Equal(ReassertOutcome.NotHeld, await reasserter.ReassertAsync(ct));
+        Assert.True(smu.Writes > writes);
+        writes = smu.Writes;
+        Assert.Equal(ReassertOutcome.Refused, await reasserter.ReassertAsync(ct));
+        Assert.Equal(writes, smu.Writes);
+    }
+
+    /// <summary>Takes nothing, reads a fixed readout, and counts the writes it ignored.</summary>
+    private sealed class CountingStubborn(TdpReadout stuckAt) : ITdpBackend
+    {
+        private int _writes;
+        public TdpReadout StuckAt { get; set; } = stuckAt;
+        public int Writes => Volatile.Read(ref _writes);
+        public Task ApplyAsync(TdpProfile profile, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _writes);
+            return Task.CompletedTask;
+        }
+        public Task<TdpReadout> ReadAsync(CancellationToken ct) => Task.FromResult(StuckAt);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Ownership after a mode switch that yielded (audit, 2026-09-24)
     // ---------------------------------------------------------------------------------------------

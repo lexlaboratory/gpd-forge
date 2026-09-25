@@ -87,6 +87,16 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   its preset and threw away the TDP just set with the overlay's own stepper; closing it flipped back.
   A known non-game window (the overlay, GPD Forge, the shell, Steam's overlay) now leaves the game
   underneath deciding for as long as that game is running.
+- **Steam in front switches to `gaming` again.** The overlay fix above held whatever app had been in
+  front before — notepad, a terminal — and replaced every listed non-game window with it, so opening
+  Steam or Big Picture with notepad still open stayed in `windows`, and a rule of your own on a
+  browser or Discord was ignored the same way. A window a rule names now decides for itself, and only
+  an app a rule names is held under the overlay.
+- **A TDP the firmware refuses is no longer rewritten every 30 s.** After `verified: false` (asking
+  35 W of a firmware that caps at 30, say) the reassert read the same refusal on every check and ran
+  the whole closed loop again — four applies and ~9 s of retries each time, stalling the thermal
+  guardian's loop and holding up `POST /tdp`, `/mode` and `/panic` behind it. A refused limit is now
+  left alone until the readback changes; then it is tried once more.
 - **Auto-profiles follow the power source again after a restart.** Every mode switch was saved as if
   you had picked it, so a `battery` auto-profiles chose unplugged came back after a boot on AC — 8 W
   on the charger, even under an unruled game — until a ruled app or pulling the charger. Only a mode

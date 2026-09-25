@@ -20,6 +20,11 @@
 // same list FrameTarget keeps out of the FPS reading) stands in for the last game-like foreground while
 // that app is still running. Once it has exited, the shell in front is just the desktop, and counts.
 //
+// F0 audit round 1 (2026-09-25): that stand-in held ANY unlisted app and replaced EVERY listed one, so
+// notepad left open hid Steam / Big Picture in front of it and the shipped steam -> gaming rule never
+// fired (nor a user's rule on a browser or Discord). Now only a ruled app is held, and only a listed
+// window with no rule of its own stands in for it.
+//
 // The switch is automatic, so it goes through SwitchAutomatically: a restart does not restore it as the
 // user's pick (see ModeState).
 using System.Diagnostics;
@@ -76,16 +81,23 @@ public sealed class FocusProfileLoop(
     }
 
     /// <summary>The foreground the engine should judge: <paramref name="current"/>, unless it is a known
-    /// non-game window over a game-like app that is still running, in which case that app. Null (the
-    /// agent has not reported) passes through and does not forget the last game-like app.</summary>
+    /// non-game window no rule names, over a ruled app that is still running — then that app. Null (the
+    /// agent has not reported) passes through and does not forget the held app.</summary>
     private string? Effective(string? current)
     {
         if (current is null) return null;
+        // A rule on the foreground decides, listed non-game or not: the shipped steam -> gaming rule
+        // (Steam and Big Picture are on the list), or a user's rule on a browser or Discord.
+        bool ruled = rules.ModeFor(current) is not null;
         if (!FrameTarget.IsNonGame(current))
         {
-            _lastGameLike = current;
+            // Only a ruled app is worth holding. An unruled one resolves to the power default exactly as
+            // the non-game window over it would — and holding it (notepad, say) is what hid a ruled
+            // launcher in front of it, and named the wrong app in the Profiles readout.
+            _lastGameLike = ruled ? current : null;
             return current;
         }
+        if (ruled) return current;
         if (_lastGameLike is not null && _isRunning(_lastGameLike)) return _lastGameLike;
         _lastGameLike = null;   // gone: the non-game window is simply what the user is using now
         return current;

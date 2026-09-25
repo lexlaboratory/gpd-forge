@@ -21,7 +21,9 @@
 //     FINISHED, so a POST /tdp still in its closed loop could be overwritten by the stale profile;
 //     until audit round 2 the read ran outside the gate, beside other writers' ryzenadj;
 //   - "differs" covers all four limits it writes: STAPM and fast always, slow and Tctl whenever the
-//     PM table prints them (audit round 2 — a firmware revert of only those used to read as holding).
+//     PM table prints them (audit round 2 — a firmware revert of only those used to read as holding);
+//   - a write the firmware REFUSED (verified:false) is not re-applied while the readback is still the
+//     one it was refused with — only a reading that changed since is worth one more try (F0 audit).
 //
 // "What GPD Forge last wrote" is TdpState.Last — whoever wrote it: the mode, a manual override, a
 // guardian ceiling, auto-FPS. Re-asserting any other profile (the preset, say) would silently undo
@@ -59,6 +61,9 @@ public enum ReassertOutcome
     Reasserted,
     /// <summary>The limit had moved; it was re-applied and the firmware still did not take it.</summary>
     NotHeld,
+    /// <summary>The last write was refused by the firmware and the readback is still what it refused
+    /// with: nothing new to act on, so nothing written.</summary>
+    Refused,
 }
 
 public sealed class TdpReasserter(
@@ -85,6 +90,7 @@ public sealed class TdpReasserter(
     private readonly TdpReadbackRule _rule = rule ?? new TdpReadbackRule();
     private long _lastCheck = (time ?? TimeProvider.System).GetTimestamp();
     private bool _unreadableLogged;
+    private bool _refusalLogged;
 
     /// <summary>
     /// Runs <see cref="ReassertAsync"/> when <see cref="DefaultInterval"/> has passed since the last
@@ -164,6 +170,23 @@ public sealed class TdpReasserter(
 
         if (_rule.Holds(observed, want, ToleranceW)) return ReassertOutcome.Holding;
 
+        // A write the closed loop already failed to hold is not a limit that MOVED: the firmware said no,
+        // and asking again every 30 s — four applies and ~9 s of backoff each time, inline in the worker's
+        // tick with the write gate held — is the blind re-apply this class replaces (audit round 1 of F0,
+        // 2026-09-25: POST /tdp 35 on a firmware capped at 30 rewrote 35 W every 30 s forever). Only a
+        // readback that has changed since the refusal is new evidence worth one more try.
+        if (!ownership.Stale && ownership.Last!.Value is { Verified: false } refused
+            && SameReading(observed, refused.Observed))
+        {
+            if (!_refusalLogged)
+                logger?.LogInformation(
+                    "TDP reassert: STAPM {Want}W / fast {WantFast}W was refused by the firmware (read {Stapm}W / {Fast}W); not re-applied until the reading changes.",
+                    want.StapmW, want.FastW, observed.StapmW, observed.PptW);
+            _refusalLogged = true;
+            return ReassertOutcome.Refused;
+        }
+        _refusalLogged = false;
+
         if (ownership.Stale)
             logger?.LogInformation(
                 "TDP: mode '{Mode}' was selected while another power controller held TDP. It is gone, so applying STAPM {Want}W / fast {WantFast}W (read {Stapm}W / {Fast}W).",
@@ -184,5 +207,19 @@ public sealed class TdpReasserter(
             logger?.LogWarning(ex, "TDP reassert: the re-apply failed.");
             return ReassertOutcome.NotHeld;
         }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="now"/> is the readback a refused write ended on. A refusal with no STAPM
+    /// or fast reading was never judged by the firmware (the read failed), so it is not a refusal and
+    /// the limit is re-applied as before. Slow and Tctl count only when both readings have them.
+    /// </summary>
+    private static bool SameReading(TdpReadout now, TdpReadout refused)
+    {
+        if (refused.StapmW is null || refused.PptW is null) return false;
+        return Near(now.StapmW, refused.StapmW) && Near(now.PptW, refused.PptW)
+            && Near(now.PptSlowW, refused.PptSlowW) && Near(now.TctlC, refused.TctlC);
+
+        static bool Near(int? a, int? b) => a is null || b is null || Math.Abs(a.Value - b.Value) <= ToleranceW;
     }
 }

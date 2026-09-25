@@ -205,6 +205,67 @@ public sealed class FocusProfileLoopTests : IDisposable
         Assert.Equal("battery", mode.Active);
     }
 
+    // Audit round 1 of F0 (2026-09-25): the round-3 stand-in replaced EVERY listed non-game foreground
+    // with the last unlisted app still running — and that app need not be a game. Notepad left open,
+    // then Steam / Big Picture in front: the engine judged notepad, and the shipped steam -> gaming
+    // rule never fired. A listed app a rule names decides for itself.
+    [Theory]
+    [InlineData("steam")]
+    [InlineData("steamwebhelper")]   // Big Picture; the shipped "steam" rule matches it as a substring
+    public async Task Steam_in_front_of_an_app_still_running_switches_to_gaming(string launcher)
+    {
+        var mode = new ModeState();
+        var (loop, fg, _) = Build(mode, foreground: "notepad");
+        await TickAsync(loop, 3);
+        Assert.Equal("windows", mode.Active);
+
+        fg.Proc = launcher;
+        await TickAsync(loop, 6);
+
+        Assert.Equal("gaming", mode.Active);
+    }
+
+    [Fact]
+    public async Task A_user_rule_on_a_browser_wins_over_a_game_still_running()
+    {
+        var mode = new ModeState();
+        var fg = new FakeForeground("retroarch");
+        var rules = new AppRuleStore(Path.Combine(_dir, "rules"));
+        rules.Add("msedge", "battery");
+        var loop = new FocusProfileLoop(fg, OnAc(), mode, new ProfileApplier(new CountingTdp(), new NoRivals()),
+            rules, isRunning: _ => true);
+        await TickAsync(loop, 3);
+        Assert.Equal("gaming", mode.Active);
+
+        fg.Proc = "msedge";
+        await TickAsync(loop, 3);
+
+        Assert.Equal("battery", mode.Active);
+        Assert.Equal("msedge", rules.LastMatch!.Process);
+    }
+
+    [Fact]
+    public async Task Only_a_ruled_app_is_held_under_a_non_game_window()
+    {
+        // The game was left for notepad, and the overlay then opened over notepad: the game is no longer
+        // what the user is on, and notepad (no rule) is not something to hold either.
+        var mode = new ModeState();
+        var rules = new AppRuleStore(Path.Combine(_dir, "rules"));
+        var fg = new FakeForeground("retroarch");
+        var loop = new FocusProfileLoop(fg, OnBattery(), mode, new ProfileApplier(new CountingTdp(), new NoRivals()),
+            rules, isRunning: _ => true);
+        await TickAsync(loop, 3);
+        Assert.Equal("gaming", mode.Active);
+
+        fg.Proc = "notepad";
+        await TickAsync(loop, 1);
+        fg.Proc = "msedge";
+        await TickAsync(loop, 3);
+
+        Assert.Equal("battery", mode.Active);
+        Assert.Equal("msedge", rules.LastMatch!.Process);
+    }
+
     // Audit round 3 (2026-09-25): every writer saved the mode, so a mode auto-profiles picked was
     // restored after a restart as if the user had chosen it, and the engine adopted it: `battery`
     // saved unplugged kept 8 W on a machine that booted on AC, until a ruled app or an AC edge.
