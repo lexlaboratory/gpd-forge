@@ -49,6 +49,10 @@ Regla de trabajo en todas las fases:
 3. **Loop del ventilador independiente** con temporizador fijo de 1 s (`core/ForgeWorker.cs:198-245` → `FanWorker`), para que un `ryzenadj` lento no lo retrase.
 4. **PresentMon fiable** (`PresentMonFrameRateProbe.cs`, `PresentMonCsv.cs`):
    - Objetivo = proceso en primer plano (ya lo resuelve `FocusProfileWorker`) o el que coincida con una regla de juego. Nunca "el que más filas tiene".
+     **Corrección (auditoría 2026-09-24):** la premisa era falsa en el servicio instalado — corre en la
+     sesión 0, donde `GetForegroundWindow` siempre es NULL. El primer plano lo reporta ahora el agente
+     de la sesión del usuario (`POST /session/foreground`); sin agente, `FrameTarget` excluye
+     compositor/navegadores/launchers/overlays y toma el presentador más activo que pueda ser un juego.
    - Usar el tiempo de la propia fila (`CPUStartTime`/`TimeInSeconds`) y tolerar `NA`.
    - **Exponer un buffer de frametimes de los últimos 10 s** para F2.
 5. **TDP robusto:**
@@ -57,6 +61,10 @@ Regla de trabajo en todas las fases:
    - El TDP manual se recuerda como override hasta que cambie el modo.
    - Auto-FPS no escribe dentro de la banda muerta.
    - Test de parseo con salida real de Strix Point capturada del equipo.
+     **ABIERTO (auditoría 2026-09-24):** la tabla real no se ha capturado — `ryzenadj --info` sin
+     elevación falla con `WinRing0 Err: Driver not loaded`, y `core.tests/RyzenAdjFixtures.cs` es una
+     reconstrucción del formato de ryzenadj, no una captura. Para cerrarlo: desde una consola elevada,
+     `dotnet GpdForge.Service.dll --probe-tdp` (solo lectura) y pegar la salida literal como fixture.
 
 **Criterios:**
 - ≥0.95 muestras/s bajo carga y `GET /telemetry` < 5 ms.

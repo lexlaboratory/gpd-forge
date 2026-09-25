@@ -17,7 +17,8 @@ public sealed record HealthReport(string Status, IReadOnlyList<HealthIssue> Issu
 public sealed record HealthContext(
     double FanStuckTempC = 70,   // fan reads 0 rpm AND cpuTempC is above this → warn (parked-fan-while-warm)
     double CriticalTempC = 95,   // cpuTempC at/above this → critical thermal
-    double HighDischargeW = 30); // on battery AND dischargeW is above this → warn
+    double HighDischargeW = 30,  // on battery AND dischargeW is above this → warn
+    long StaleAfterMs = 3000);   // reading older than this → warn: three 1 Hz sampler ticks, the bound StandbyService uses
 
 /// <summary>
 /// Pure, side-effect-free anomaly detection over a telemetry snapshot — trivially unit-testable (same
@@ -26,6 +27,34 @@ public sealed record HealthContext(
 /// </summary>
 public static class HealthCheck
 {
+    /// <summary>
+    /// The rules below plus the one only the READING can answer: is it current? Since telemetry became
+    /// a cached sample (2026-09-24) a sampler whose hardware read hangs keeps serving its last snapshot
+    /// with a normal 200, and grading that frozen snapshot said "ok" while the guardian had stopped
+    /// (audit, 2026-09-24). A stale or never-taken sample is reported first; the other rules still run
+    /// on it, because what the machine last looked like is still worth knowing.
+    /// </summary>
+    public static HealthReport Evaluate(TelemetryReading reading, DateTimeOffset now, HealthContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(reading);
+        var report = Evaluate(reading.Snapshot, ctx);
+
+        HealthIssue? stale = reading.AgeMs(now) switch
+        {
+            null => new HealthIssue("warn", "telemetry_stale",
+                "No telemetry sample has been taken yet, so nothing below describes this machine."),
+            long age when age > ctx.StaleAfterMs => new HealthIssue("warn", "telemetry_stale",
+                $"No new telemetry sample for {age / 1000.0:0} s — the readings below are the last ones taken, " +
+                "and the thermal guardian is paused until sampling recovers."),
+            _ => null,
+        };
+        if (stale is null) return report;
+
+        var issues = new List<HealthIssue>(report.Issues.Count + 1) { stale };
+        issues.AddRange(report.Issues);
+        return new HealthReport(report.Status == "critical" ? "critical" : "warn", issues);
+    }
+
     public static HealthReport Evaluate(TelemetrySnapshot t, HealthContext ctx)
     {
         var issues = new List<HealthIssue>();

@@ -1,5 +1,5 @@
 // GPD Forge UI — shared page constants and types. GPL-3.0-or-later.
-import type { Mode, ModeId, Telemetry } from '../types'
+import type { Mode, ModeId, TdpInfo, Telemetry } from '../types'
 
 export const MODES: Mode[] = [
   { id: 'gaming',  label: 'Gaming', blurb: 'Auto-TDP to target FPS, reactive fan, OSD.' },
@@ -33,6 +33,23 @@ export const reading = (v: number | null | undefined, digits = 0): string =>
 /** A progress fraction only when there is something to scale — never a bar drawn from nothing. */
 export const fractionOf = (v: number | null | undefined, max: number): number | undefined =>
   v == null ? undefined : v / max
+
+/**
+ * A reading older than this is stale: three of the daemon's 1 Hz sampler ticks — the same bound
+ * GET /health/check and the standby drain sampler use. Since 2026-09-24 GET /telemetry serves a cached
+ * sample, so a sampler whose hardware read hangs keeps answering 200 with the same numbers forever;
+ * `sampleAgeMs` is the only thing that tells a frozen reading from a live one.
+ */
+export const STALE_AFTER_MS = 3000
+
+/** Whole seconds since the daemon last sampled the hardware when that makes the reading stale, else
+ *  null. Absent `sampleAgeMs` (an older daemon, a history row) is not evidence of staleness. */
+export const staleSeconds = (t: Telemetry | null | undefined): number | null =>
+  t?.sampleAgeMs != null && t.sampleAgeMs > STALE_AFTER_MS ? Math.round(t.sampleAgeMs / 1000) : null
+
+/** What the TDP controls open on: the manual override in force, else the last write, else nothing. */
+export const tdpInForce = (t: TdpInfo | null | undefined): number | null =>
+  t == null ? null : (t.manualStapmW ?? t.stapmW)
 
 export interface Shared {
   tele: Telemetry | null

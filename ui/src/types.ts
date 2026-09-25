@@ -41,6 +41,24 @@ export interface Telemetry {
   sampleAgeMs?: number | null
 }
 
+/**
+ * GET /tdp: the last TDP write and who made it (core/Tdp/TdpState.cs). Every field but
+ * `manualStapmW` is null until something writes TDP. `manualStapmW` is the override POST /tdp set for
+ * the ACTIVE mode, null when there is none — what the TDP controls open on, since 2026-09-24.
+ */
+export interface TdpInfo {
+  stapmW: number | null
+  owner: string | null
+  verified: boolean | null
+  backend: string | null
+  observedStapmW: number | null
+  observedPptW: number | null
+  attempts: number | null
+  atUtc: string | null
+  note: string | null
+  manualStapmW: number | null
+}
+
 // One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon
 // read it (Unix epoch ms, UTC), stamped by ForgeWorker. Fed by the ring buffer behind GET /history.
 export interface HistorySample { unixMs: number; snap: Telemetry }

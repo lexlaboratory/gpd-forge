@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ModeId, Telemetry, BatteryBudget } from './types'
 import {
-  getTelemetry, getMode, setMode, setTdp, getProfiles, getFan, setFan,
+  getTelemetry, getMode, setMode, setTdp, getTdp, getProfiles, getFan, setFan,
   getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby, getGpu, setFrameCap,
 } from './api'
 import { Segmented, Stepper } from './components'
@@ -18,7 +18,7 @@ import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
 // nullable on 2026-09-01 because an unreadable sensor used to arrive as a confident zero.
-import { reading } from './pages/shared'
+import { reading, staleSeconds, tdpInForce } from './pages/shared'
 import { Icon } from './components/Icon'
 
 const QMODES: { id: ModeId; label: string }[] = [
@@ -68,7 +68,13 @@ export function OverlayApp() {
   const [mode, setModeS] = useState<ModeId>('windows')
   const [presets, setPresets] = useState<Record<string, { stapmW: number }>>({})
   const [tdp, setTdp_] = useState(20)
-  const [verified, setVerified] = useState(true)
+  // Null until the daemon says: the "verified" mark used to show from the first frame, before anything
+  // had been written or read back.
+  const [verified, setVerified] = useState<boolean | null>(null)
+  // The user has pressed the stepper: a late seed from GET /tdp must not move it back.
+  const tdpTouched = useRef(false)
+  // The last value the daemon accepted, to return to when a write is refused.
+  const tdpApplied = useRef<number | null>(null)
   const [fan, setFanS] = useState('Auto')
   const [fpsTarget, setFpsTarget] = useState(0)
   // Null while unknown. The cap row stays hidden until the daemon says the GPU can do it — a control
@@ -82,8 +88,22 @@ export function OverlayApp() {
     let alive = true
     const tick = () => getTelemetry().then((t) => alive && setTele(t)).catch(() => {})
     tick(); const id = setInterval(tick, 1000)
-    getMode().then((m) => alive && setModeS(m)).catch(() => {})
-    getProfiles().then((p) => { if (alive) { setPresets(p); if (p[mode]) setTdp_(p[mode].stapmW) } }).catch(() => {})
+    // The stepper opens on what is IN FORCE: the manual override the daemon remembers (TdpIntent), else
+    // its last write, else the active mode's preset. It used to open on the preset of the initial
+    // 'windows' state whatever the mode, so a remembered 12 W showed as 15.
+    Promise.allSettled([getMode(), getProfiles(), getTdp()]).then(([m, p, t]) => {
+      if (!alive) return
+      if (m.status === 'fulfilled') setModeS(m.value)
+      const presetsNow = p.status === 'fulfilled' ? p.value : {}
+      if (p.status === 'fulfilled') setPresets(presetsNow)
+      const info = t.status === 'fulfilled' ? t.value : null
+      if (info) setVerified(info.verified)
+      const seed = tdpInForce(info) ?? (m.status === 'fulfilled' ? presetsNow[m.value]?.stapmW : undefined)
+      if (seed != null) {
+        tdpApplied.current = seed
+        if (!tdpTouched.current) setTdp_(seed)
+      }
+    })
     getFan().then((f) => alive && setFanS(f)).catch(() => {})
     getBrightness().then((b) => alive && b != null && setBright(b)).catch(() => {})
     // The cap row only appears when the driver actually offers one. Hidden rather than disabled: on a
@@ -108,12 +128,25 @@ export function OverlayApp() {
   const pickMode = async (m: ModeId) => {
     setModeS(m)
     try { await setMode(m) } catch { /* ignore */ }
-    if (presets[m]) setTdp_(presets[m].stapmW)
+    // A mode change ends the manual override, so the preset is what is now in force.
+    if (presets[m]) { setTdp_(presets[m].stapmW); tdpApplied.current = presets[m].stapmW }
     toast.push({ kind: 'info', message: `Mode: ${QMODES.find((x) => x.id === m)?.label ?? m}` })
   }
   const applyTdp = async (next: number) => {
+    tdpTouched.current = true
     setTdp_(next)
-    try { const r = await setTdp(next); setTdp_(r.observed); setVerified(r.verified) } catch { /* ignore */ }
+    try {
+      const r = await setTdp(next)
+      // What the firmware holds, when it could be read back; else the request stands. `observed` is
+      // null on an unreadable readback, and writing that into the stepper blanked it.
+      const held = r.observed ?? next
+      setTdp_(held); tdpApplied.current = held; setVerified(r.verified)
+    } catch (e) {
+      // Said, not swallowed: a refused value (400 bad_tdp) or an unreachable daemon left the stepper
+      // on a number that was never applied.
+      toast.push({ kind: 'error', message: `TDP ${next} W was not applied — ${e instanceof Error ? e.message : String(e)}` })
+      if (tdpApplied.current != null) setTdp_(tdpApplied.current)
+    }
   }
   const pickFan = async (f: string) => { setFanS(f); try { await setFan(f) } catch { /* ignore */ } }
   const pickFps = async (v: number) => { setFpsTarget(v); try { await setAutoFps(v || 60, v > 0) } catch { /* ignore */ } }
@@ -134,6 +167,9 @@ export function OverlayApp() {
   }
   const doRestore = async () => { try { await restoreStandby(); toast.push({ kind: 'success', message: 'Standby state restored' }) } catch { /* ignore */ } }
   const openFull = useCallback(() => { window.location.assign('/') }, [])
+  // The daemon answers GET /telemetry from its sampler's cache, so a sampler whose hardware read hangs
+  // keeps serving the same numbers with a normal 200. Its age is what says so.
+  const staleS = staleSeconds(tele)
 
   return (
     <div className="qam" ref={rootRef} data-testid="qam">
@@ -141,11 +177,17 @@ export function OverlayApp() {
         <div className="qam-brand">
           <img className="qam-logo" src="/logo.svg" alt="" aria-hidden width={20} height={20} />
           <span>GPD Forge</span>
-          <span className={`qam-dot ${tele ? 'on' : ''}`} title="live" />
+          {staleS != null && (
+            <span className="qam-stale" data-testid="qam-stale" role="status"
+                  aria-label={`Telemetry stalled — last reading ${staleS} s ago`}>
+              Stalled · {staleS} s ago
+            </span>
+          )}
+          <span className={`qam-dot ${tele && staleS == null ? 'on' : ''}`} title={staleS == null ? 'live' : 'stalled'} />
         </div>
         {/* The live triple is the first thing a player looks at, so it gets the largest type in the
-            panel and its own bracketed frame. */}
-        <div className="qam-live">
+            panel and its own bracketed frame. Dimmed when stale: a frozen reading must not look live. */}
+        <div className="qam-live" data-stale={staleS != null || undefined}>
           <div className="qam-stat">
             <span className="qam-stat-v">{reading(tele?.cpuTempC)}<i>°C</i></span>
             <span className="qam-stat-k">CPU</span>
@@ -172,7 +214,7 @@ export function OverlayApp() {
       </div>
 
       <div className="qam-line">
-        <span className="qam-label">TDP {verified && <em className="qam-ok" data-testid="qam-verified">verified</em>}</span>
+        <span className="qam-label">TDP {verified === true && <em className="qam-ok" data-testid="qam-verified">verified</em>}</span>
         <Stepper
           label="TDP" value={tdp} unit="W" min={5} max={40} onChange={applyTdp}
           testid="qam-tdp" decTestid="qam-tdp-dec" incTestid="qam-tdp-inc"

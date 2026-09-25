@@ -48,6 +48,8 @@ try {
 
   const tele = await callTool(3, 'get_telemetry')
   check('get_telemetry returns cpuTempC', !tele.isError && typeof tele.data?.cpuTempC === 'number', `cpu=${tele.data?.cpuTempC}`)
+  check('get_telemetry passes the sample age through and says whether it is stale',
+    'sampleAgeMs' in (tele.data ?? {}) && typeof tele.data?.stale === 'boolean', `age=${tele.data?.sampleAgeMs} stale=${tele.data?.stale}`)
 
   const budget = await callTool(4, 'get_battery_budget')
   check('get_battery_budget returns projections', !budget.isError && Array.isArray(budget.data?.projections))

@@ -198,14 +198,31 @@ public class TelemetrySamplerTests
         }
     }
 
+    // A handler's whole parameter list, however many lines it spans: `app.MapGet("/x", async (` then
+    // everything up to the closing parenthesis. The first version of this guard read only up to the
+    // first newline, so a handler with its parameters on the next line passed unseen (audit, 2026-09-24).
+    private static readonly Regex HandlerParameters = new(
+        @"app\.Map(?:Get|Post|Put|Delete|Patch)\(\s*""[^""]*""\s*,\s*(?:async\s*)?\((?<params>[^)]*)\)",
+        RegexOptions.Compiled);
+
+    [Fact]
+    public void The_handler_parser_sees_parameters_on_later_lines()
+    {
+        const string multiLine = "app.MapGet(\"/x\", async (\n    ITelemetryService t,\n    CancellationToken ct) =>\n{ });";
+        var m = HandlerParameters.Match(multiLine);
+        Assert.True(m.Success);
+        Assert.Contains("ITelemetryService", m.Groups["params"].Value);
+    }
+
     [Fact]
     public void No_HTTP_handler_takes_the_hardware_reader()
     {
         var source = File.ReadAllText(ProgramRoutes.FindProgramCs());
-        var handlers = Regex.Matches(source, @"app\.Map(Get|Post|Put|Delete)\([^\n]*");
+        var handlers = HandlerParameters.Matches(source);
         Assert.True(handlers.Count > 50, "route parse looks broken; this guard would pass vacuously");
 
-        var offenders = handlers.Where(m => m.Value.Contains("ITelemetryService")).Select(m => m.Value.Trim()).ToList();
+        var offenders = handlers.Where(m => m.Groups["params"].Value.Contains("ITelemetryService"))
+                                .Select(m => m.Value.Trim()).ToList();
         Assert.True(offenders.Count == 0, "Handlers reading hardware directly:\n" + string.Join("\n", offenders));
     }
 

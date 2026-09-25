@@ -61,17 +61,65 @@ public readonly record struct TdpSnapshot(
     string Backend,
     DateTimeOffset AtUtc);
 
+/// <summary>
+/// One consistent read of <see cref="TdpState"/>: the last write, whether a mode change has since
+/// made it stale, whether a write is running right now, and the write generation it was all read at.
+/// </summary>
+/// <param name="Stale">
+/// A mode apply yielded to a rival controller after <see cref="Last"/> was written. The mode moved on
+/// without GPD Forge writing it, so <see cref="Last"/> is no longer what the user asked for — it is
+/// the PREVIOUS mode's profile (or a manual override the mode change ended).
+/// </param>
+/// <param name="Generation">
+/// Rises when a write starts, when it finishes, and when a mode apply yields. Two equal readings mean
+/// nothing wrote TDP and nothing changed its ownership in between.
+/// </param>
+public readonly record struct TdpOwnership(TdpSnapshot? Last, bool Stale, bool Writing, long Generation);
+
 public sealed class TdpState
 {
     private readonly Lock _gate = new();
     private TdpSnapshot? _last;
+    private bool _stale;
+    private int _writing;
+    private long _generation;
 
     /// <summary>The last write, or null when nothing has written TDP since the daemon started.
     /// Null rather than a zeroed snapshot: "nothing has happened yet" is a real answer.</summary>
     public TdpSnapshot? Last { get { lock (_gate) return _last; } }
 
+    /// <summary>Everything the 30 s reassert needs to decide, read under one lock so the parts agree.</summary>
+    public TdpOwnership Ownership
+    {
+        get { lock (_gate) return new TdpOwnership(_last, _stale, _writing > 0, _generation); }
+    }
+
+    public long Generation { get { lock (_gate) return _generation; } }
+
     public void Record(TdpSnapshot snapshot)
     {
-        lock (_gate) _last = snapshot;
+        // A write lands: whatever a yielded mode change made stale, this is now what GPD Forge wrote.
+        lock (_gate) { _last = snapshot; _stale = false; }
+    }
+
+    /// <summary>A write is starting (SerializedTdpController). Paired with <see cref="EndWrite"/>.</summary>
+    public void BeginWrite()
+    {
+        lock (_gate) { _writing++; _generation++; }
+    }
+
+    public void EndWrite()
+    {
+        lock (_gate) { _writing = Math.Max(0, _writing - 1); _generation++; }
+    }
+
+    /// <summary>
+    /// A mode apply yielded to MotionAssistant or GPD Tool (ProfileApplier). Until 2026-09-24 nothing
+    /// recorded that, so once the rival exited the 30 s reassert found its limits "moved" and wrote the
+    /// last profile GPD Forge had written — the PREVIOUS mode's — while GET /mode named the new one.
+    /// </summary>
+    public void MarkStale()
+    {
+        lock (_gate) { _stale = true; _generation++; }
     }
 }

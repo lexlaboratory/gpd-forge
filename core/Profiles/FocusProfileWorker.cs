@@ -29,8 +29,9 @@ public sealed class FocusProfileWorker(
                 // 1.5 s. The sampler's last reading answers it for free. Before the first sample the
                 // AC state is unknown, and acting on the unmeasured default ("on battery") could
                 // switch to a battery rule on a plugged-in machine — so the tick is skipped instead.
+                // The same holds for a sample whose battery query failed (AcUnknown, 2026-09-24).
                 var reading = telemetry.Latest;
-                if (reading.IsSampled)
+                if (reading.IsSampled && !reading.Snapshot.AcUnknown)
                 {
                     bool ac = reading.Snapshot.AcConnected;
                     var proc = foreground.Current();

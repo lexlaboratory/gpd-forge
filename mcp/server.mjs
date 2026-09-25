@@ -37,13 +37,22 @@ async function api(path, method = 'GET', body) {
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v))
 
+// A telemetry reading older than this is stale: three of the daemon's 1 Hz sampler ticks, the bound
+// GET /health/check and the UI use. The daemon serves a cached sample, so a sampler whose hardware
+// read hangs keeps answering with the same numbers; an agent deciding "is it safe to run this job"
+// on a frozen 60 °C must be told the reading is frozen (2026-09-24).
+const STALE_AFTER_MS = 3000
+
 // --- tool registry ---------------------------------------------------------------
 const tools = [
   {
     name: 'get_telemetry',
-    description: 'Live handheld telemetry: CPU/GPU °C, package watts, CPU clock, fan RPM, FPS, battery %, discharge W, AC state, and whether the current TDP is verified.',
+    description: 'Live handheld telemetry: CPU/GPU °C, package watts, CPU clock, fan RPM, FPS, battery %, discharge W, AC state, and whether the current TDP is verified. Also sampleAgeMs (how old the daemon\'s last hardware reading is) and stale: true when that is over 3 s — the daemon then keeps serving its last numbers, so do not treat a stale reading as current.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    call: () => api('/telemetry'),
+    call: async () => {
+      const t = await api('/telemetry')
+      return { ...t, stale: num(t?.sampleAgeMs) && t.sampleAgeMs > STALE_AFTER_MS }
+    },
   },
   {
     name: 'get_mode',

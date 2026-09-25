@@ -116,6 +116,41 @@ public class FrameTargetTests
     }
 
     [Fact]
+    public void With_no_foreground_a_steam_game_no_rule_names_beats_the_launcher_the_steam_rule_names()
+    {
+        // The daemon runs as LocalSystem in session 0, where GetForegroundWindow is always NULL (audit
+        // 2026-09-24: GET /app-rules reported process:null three times while the user had windows
+        // open). eldenring matches no shipped needle, but "steam" matches steamwebhelper — so the only
+        // rule-matched presenter was the LAUNCHER, and before this the reading was Steam's UI or nothing.
+        var rules = ModeRules.Default();
+        var apps = new[] { A("steamwebhelper.exe", 30), A("eldenring.exe", 240), A("dwm.exe", 400) };
+        Assert.Equal("eldenring.exe", FrameTarget.Choose(apps, null, p => rules.ModeFor(p) is not null, previous: null));
+    }
+
+    [Fact]
+    public void With_no_foreground_known_non_game_presenters_never_become_the_target()
+    {
+        // The unknown-foreground fallback takes the busiest presenter, but only among apps that could
+        // be a game: the compositor, a browser, Steam's own UI and the Forge window are not.
+        var apps = new[]
+        {
+            A("dwm.exe", 900), A("chrome.exe", 400), A("msedgewebview2.exe", 300), A("steamwebhelper.exe", 200),
+            A("GPD Forge.exe", 120), A("game.exe", 50),
+        };
+        Assert.Equal("game.exe", FrameTarget.Choose(apps, null, NoRules, previous: null));
+        Assert.Null(FrameTarget.Choose(apps.Where(a => a.Application != "game.exe").ToArray(), null, NoRules, previous: null));
+    }
+
+    [Fact]
+    public void A_known_foreground_still_never_falls_back_to_the_busiest_app()
+    {
+        // The fallback is for "we cannot see the foreground", not for "the foreground is not
+        // presenting": the desktop in front with a game minimised is no reading.
+        var apps = new[] { A("game.exe", 240) };
+        Assert.Null(FrameTarget.Choose(apps, "explorer", NoRules, previous: null));
+    }
+
+    [Fact]
     public void Unknown_processes_are_never_targets()
     {
         // Without elevation PresentMon names some processes "<unknown>"; that is not an app.

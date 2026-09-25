@@ -36,19 +36,21 @@ public sealed class ForgeWorkerTdpTests : IDisposable
     private readonly AutoFpsState _autoFps = new();
     private readonly GuardianService _guardian = new();
     private readonly TdpIntent _intent = new();
+    private readonly PowerSourceState _powerSource = new();
     private readonly ForgeWorker _worker;
 
     public ForgeWorkerTdpTests()
     {
         Directory.CreateDirectory(_dir);
-        var tdp = new AuditingTdpController(new ClosedLoopTdpController(_silicon, new NoWait()), _audit, _state, "test");
+        var tdp = new SerializedTdpController(
+            new AuditingTdpController(new ClosedLoopTdpController(_silicon, new NoWait()), _audit, _state, "test"), _state);
         _worker = new ForgeWorker(
             NullLogger<ForgeWorker>.Instance, tdp, new StubFanController(), _source, _mode, _autoFps,
             new FpsTdpController(), new FreezerService(new NullSuspender()), _guardian, _history,
-            new ProfileApplier(tdp, _detector, intent: _intent), new PowerSourceState(), new TunerState(),
+            new ProfileApplier(tdp, _detector, intent: _intent, state: _state), _powerSource, new TunerState(),
             new AlertService(new AlertStore(_dir)), new ChargeGuardService(new MemoryChargeGuardStore()),
             new SessionRecorder(new SessionStore(_dir)),
-            _intent, _state, new TdpReasserter(_silicon, tdp, _state, _detector, _clock));
+            _intent, _state, new TdpReasserter(_silicon, tdp, _state, _detector, _intent, _mode, _clock));
     }
 
     public void Dispose()
@@ -232,6 +234,31 @@ public sealed class ForgeWorkerTdpTests : IDisposable
 
         Assert.Single(Writes(TdpOwner.AutoFps));
         Assert.Equal(raised, _state.Last!.Value.Requested.StapmW);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // (e) A failed battery query is not an unplug (audit, 2026-09-24)
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_failed_battery_query_does_not_switch_the_mode_but_a_real_unplug_still_does()
+    {
+        // The query's "on battery" fallback is cached for 5 s, and this loop read it as an AC edge:
+        // mode to battery, then back to windows, on one WMI glitch — ending any manual override too.
+        _powerSource.Config = new PowerSourceConfig(Enabled: true);
+        await _worker.StartAsync(CancellationToken.None);
+        await Until(() => _state.Last is not null);
+
+        await TickAsync(Cool() with { AcConnected = true });
+        await TickAsync(Cool() with { AcConnected = false, AcUnknown = true });
+        Assert.Equal("windows", _mode.Active);
+        await TickAsync(Cool() with { AcConnected = true });
+        Assert.Equal("windows", _mode.Active);
+        Assert.Single(Writes(TdpOwner.Mode));   // the startup apply, and nothing since
+
+        // The control: the same config does act on an observed unplug.
+        await TickAsync(Cool() with { AcConnected = false });
+        Assert.Equal("battery", _mode.Active);
     }
 
     private sealed class NullSuspender : IProcessSuspender

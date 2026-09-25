@@ -131,4 +131,88 @@ public class WmiTelemetryCadenceTests
         Assert.Null(snap.CpuTempC);
         Assert.Null(snap.CpuClockMhz);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // A failed battery query is "AC unknown", not "unplugged" (audit, 2026-09-24)
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_failed_battery_query_marks_the_AC_state_unknown()
+    {
+        // The "on battery" fallback is cached for 5 s like any other answer, and ForgeWorker used to
+        // read it as an AC edge — a mode switch, and back, on one WMI glitch.
+        var (svc, wmi, time) = Build();
+        Assert.False((await Read(svc)).AcUnknown);
+
+        wmi.Battery = null;
+        time.Advance(WmiTelemetryService.SlowCadence);
+        var failed = await Read(svc);
+
+        Assert.True(failed.AcUnknown);
+        Assert.False(failed.AcConnected);   // the fallback itself is unchanged: cautious "on battery"
+    }
+
+    [Fact]
+    public void The_unknown_flag_stays_off_the_wire()
+    {
+        // Internal to the daemon: GET /telemetry keeps its shape, and history rows keep theirs.
+        var json = System.Text.Json.JsonSerializer.Serialize(TelemetrySnapshot.Unmeasured with { AcUnknown = true },
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("acUnknown", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_failed_battery_query_is_a_warning_once_per_outage_and_its_recovery_is_logged()
+    {
+        // It was logged at Debug only, so the one reading that can switch the machine's mode could go
+        // wrong with nothing in the service log saying why.
+        var wmi = new FakeWmiQueries { Battery = null };
+        var time = new ManualTimeProvider();
+        var log = new CapturingLogger<WmiTelemetryService>();
+        var svc = new WmiTelemetryService(wmi: wmi, time: time, logger: log);
+
+        for (int i = 0; i < 3; i++) { await Read(svc); time.Advance(WmiTelemetryService.SlowCadence); }
+        Assert.Equal(1, log.Count(Microsoft.Extensions.Logging.LogLevel.Warning));
+
+        wmi.Battery = new WmiBatteryReading(70, Ac: true);
+        await Read(svc);
+        Assert.Contains(log.Entries, e => e.Level == Microsoft.Extensions.Logging.LogLevel.Information
+                                          && e.Message.Contains("battery", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Ownership of the WMI searchers (audit, 2026-09-24)
+    // ---------------------------------------------------------------------------------------------
+
+    private sealed class DisposableFakeWmi : IWmiTelemetryQueries, IDisposable
+    {
+        public bool Disposed { get; private set; }
+        public double? ReadThermalZoneTenthsKelvin() => null;
+        public int? ReadProcessorClockMhz() => null;
+        public WmiBatteryReading? ReadBattery() => new(50, Ac: true);
+        public double? ReadDischargeRateMw() => null;
+        public void Dispose() => Disposed = true;
+    }
+
+    [Fact]
+    public void The_service_is_disposable_so_the_container_releases_the_searchers_it_built()
+    {
+        // WmiTelemetryQueries owns four ManagementObjectSearchers; the service that built them was not
+        // IDisposable, so neither DI nor the --probe paths ever released them.
+        var svc = new WmiTelemetryService();
+        Assert.IsAssignableFrom<IDisposable>(svc);
+        svc.Dispose();
+        svc.Dispose();   // idempotent: DI and a `using` may both get there
+    }
+
+    [Fact]
+    public void Queries_handed_in_are_the_callers_to_dispose_not_the_services()
+    {
+        var injected = new DisposableFakeWmi();
+        var svc = new WmiTelemetryService(wmi: injected);
+
+        svc.Dispose();
+
+        Assert.False(injected.Disposed);
+    }
 }

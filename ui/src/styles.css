@@ -395,6 +395,11 @@ input[type="range"]::-webkit-slider-thumb {
 .conn-live { color: var(--good); }
 .conn-demo { color: var(--text-faint); }
 .conn-offline { color: var(--danger); }
+/* The daemon answers, but its sampler has not read the hardware for a while: the live values are the
+   last ones taken, so they are dimmed rather than passed off as current (see staleSeconds). */
+.conn-stale { color: var(--warn); }
+.shell[data-stale] .tile-value,
+.shell[data-stale] .power-pill { opacity: 0.45; }
 .power-pill.ac { color: var(--good); }
 .power-pill.dc { color: var(--accent); }
 

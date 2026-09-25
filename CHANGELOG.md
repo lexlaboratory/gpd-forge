@@ -58,11 +58,49 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 - **TDP is kept in force by reading it back, not by re-applying it blind.** Every 30 s the daemon
   reads `ryzenadj --info` and re-applies its last write only if the limits moved — never on a
   failed read and never while another power controller runs. A re-apply shows as owner `reassert`
-  in `GET /tdp` and the audit log.
+  in `GET /tdp` and the audit log. **Still open:** the `ryzenadj --info` parser is tested against a
+  table rebuilt from ryzenadj's own printer, not one captured on the HX 370 (a non-elevated run
+  refuses with `WinRing0 Err: Driver not loaded`). The new read-only `--probe-tdp` prints the real
+  output verbatim from an elevated shell, to replace the fixture.
+- **The daemon sees the app in front of you.** It runs as a service in session 0, where the
+  foreground window is always "none", so auto-profiles never switched on focus and the FPS reading
+  had no foreground to follow. The GPU agent, which already runs in your session, now reports the
+  foreground app every 3 s (`POST /session/foreground`); `GET /session/foreground` says what the
+  daemon is using and whether it came from the agent.
+- **A frozen reading says so.** When the daemon's sampler stops reading the hardware, the main
+  window shows "Stalled · N s ago" beside the connection chip and dims the live numbers, and the
+  overlay does the same; the MCP `get_telemetry` tool adds `stale: true`. `GET /health/check`
+  reports `telemetry_stale`, and the service log warns once per outage and notes the recovery —
+  before, a hung sensor read logged nothing while the thermal guardian quietly stopped.
+- **`GET /tdp` reports the manual override in force** (`manualStapmW`).
 - **LB / RB switch sections** from a gamepad, wrapping at either end. Alerts was ten D-pad presses
   from the Dashboard; it is now one.
 
 ### Fixed
+- **FPS reads the game even when the foreground is unknown.** Without a foreground (the service in
+  session 0 with no agent reporting), a Steam game that no rule names lost to `steamwebhelper`,
+  which the shipped `steam` rule matches — the reading was Steam's UI or nothing, and auto-FPS went
+  idle. Known non-game presenters (the compositor, browsers, launchers, overlays, GPD Forge itself)
+  can no longer be picked through a rule, and with the foreground unknown the busiest app that could
+  be a game is read.
+- **The 30 s TDP reassert no longer puts back a mode you left.** A mode switch made while
+  MotionAssistant or GPD Tool ran wrote nothing (it yields), so the last write was still the
+  previous mode's; once the rival exited the reassert re-applied it while the app showed the new
+  mode — and brought back a manual override the switch had ended. It now applies the mode you chose.
+- **TDP writes happen one at a time.** The Dashboard, the overlay, mode switches, panic and the
+  resume restore each wrote from their own thread, and two closed loops overlapping fought retry by
+  retry. The reassert could also overwrite a `POST /tdp` that was still being verified, because it
+  only noticed writes that had finished; it now stands down for any write started or finished
+  during its check.
+- **A failed battery query no longer switches the mode.** Its "on battery" fallback was cached for
+  5 s and read as an unplug, so one WMI glitch on a plugged-in machine switched to the battery
+  profile and back, ending any manual TDP. The AC/battery switch now skips a reading whose AC state
+  is unknown, and the failure is a warning in the service log instead of a debug line.
+- **The TDP controls open on the value in force.** The Dashboard started at a hardcoded 20 W and the
+  overlay at a preset while a remembered manual value applied; both now read `GET /tdp`. A refused
+  or failed write shows an error and puts the control back, instead of being swallowed. The
+  Dashboard's badge reads "unknown" when nothing has been verified yet (it said "verified"), and an
+  unreadable readback no longer blanks the overlay's stepper.
 - **A hand-set TDP survives a hot spell.** When the thermal guardian stopped throttling it restored
   the mode's preset, so a manual 20 W came back as 15/20/17 W with nothing saying why; and the
   throttle ceiling was built on the preset, so a manual 10 W could be raised to the 12 W throttle
@@ -119,7 +157,8 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   overlay — whatever was in the foreground. It now follows the foreground app when that app is
   presenting, else an app your rules name (the game rather than `steamwebhelper`, which the shipped
   `steam` rule also matches), else the game it was already reading, which keeps the FPS on the game
-  while the overlay or the Steam menu has focus. Nothing matching is "n/a", never the busiest app.
+  while the overlay or the Steam menu has focus. With the foreground known and nothing matching it
+  is "n/a", never the busiest app.
 - **Frames are timed by PresentMon's own clock.** They were stamped when their line reached the
   daemon, and PresentMon's output arrives in bursts, so a flush looked like hundreds of frames at
   once. Each row's own time (`TimeInMs` in the bundled 2.5.1, `TimeInSeconds` in 1.x) now places it.

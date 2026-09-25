@@ -155,4 +155,44 @@ public class HealthCheckTests
         Assert.Empty(HealthCheck.Evaluate(Snap(cpuTempC: 85, fanRpm: 3000), Ctx).Issues);
         Assert.Empty(HealthCheck.Evaluate(Snap(acConnected: false, dischargeW: 15), Ctx).Issues);
     }
+    // --- the snapshot's age (audit, 2026-09-24) ---
+    // GET /health/check dropped the reading's age and graded the frozen snapshot of a stalled sampler
+    // as healthy: the one anomaly endpoint said ok while the guardian had stopped.
+
+    private static readonly DateTimeOffset T0 = new(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void A_fresh_reading_adds_no_issue()
+    {
+        var r = HealthCheck.Evaluate(new TelemetryReading(Snap(), T0, 5), T0.AddMilliseconds(900), Ctx);
+        Assert.Equal("ok", r.Status);
+        Assert.Empty(r.Issues);
+    }
+
+    [Fact]
+    public void A_reading_older_than_a_few_samples_is_reported_stale()
+    {
+        var r = HealthCheck.Evaluate(new TelemetryReading(Snap(), T0, 5), T0.AddSeconds(12), Ctx);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal("telemetry_stale", issue.Code);
+        Assert.Equal("warn", issue.Level);
+        Assert.Contains("12", issue.Message);
+        Assert.Equal("warn", r.Status);
+    }
+
+    [Fact]
+    public void A_reading_that_was_never_sampled_is_reported_stale()
+    {
+        var r = HealthCheck.Evaluate(TelemetryReading.Unsampled, T0, Ctx);
+        Assert.Contains(r.Issues, i => i.Code == "telemetry_stale");
+    }
+
+    [Fact]
+    public void The_stale_threshold_is_three_sampler_ticks()
+    {
+        // The bound StandbyService uses too: one late tick is noise, three are an outage.
+        Assert.Equal(3000, Ctx.StaleAfterMs);
+        Assert.Empty(HealthCheck.Evaluate(new TelemetryReading(Snap(), T0, 5), T0.AddMilliseconds(3000), Ctx).Issues);
+        Assert.NotEmpty(HealthCheck.Evaluate(new TelemetryReading(Snap(), T0, 5), T0.AddMilliseconds(3001), Ctx).Issues);
+    }
 }

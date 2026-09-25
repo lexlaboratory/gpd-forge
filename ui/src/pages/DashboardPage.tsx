@@ -2,13 +2,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiInfo, InferenceHold, TuneGoal, TunerInfo } from '../types'
 import {
-  setTdp as apiSetTdp, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
+  setTdp as apiSetTdp, getTdp, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
 } from '../api'
 import { Badge, Button, Frame, Icon, Readout, Segmented, Slider, Toggle, type Tone } from '../components'
 import { useToast } from '../Toast'
 import { JobsPanel } from '../JobsPanel'
 import { StandbyPanel } from '../StandbyPanel'
-import { MODES, reading, fractionOf, type Shared } from './shared'
+import { MODES, reading, fractionOf, tdpInForce, type Shared } from './shared'
 import { BatteryBudgetCard } from './SystemPage'
 
 // Ceilings the fill bars are read against. The TDP one is the slider's own maximum, so the bar and
@@ -24,17 +24,52 @@ const battTone = (p: number | null): Tone | undefined =>
   p == null ? undefined : p < 15 ? 'danger' : p < 30 ? 'warn' : 'ok'
 
 // --- Dashboard -----------------------------------------------------------------
+const clampTdp = (w: number) => Math.min(MAX_TDP_W, Math.max(5, Math.round(w)))
+
+// The badge's three states. Null — nothing written or verified yet — is its own grey state: it was
+// defaulted to 'verified', which claimed a confirmation nobody had given.
+const tdpBadge = (v: boolean | null): { tone: Tone; label: string } =>
+  v === true ? { tone: 'ok', label: 'verified' } : v === false ? { tone: 'warn', label: 'unverified' } : { tone: 'muted', label: 'unknown' }
+
 export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
+  const toast = useToast()
+  // Placeholder until GET /tdp answers. It used to be the value, full stop: a remembered 12 W manual
+  // override (TdpIntent, 2026-09-24) opened here as 20 W.
   const [tdp, setTdp] = useState(20)
   const [tdpResult, setTdpResult] = useState<TdpResult | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Set once the user moves the control, so a GET /tdp that answers late cannot yank it back.
+  const touched = useRef(false)
+  // The last value the daemon accepted: where the control returns to when a write is refused.
+  const applied = useRef<number | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    getTdp().then((t) => {
+      const w = tdpInForce(t)
+      if (!alive || w == null) return
+      applied.current = clampTdp(w)
+      if (!touched.current) setTdp(clampTdp(w))
+    }).catch(() => {})
+    return () => { alive = false; if (timer.current) clearTimeout(timer.current) }
+  }, [])
 
   const onTdp = (v: number) => {
+    touched.current = true
     setTdp(v)
     if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => { apiSetTdp(v).then(setTdpResult).catch(() => {}) }, 120)
+    timer.current = setTimeout(() => {
+      apiSetTdp(v)
+        .then((r) => { applied.current = v; setTdpResult(r) })
+        .catch((e: unknown) => {
+          // Said, not swallowed: a 400 bad_tdp or a daemon that went away left the slider showing a
+          // value that was never applied, with nothing on screen saying so.
+          toast.push({ kind: 'error', message: `TDP ${v} W was not applied — ${e instanceof Error ? e.message : String(e)}` })
+          if (applied.current != null) setTdp(applied.current)
+        })
+    }, 120)
   }
-  const verified = tdpResult ? tdpResult.verified : (tele?.tdpVerified ?? true)
+  const badge = tdpBadge(tdpResult ? tdpResult.verified : (tele?.tdpVerified ?? null))
 
   return (
     <>
@@ -64,7 +99,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
         </div>
       </Frame>
 
-      <Frame title="Sustained TDP" hint={<Badge tone={verified ? 'ok' : 'warn'} testid="tdp-badge">{verified ? 'verified' : 'unverified'}</Badge>}>
+      <Frame title="Sustained TDP" hint={<Badge tone={badge.tone} testid="tdp-badge">{badge.label}</Badge>}>
         <div className="tdp-row">
           <input type="range" min={5} max={MAX_TDP_W} step={1} value={tdp} data-testid="tdp-slider" aria-label="Sustained TDP in watts" onChange={(e) => onTdp(Number(e.target.value))} />
           {/* ±1 W buttons beside the slider: a d-pad can press a button but cannot drag a range. */}

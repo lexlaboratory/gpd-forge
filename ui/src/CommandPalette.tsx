@@ -47,7 +47,7 @@ export function buildCommands(navigate: (page: string) => void, pages: readonly 
         const r = await setTdp(w)
         // Report what the hardware actually did, not what we asked for — the closed loop can come
         // back with a different figure, and that is the number worth showing.
-        return r.verified ? `TDP → ${r.observed} W (verified)` : `TDP requested ${r.requested} W — not verified`
+        return r.verified ? `TDP → ${r.observed ?? r.requested} W (verified)` : `TDP requested ${r.requested} W — not verified`
       },
     },
     {

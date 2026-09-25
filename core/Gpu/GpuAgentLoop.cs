@@ -13,8 +13,15 @@
 // times a second would be pointless driver traffic, and it would also fight the user: someone who
 // flips Chill in Adrenalin while the mode is steady should keep their change, not have it stamped
 // over within seconds by a tool that was not asked to.
+//
+// Since 2026-09-24 it also reports the FOREGROUND APP (POST /session/foreground). The daemon runs in
+// session 0, where GetForegroundWindow is always NULL, so without this the FPS target and the
+// auto-profile worker cannot see what the user is playing. This process is in the user's session and
+// already checks in every tick, so it is the one place that can answer. Reported before the ADLX work
+// and on its own try: a GPU agent whose ADLX is unusable must still say what is in front.
 using System.Net.Http.Json;
 using System.Text.Json;
+using GpdForge.Profiles;
 using Microsoft.Extensions.Logging;
 
 namespace GpdForge.Gpu;
@@ -60,9 +67,17 @@ public static class GpuAgentLoop
         string? lastAppliedMode = null;
         int? lastAppliedCap = null;
         var capEverApplied = false;
+        var foreground = new Win32ForegroundApp();
 
         while (!ct.IsCancellationRequested)
         {
+            try
+            {
+                await http.PostAsJsonAsync("/session/foreground", new { process = foreground.Current() }, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception e) { logger?.LogDebug(e, "Foreground report failed."); }
+
             try
             {
                 var snapshot = settings?.Read();

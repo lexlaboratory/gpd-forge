@@ -16,6 +16,12 @@
 // illustrative, chosen to be what `windows` (15/20/17 W, Tctl 92) would read back. Replace this with
 // a real capture (run the same command from an elevated shell) when one is taken — the tests below
 // should pass unchanged, and if they do not, the parser was wrong about the real format.
+//
+// The plan's acceptance item for this (F0.5, "salida real de Strix Point capturada del equipo") is
+// therefore OPEN, and the plan says so. To close it: from an elevated shell run the read-only
+// `dotnet GpdForge.Service.dll --probe-tdp`, which prints ryzenadj's output verbatim between two
+// marker lines and then the parse; paste the verbatim part here as StrixPointInfo and keep the
+// synthetic variants below as extra cases.
 namespace GpdForge.Core.Tests;
 
 public static class RyzenAdjFixtures

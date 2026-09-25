@@ -34,16 +34,22 @@ test.describe('Dashboard', () => {
     }
   })
 
-  test('the TDP stepper moves the value one watt at a time, within bounds', async ({ page }) => {
+  test('the TDP stepper moves the value one watt at a time, within bounds', async ({ page, request }) => {
     // The d-pad path: a gamepad can press these, it cannot drag the slider beside them.
-    await expect(dash.tdpValue).toHaveText('20 W')
+    // It starts from the value IN FORCE (GET /tdp) — here the `windows` preset — not from the 20 W
+    // placeholder this test used to pin, which was the bug: a remembered 12 W opened as 20 W.
+    await request.post('http://127.0.0.1:8799/mode', { data: { name: 'windows' } })
+    await page.reload()
+    await expect(dash.tdpValue).toHaveText('15 W')
     await page.getByTestId('tdp-inc').click()
-    await expect(dash.tdpValue).toHaveText('21 W')
+    await expect(dash.tdpValue).toHaveText('16 W')
     await page.getByTestId('tdp-dec').click()
     await page.getByTestId('tdp-dec').click()
-    await expect(dash.tdpValue).toHaveText('19 W')
+    await expect(dash.tdpValue).toHaveText('14 W')
     await dash.tdpSlider.fill('5')
     await expect(page.getByTestId('tdp-dec')).toBeDisabled()
+    // Leave no manual override behind for the next spec: picking a mode ends it.
+    await request.post('http://127.0.0.1:8799/mode', { data: { name: 'windows' } })
   })
 
   test('selecting a mode marks it active', async () => {

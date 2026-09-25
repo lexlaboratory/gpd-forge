@@ -253,15 +253,19 @@ public class AutoFpsLoopTests
     [Fact]
     public async Task Tick_respects_the_configured_max_ceiling()
     {
+        // Starts BELOW the ceiling so a write actually happens and goes through the clamp. It used to
+        // start AT 28 W, where the no-write-when-unchanged rule means nothing is ever written, and
+        // `Calls == 0 || Last <= 28` then passed without checking the clamp at all (audit, 2026-09-24).
         var tdp = new FakeTdp();
         var loop = new AutoFpsLoop(new TelemetryFpsSource(() => 10.0), new FpsTdpController(), tdp,
             new AutoFpsLoop.Options(MinW: 8, MaxW: 28));
-        TdpProfile atCeiling = Gaming with { StapmW = 28 };
+        TdpProfile belowCeiling = Gaming with { StapmW = 26 };
 
-        int next = await loop.TickAsync(120, atCeiling, CancellationToken.None);
+        int next = await loop.TickAsync(120, belowCeiling, CancellationToken.None);
 
         Assert.Equal(28, next);
-        Assert.True(tdp.Calls == 0 || tdp.Last.StapmW <= 28);
+        Assert.Equal(1, tdp.Calls);
+        Assert.Equal(28, tdp.Last.StapmW);   // 10 FPS against 120 wants far more; the ceiling holds it at 28
     }
 }
 

@@ -62,6 +62,22 @@ public class ManualTdpEndpointTests(DaemonUnderTest daemon)
     }
 
     [Fact]
+    public async Task GET_tdp_reports_the_manual_override_until_the_mode_ends_it()
+    {
+        // The UI seeds its TDP controls from this. Before, they opened on a hardcoded 20 W or the
+        // preset while a remembered manual value was in force (audit, 2026-09-24).
+        Assert.True(daemon.Started, "The daemon did not start; see The_daemon_starts_at_all.");
+        await PostOkAsync("/mode", new { name = "windows" });
+        Assert.Equal(JsonValueKind.Null, (await GetAsync("/tdp")).GetProperty("manualStapmW").ValueKind);
+
+        await PostOkAsync("/tdp", new { stapmW = 13 });
+        Assert.Equal(13, (await GetAsync("/tdp")).GetProperty("manualStapmW").GetInt32());
+
+        await PostOkAsync("/mode", new { name = "windows" });   // re-picking a mode asks for its preset
+        Assert.Equal(JsonValueKind.Null, (await GetAsync("/tdp")).GetProperty("manualStapmW").ValueKind);
+    }
+
+    [Fact]
     public async Task The_daemon_applies_the_active_mode_when_it_starts()
     {
         // Logged whichever way it goes: applied, or yielded because MotionAssistant / GPD Tool runs on

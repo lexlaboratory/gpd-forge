@@ -113,15 +113,22 @@ reporting `0` would assert the first when only the second is known. A probe that
 frames reports `0`.
 
 `fps` / `fps1PctLow` describe ONE process, the target (`core/Telemetry/FrameTarget.cs`): the
-foreground app when it is presenting; else the app-rule-matched app presenting the most frames (the
-game over `steamwebhelper`, which the shipped `steam` rule also names); else the previous target
-while it keeps presenting (the overlay or the Steam menu has focus, the game renders underneath).
-With none of those it is `null` — never "whichever process presents most". Frames are placed by
+foreground app when it is presenting; else the app-rule-matched app presenting the most frames,
+never counting a known non-game presenter (the compositor, browsers, launchers such as
+`steamwebhelper` — which the shipped `steam` rule also names — overlays, GPD Forge itself); else the
+previous target while it keeps presenting (the overlay or the Steam menu has focus, the game renders
+underneath). Only when the foreground is **unknown** — the service in session 0 with no user-session
+agent reporting (`GET /session/foreground`) — does it fall back to the busiest presenter that is not a
+known non-game one, so a Steam game no rule names still reads as the game rather than as Steam. With
+a known foreground and none of those, it is `null` — never "whichever process presents most". Frames are placed by
 PresentMon's own row time, not by when their line reached the daemon, so a burst of buffered output
 does not read as a burst of frames. The same probe keeps the target's last 10 s of frame times
 in-process (`IFrameTimeSource`); no endpoint serves them yet.
 
-`acConnected` is not nullable — mains power is an answer the daemon always has.
+`acConnected` is not nullable — mains power is an answer the daemon almost always has. When the
+`Win32_Battery` query fails it falls back to `false` (on battery, the cautious reading), the daemon
+logs a warning once per outage, and nothing acts on that fallback: the AC/battery mode switch skips
+the tick instead of treating a sensor glitch as an unplug.
 
 `tdpVerified` **is** nullable, and this document claimed the opposite until 2026-09-02: it read
 "`acConnected` and `tdpVerified` are not nullable — they are answers the daemon always has." It was
@@ -231,7 +238,7 @@ document). It went undocumented here until the same day, which is how it stayed 
 ### `GET /tdp`  (who set the power limit, and did it hold)
 `200 → { stapmW: number | null, owner: string | null, verified: boolean | null, backend: string,
 observedStapmW: number | null, observedPptW: number | null, attempts: number | null,
-atUtc: string | null, note: string | null }`
+atUtc: string | null, note: string | null, manualStapmW: number | null }`
 
 The provenance of the last TDP write. Every field is null and `note` explains why when nothing has
 written a limit since the service started — a fresh daemon has no last write, and reporting `0 W`
@@ -247,6 +254,11 @@ or `verified: false` for that would be inventing an event.
 - `backend` — `ryzenadj` or `stub`. **`stub` means no power limit was actually applied to hardware**;
   the stub echoes back whatever it was handed, so a `verified: true` from it attests to nothing.
   This is the distinction `GET /telemetry`'s `tdpVerified` hid while it was a hardcoded `true`.
+
+- `manualStapmW` — the manual override `POST /tdp` set for the **active** mode, or `null` when there
+  is none (never set, or a mode change ended it). Present even when nothing has been written yet.
+  Added 2026-09-24 so the UI's TDP controls open on the value in force instead of a hardcoded 20 W or
+  the preset.
 
 The same owner is written into the `GET /audit` line for the change.
 
@@ -605,6 +617,11 @@ clears once temps recover; on battery it raises low/critical alerts. Throttle ac
 Pure rules (`GpdForge.Health.HealthCheck.Evaluate`, unit-tested exhaustively) evaluated against a REAL
 live telemetry snapshot — never a hardware write, purely diagnostic. `status` is the max severity
 across `issues` (`ok` when empty). Rules today, by the `code` each emits:
+- `telemetry_stale` → warn, listed first — the sampler's last reading is more than 3 s old (three
+  1 Hz ticks), or no sample has been taken yet. Added 2026-09-24: the endpoint serves a cached
+  sample, and a sampler whose hardware read hangs keeps serving its last one, so grading the snapshot
+  alone answered `ok` while the thermal guardian had stopped. The rules below still run on the stale
+  snapshot — what the machine last looked like is still worth knowing.
 - `telemetry_unavailable` → warn — `cpuTempC` is null, so the two thermal rules below cannot run at
   all. Reported rather than skipped: a health check that cannot measure and answers `ok` is worse
   than one that answers nothing.
@@ -778,6 +795,25 @@ driver function, so the layout is transcribed from the SDK headers and **verifie
 daemon calls `TotalSystemRAM` and checks it against the machine's RAM read over WMI. Disagreement
 means the library is marked unusable and nothing else is called through it. `--probe-gpu` reproduces
 that check and writes nothing.
+
+### `GET /session/foreground`  ·  `POST /session/foreground`  (what is in front, seen from your session)
+- `POST { process: string | null } → { accepted: true }` — posted by the GPU agent every 3 s.
+  `process` is the foreground process name without a path or `.exe` (`eldenring`, `GPD Forge`), or
+  `null` when nothing is in front (the lock screen, the bare desktop). `400 bad_process` for anything
+  else: an empty string, a path, a control character, more than 260 characters.
+- `GET → { process: string | null, source: "agent" | "local", ageMs: number | null }` — the answer the
+  FPS target and the auto-profile worker use, and where it came from. `source: "agent"` means the agent
+  reported within the last **10 s** (`ageMs` says how long ago); otherwise `source: "local"` and
+  `ageMs: null`.
+
+🔴 **Why this exists.** The service is LocalSystem in **session 0**, which has no interactive desktop,
+so `GetForegroundWindow` there is always NULL. Until 2026-09-24 that made the installed daemon blind
+to what the user was doing: `GET /app-rules` reported `lastMatch.process: null` three times in a row
+while windows were open, auto-profiles never switched on focus, and the FPS reading had no foreground
+to follow. The answer has to come from the user's session, and the GPU agent is the process already
+running there. `source: "local"` on an installed machine therefore means **the agent is not
+reporting** (not installed with `-EnableGpuProfiles`, or not running) — and the FPS target falls back
+to the busiest presenter that could be a game (see `GET /telemetry`, `fps`).
 
 ### `GET /standby/hibernate`  ·  `POST /standby/hibernate`  (hibernate instead of draining)
 `GET → { hibernateAvailable, unavailable: string | null, onAc: {...}, onBattery: {...} }`

@@ -66,6 +66,15 @@ button { font: inherit; user-select: none; -webkit-tap-highlight-color: transpar
 .qam-logo { display: inline-flex; color: var(--accent); }
 .qam-dot { margin-left: auto; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--text-faint); }
 .qam-dot.on { background: var(--good); }
+/* A stalled sampler: the daemon keeps serving its last reading, so the panel says how old it is and
+   dims the numbers rather than letting a frozen reading pass for a live one. */
+.qam-stale {
+  margin-left: auto; color: var(--warn);
+  font-size: var(--text-2xs); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.qam-stale + .qam-dot { margin-left: var(--space-2); }
+.qam-live[data-stale] .qam-stat-v { opacity: 0.45; }
 
 .qam-live {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));

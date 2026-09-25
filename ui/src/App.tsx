@@ -11,6 +11,7 @@ import {
   MODES, DashboardPage, PowerPage, FanPage, HardwarePage, DisplayPage,
   ProfilesPage, MonitorPage, SessionsPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
+import { staleSeconds } from './pages/shared'
 import { Wizard, isSetupDone } from './Wizard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { CommandPalette } from './CommandPalette'
@@ -132,9 +133,13 @@ export function App() {
   const shared: Shared = { tele, active, auto, setAuto, pickMode }
   const connLabel = connected ? 'Live' : 'Offline'
   const activeMode = MODES.find((m) => m.id === active)
+  // Since 2026-09-24 the daemon answers GET /telemetry from its sampler's cache. Before, a hung
+  // hardware read hung the request and the panel went Offline; now a stalled sampler serves the same
+  // numbers forever with a normal 200, and `sampleAgeMs` is the only thing that says so.
+  const staleS = connected ? staleSeconds(tele) : null
 
   return (
-    <div className="shell" ref={shellRef}>
+    <div className="shell" ref={shellRef} data-stale={staleS != null || undefined}>
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="nav">
         <div className="nav-brand">
@@ -163,6 +168,12 @@ export function App() {
           <div className="topbar-right">
             <Toggle on={auto} onClick={() => setAuto(!auto)} label="Auto" testid="auto-toggle" />
             <span className={`conn conn-${connLabel.toLowerCase()}`} data-testid="conn">{connLabel}</span>
+            {staleS != null && (
+              <span className="conn conn-stale" data-testid="telemetry-stale" role="status"
+                    aria-label={`Telemetry stalled — last reading ${staleS} s ago`}>
+                Stalled · {staleS} s ago
+              </span>
+            )}
             <span className={`power-pill ${tele?.acConnected ? 'ac' : 'dc'}`} data-testid="power-source">
               {tele?.acConnected ? 'AC' : `Battery ${tele?.batteryPct ?? '--'}%`}
             </span>

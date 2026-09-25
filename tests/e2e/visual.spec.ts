@@ -82,6 +82,13 @@ const FIXTURES: Record<string, unknown> = {
     acConnected: false, tdpVerified: true,
   },
   '/mode': { active: 'windows' },
+  // The TDP controls open on what is in force (2026-09-24): here the `windows` preset, written by the
+  // mode and verified — the mock's own start-up state. Frozen because the live mock's last write is
+  // whatever the spec before this one set.
+  '/tdp': {
+    stapmW: 15, owner: 'mode', verified: true, backend: 'ryzenadj', observedStapmW: 15, observedPptW: 20,
+    attempts: 1, atUtc: '2026-08-28T09:00:00.000Z', note: null, manualStapmW: null,
+  },
   // Only the sample COUNT is rendered ("N samples in the last 5 minutes"), and it grows with every
   // telemetry poll against the live mock — hence a fixed-length list.
   '/history': {

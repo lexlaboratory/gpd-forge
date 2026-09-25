@@ -47,6 +47,19 @@ public readonly record struct TelemetrySnapshot(
     /// </summary>
     bool? TdpVerified)
 {
+    /// <summary>
+    /// True when the battery query failed, so <see cref="AcConnected"/> is the cautious fallback
+    /// ("on battery") rather than a reading. Set only by the hardware reader; false everywhere else.
+    ///
+    /// Added in the 2026-09-24 audit. The fallback is cached for 5 s like any other answer, and
+    /// ForgeWorker read it as an AC edge: one WMI glitch on a plugged-in machine switched the mode to
+    /// the battery profile and back, ending any manual override on the way. Consumers that ACT on the
+    /// power source check this; the value itself is unchanged, so GET /telemetry keeps its contract.
+    /// Off the wire for the same reason — the field would be new, and the shape is a published one.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool AcUnknown { get; init; }
+
     /// <summary>Nothing measured: every sensor null, on battery (the conservative answer), no TDP write.</summary>
     public static TelemetrySnapshot Unmeasured { get; } = new(
         null, null, null, null, null, null, null, null, null, null,

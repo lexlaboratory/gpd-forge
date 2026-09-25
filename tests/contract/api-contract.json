@@ -92,7 +92,8 @@
         "observedPptW": "number|null",
         "attempts": "number|null",
         "atUtc": "string|null",
-        "note": "string|null"
+        "note": "string|null",
+        "manualStapmW": "number|null"
       },
       "$comment": "Every field nullable because 'nothing has written TDP since the daemon started' is a real answer and must not be dressed up as 0 W applied by nobody. `verified` is three-valued like the audit log, and `backend` is on the wire because with the hardware gate closed the stub echoes the request back and therefore 'verifies' every time — reporting verified without the backend would be a liar with a timestamp."
     },
@@ -273,6 +274,16 @@
       "method": "GET",
       "path": "/gpu/desired",
       "shape": { "requested": "boolean", "frameCapFps": "number|null", "requestedAtUtc": "string|null" }
+    },
+    {
+      "method": "GET",
+      "path": "/session/foreground",
+      "shape": {
+        "process": "string|null",
+        "source": { "type": "string", "oneOf": ["agent", "local"] },
+        "ageMs": "number|null"
+      },
+      "$comment": "Added 2026-09-24. The service is in session 0, where the local foreground query is always null; `source: agent` means the user-session agent reported within the last 10 s. `process` is null on a clean machine with no agent, and `ageMs` is null whenever the source is local."
     },
     {
       "method": "GET",
@@ -543,6 +554,7 @@
     { "method": "POST", "path": "/ai/vram" },
     { "method": "POST", "path": "/gpu/frame-cap" },
     { "method": "POST", "path": "/gpu/state" },
+    { "method": "POST", "path": "/session/foreground" },
     { "method": "POST", "path": "/standby/restore" },
     { "method": "POST", "path": "/standby/hibernate" },
     { "method": "POST", "path": "/tuner/start" },

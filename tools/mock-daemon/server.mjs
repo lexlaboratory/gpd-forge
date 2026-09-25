@@ -403,13 +403,21 @@ function csvFromHistory(samples) {
   return [CSV_HEADER, ...rows].join('\n') + '\n'
 }
 
-/** Simulate the closed loop: high requests get reverted by "firmware". */
-function applyTdp(stapmW) {
+/** Simulate the closed loop: high requests get reverted by "firmware". Records the write the way
+ *  core/Broker/AuditingControllers.cs does, so GET /tdp answers with what was actually last written —
+ *  the UI seeds its TDP controls from it (2026-09-24), and a GET /tdp frozen at its seed would let a
+ *  control that ignores every write pass its E2E. The mock does not model PPT: null, not a guess. */
+function applyTdp(stapmW, owner) {
   const requested = Math.round(stapmW)
   const observed = requested > TDP_FIRMWARE_CAP ? TDP_FIRMWARE_CAP : requested
   const verified = observed === requested
   state.stapmW = observed
   state.tdpVerified = verified
+  state.lastTdp = {
+    stapmW: requested, owner, verified, backend: 'ryzenadj',
+    observedStapmW: observed, observedPptW: null, attempts: verified ? 1 : 3,
+    atUtc: new Date().toISOString(),
+  }
   return { requested, observed, verified }
 }
 
@@ -703,22 +711,26 @@ async function handle(req, res) {
     if (!blind) pushHistory(t)
     // The real daemon serves its sampler's last reading plus when it was taken (core/Telemetry/
     // TelemetryWire.cs). Only on this response, as there: history rows carry the bare snapshot. The
-    // mock samples on request, so its reading is always brand new.
-    return send(res, 200, { ...t, sampledAtMs: Date.now(), sampleAgeMs: 0 })
+    // mock samples on request, so its reading is always brand new — unless a test asks, PER REQUEST
+    // like `_test_blind`, for a reading `_test_stale_ms` old: the stalled-sampler case the UI must
+    // show as stale (2026-09-24), which the mock could otherwise never produce.
+    const staleMs = Number(url.searchParams.get('_test_stale_ms')) || 0
+    return send(res, 200, { ...t, sampledAtMs: Date.now() - staleMs, sampleAgeMs: staleMs })
   }
   // What TDP is in force and WHO set it. Mirrors core/Tdp/TdpState.cs. The mock reports a real
   // backend name because the point of the field is that a stub must be visible — a mock that always
   // said "ryzenadj" would let a UI ship that never renders the stub case.
   if (method === 'GET' && path === '/tdp') {
     const last = state.lastTdp
+    const manualStapmW = state.manualStapmW ?? null
     if (!last) {
       return send(res, 200, {
         stapmW: null, owner: null, verified: null, backend: null,
         observedStapmW: null, observedPptW: null, attempts: null, atUtc: null,
-        note: 'No TDP write has happened since the daemon started.',
+        note: 'No TDP write has happened since the daemon started.', manualStapmW,
       })
     }
-    return send(res, 200, { ...last, note: null })
+    return send(res, 200, { ...last, note: null, manualStapmW })
   }
   if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
 
@@ -748,8 +760,10 @@ async function handle(req, res) {
     const body = await readBody(req)
     if (!body || !MODES.has(body.name)) return err(res, 400, 'bad_mode', 'unknown mode')
     state.activeMode = body.name
+    // Picking a mode ends a manual override, as core/Profiles/ProfileApplier.cs does.
+    state.manualStapmW = null
     const p = PROFILES.find((x) => x.id === body.name)
-    if (p) applyTdp(p.stapmW)
+    if (p) applyTdp(p.stapmW, 'mode')
     return send(res, 200, { active: state.activeMode })
   }
 
@@ -757,12 +771,14 @@ async function handle(req, res) {
     const body = await readBody(req)
     const w = Number(body?.stapmW)
     if (!Number.isFinite(w) || w < TDP_MIN || w > TDP_MAX) return err(res, 400, 'bad_tdp', `stapmW must be ${TDP_MIN}..${TDP_MAX}`)
-    return send(res, 200, applyTdp(w))
+    // Remembered as the active mode's override until the mode changes (core/Profiles/TdpIntent.cs).
+    state.manualStapmW = Math.round(w)
+    return send(res, 200, applyTdp(w, 'manual'))
   }
 
   // Panic cool — flat 8W floor + Aggressive fan. Mirrors core/Program.cs's POST /panic.
   if (method === 'POST' && path === '/panic') {
-    const r = applyTdp(8)
+    const r = applyTdp(8, 'panic')
     state.fanMode = 'Aggressive'
     return send(res, 200, { applied: r.verified, stapmW: 8 })
   }
@@ -996,6 +1012,26 @@ async function handle(req, res) {
   // The agent posts here; the daemon stamps arrival time itself. Accepted and ignored by the mock —
   // it exists so a client exercising the full agent loop does not get a 404 it has to special-case.
   if (method === 'POST' && path === '/gpu/state') return send(res, 200, { accepted: true })
+  // The foreground app as the user-session agent sees it. Mirrors core/Profiles/SessionForegroundApp.cs:
+  // a report is trusted for 10 s, and with none the answer is the local query's — which, for the
+  // session-0 service this mock stands in for, is null.
+  if (method === 'POST' && path === '/session/foreground') {
+    const body = await readBody(req)
+    // An unparseable body is a 400, as the daemon's model binding makes it — not "nothing in front".
+    if (body === null) return err(res, 400, 'bad_process', 'body must be JSON: { process: string | null }')
+    const p = body.process ?? null
+    const bare = typeof p === 'string' && p.trim().length > 0 && p.trim().length <= 260 &&
+      !/[\\/:]/.test(p) && !/[\u0000-\u001f\u007f]/.test(p)
+    if (p !== null && !bare) return err(res, 400, 'bad_process', 'process must be null or a bare process name of at most 260 characters')
+    state.foreground = { process: p === null ? null : p.trim(), at: Date.now() }
+    return send(res, 200, { accepted: true })
+  }
+  if (method === 'GET' && path === '/session/foreground') {
+    const f = state.foreground
+    const age = f ? Date.now() - f.at : null
+    if (f && age <= 10_000) return send(res, 200, { process: f.process, source: 'agent', ageMs: age })
+    return send(res, 200, { process: null, source: 'local', ageMs: null })
+  }
   if (method === 'GET' && path === '/gpu/desired') {
     return send(res, 200, { requested: state.gpu.capRequested, frameCapFps: state.gpu.frameCapFps, requestedAtUtc: null })
   }

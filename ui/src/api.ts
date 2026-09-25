@@ -14,7 +14,7 @@ import type {
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, StandbyRestoreOutcome,
-  AppRulesInfo, AppRule, GameSession, SessionsResponse, GamesResponse,
+  AppRulesInfo, AppRule, GameSession, SessionsResponse, GamesResponse, TdpInfo,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -27,7 +27,10 @@ const isLocalShell = typeof window !== 'undefined' && (
 // tests can stub it. Same-origin by default; absolute 127.0.0.1:8787 from the Tauri desktop shell.
 export const BASE: string = import.meta.env.VITE_FORGE_API || (isLocalShell ? LOCAL_API : '')
 
-export interface TdpResult { requested: number; observed: number; verified: boolean }
+// `observed` is null when the closed loop could not read the limit back (ryzenadj without its table,
+// a PM table version it does not know). It was typed `number`, and the overlay wrote it straight into
+// its stepper — an unreadable readback put null into a numeric control with no type error to say so.
+export interface TdpResult { requested: number; observed: number | null; verified: boolean }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init)
@@ -52,6 +55,8 @@ export const getMode = async () => (await json<{ active: ModeId }>('/mode')).act
 export const setMode = async (mode: ModeId) =>
   (await json<{ active: ModeId }>('/mode', post({ name: mode }))).active
 export const setTdp = (stapmW: number) => json<TdpResult>('/tdp', post({ stapmW }))
+// The last write and the manual override in force — what the TDP controls open on.
+export const getTdp = () => json<TdpInfo>('/tdp')
 export const getJobs = () => json<Job[]>('/jobs')
 export const createJob = (cmd: string, constraints?: Job['constraints']) =>
   json<{ id: string; status: Job['status'] }>('/jobs', post({ cmd, constraints }))

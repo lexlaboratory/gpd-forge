@@ -10,7 +10,8 @@ public sealed class ProfileApplier(
     ITdpController tdp,
     IPowerControllerDetector detector,
     ILogger<ProfileApplier>? logger = null,
-    TdpIntent? intent = null)
+    TdpIntent? intent = null,
+    TdpState? state = null)
 {
     /// <summary>
     /// Apply the mode's TDP preset — but only if GPD Forge is the sole power controller. If
@@ -20,6 +21,10 @@ public sealed class ProfileApplier(
     /// Every call ends a manual override (<see cref="TdpIntent"/>), before the yield check: the mode
     /// changed — or was deliberately re-picked — whether or not GPD Forge got to write it, and an
     /// override left behind would resurface through the next restore once the rival exits.
+    /// </para>
+    /// <para>
+    /// A yield also marks the last write STALE (<see cref="TdpState.MarkStale"/>): it was the previous
+    /// mode's, and the 30 s reassert must not put it back once the rival exits.
     /// </para>
     /// </summary>
     public async Task<ApplyOutcome> ApplyAsync(string mode, CancellationToken ct)
@@ -33,6 +38,7 @@ public sealed class ProfileApplier(
         {
             logger?.LogInformation("Yielding TDP for '{Mode}': another power controller is active ({Names}).",
                 mode, string.Join(", ", names));
+            state?.MarkStale();
             return ApplyOutcome.SkippedConflict;
         }
 

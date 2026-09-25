@@ -179,10 +179,40 @@ if (args.Contains("--probe-gpu"))
     return;
 }
 
+// Read-only TDP probe: runs `ryzenadj --info` once and prints its output VERBATIM, then what the
+// daemon's parser makes of it. No write of any kind — `--info` only reads the PM table.
+//
+// Exists because the Strix Point parser fixture (core.tests/RyzenAdjFixtures.cs) is rebuilt from
+// ryzenadj's printer, not captured: a non-elevated run on the HX 370 refused with "WinRing0 Err: Driver
+// not loaded" (2026-09-24). The 30 s reassert decides whether to write from this parse, so the real
+// table is worth having byte for byte. Run from an ELEVATED shell and paste the output into the fixture:
+//   dotnet GpdForge.Service.dll --probe-tdp
+if (args.Contains("--probe-tdp"))
+{
+    string ryzenPath = Environment.GetEnvironmentVariable("GPDFORGE_RYZENADJ")
+        ?? @"C:\Program Files\Motion Assistant\amd\ryzenadj.exe";
+    Console.WriteLine($"GPD Forge TDP probe (read-only): {ryzenPath} --info");
+    if (!File.Exists(ryzenPath))
+    {
+        Console.WriteLine("  ryzenadj not found (set GPDFORGE_RYZENADJ to its path).");
+        return;
+    }
+    string info = await new SystemProcessRunner().RunAsync(ryzenPath, "--info", CancellationToken.None);
+    Console.WriteLine("----- raw output (verbatim) -----");
+    Console.Write(info);
+    Console.WriteLine("----- end of raw output -----");
+    var parsed = RyzenAdjOutput.Parse(info);
+    Console.WriteLine($"  parsed STAPM LIMIT    = {parsed.StapmW?.ToString() ?? "(not found)"} W");
+    Console.WriteLine($"  parsed PPT LIMIT FAST = {parsed.PptW?.ToString() ?? "(not found)"} W");
+    if (parsed.StapmW is null || parsed.PptW is null)
+        Console.WriteLine("  Unreadable: the 30 s reassert would do nothing with this. Not elevated? (WinRing0 needs it.)");
+    return;
+}
+
 // Read-only telemetry probe: `dotnet run -- --probe`. No hosting, no hardware writes.
 if (args.Contains("--probe"))
 {
-    var probe = new WmiTelemetryService();
+    using var probe = new WmiTelemetryService();
     var s = await probe.ReadAsync(CancellationToken.None);
     Console.WriteLine("GPD Forge telemetry probe (read-only, WMI):");
     Console.WriteLine($"  cpuTempC   = {s.CpuTempC:F1}");
@@ -201,7 +231,7 @@ if (args.Contains("--probe"))
 if (args.Contains("--probe-hw"))
 {
     using var sensors = new LhmHardwareSensors();
-    var telemetry = new WmiTelemetryService(sensors);
+    using var telemetry = new WmiTelemetryService(sensors);
     var s = await telemetry.ReadAsync(CancellationToken.None);
     Console.WriteLine("GPD Forge telemetry probe (read-only, WMI + LibreHardwareMonitor):");
     Console.WriteLine($"  cpuTempC   = {s.CpuTempC:F1}");
@@ -529,7 +559,10 @@ else
 }
 
 builder.Services.AddSingleton<TdpState>();
-builder.Services.AddSingleton<ITdpController>(sp => new AuditingTdpController(
+// Outermost: one write at a time (core/Tdp/SerializedTdpController.cs). Five writers run on their
+// own threads, and two overlapping closed loops fight retry by retry; the 30 s reassert also needs
+// its "nothing wrote since I read" check to be atomic with its write.
+builder.Services.AddSingleton(sp => new SerializedTdpController(new AuditingTdpController(
     ActivatorUtilities.CreateInstance<ClosedLoopTdpController>(sp),
     sp.GetRequiredService<HardwareAuditLog>(),
     sp.GetRequiredService<TdpState>(),
@@ -538,7 +571,9 @@ builder.Services.AddSingleton<ITdpController>(sp => new AuditingTdpController(
     // "verifies". Reporting verified:true without saying the backend is a stub is a liar with a
     // timestamp — resolved from the registered backend rather than from the gate variable, so it
     // describes what is actually wired.
-    sp.GetRequiredService<ITdpBackend>() is StubTdpBackend ? "stub" : "ryzenadj"));
+    sp.GetRequiredService<ITdpBackend>() is StubTdpBackend ? "stub" : "ryzenadj"),
+    sp.GetRequiredService<TdpState>()));
+builder.Services.AddSingleton<ITdpController>(sp => sp.GetRequiredService<SerializedTdpController>());
 builder.Services.AddSingleton<IFanController, StubFanController>();
 // Telemetry: ONE hardware reader, ONE loop reading it. WmiTelemetryService is registered as the
 // reader, and the only thing that resolves it is TelemetrySampler; every endpoint and worker takes
@@ -765,9 +800,12 @@ bool autoProfiles = Environment.GetEnvironmentVariable("GPDFORGE_AUTO_PROFILES")
 // feature; it does not delete the user's rules or hide them from the UI.
 builder.Services.AddSingleton<IAppRuleStore>(_ => new AppRuleStore(DataRoot.Current));
 
-// Foreground detection is registered OUTSIDE the auto-profiles gate: it is a read-only Win32 query,
-// and the FPS probe needs it to know whose frames to read even when mode switching is off.
-builder.Services.AddSingleton<IForegroundApp, Win32ForegroundApp>();
+// Foreground detection is registered OUTSIDE the auto-profiles gate: it is a read-only query, and the
+// FPS probe needs it to know whose frames to read even when mode switching is off. The installed
+// service is in session 0, where the local Win32 query is always null, so the answer comes from the
+// user-session agent while it reports (POST /session/foreground; core/Profiles/SessionForegroundApp.cs).
+builder.Services.AddSingleton(_ => new SessionForegroundApp(new Win32ForegroundApp()));
+builder.Services.AddSingleton<IForegroundApp>(sp => sp.GetRequiredService<SessionForegroundApp>());
 
 if (autoProfiles)
 {
@@ -1013,9 +1051,14 @@ app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier
 // number through /telemetry and could not answer "which of the ten writers set it", which is the
 // difference between a reading and a fact. A handheld sitting at 12 W looks the same whether the
 // thermal guardian is protecting it, the charge guard is cooling it, or a mode preset simply says so.
-app.MapGet("/tdp", (TdpState state) =>
+//
+// `manualStapmW` (2026-09-24): the manual override POST /tdp set for the ACTIVE mode, or null. The UI
+// seeds its TDP controls from it; before, they started at a hardcoded 20 W or the preset while a
+// remembered 12 W was in force.
+app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
 {
     var s = state.Last;
+    int? manualStapmW = intent.Manual(m.Active)?.StapmW;
     if (s is not TdpSnapshot last)
         // Null, not a zeroed row: "nothing has written TDP since this daemon started" is a real
         // answer and must not be dressed up as 0 W applied by nobody.
@@ -1025,6 +1068,7 @@ app.MapGet("/tdp", (TdpState state) =>
             backend = (string?)null, observedStapmW = (int?)null, observedPptW = (int?)null,
             attempts = (int?)null, atUtc = (DateTimeOffset?)null,
             note = "No TDP write has happened since the daemon started.",
+            manualStapmW,
         });
 
     return Results.Json(new
@@ -1042,6 +1086,7 @@ app.MapGet("/tdp", (TdpState state) =>
         note = last.Backend == "stub"
             ? "The hardware gate is closed: the stub backend echoes the request, so 'verified' means the echo matched, not the silicon."
             : null,
+        manualStapmW,
     });
 });
 
@@ -1303,6 +1348,26 @@ app.MapPost("/gpu/state", (GpuAgentReportRequest r, GpuAgentState agent) =>
         r.Available, r.Status ?? "Unknown", r.AdlxVersion, r.Detail ?? string.Empty,
         r.Settings, DateTimeOffset.UtcNow));
     return Results.Json(new { accepted = true });
+});
+
+// The foreground app as the user's session sees it. The service runs in session 0, where
+// GetForegroundWindow is always NULL — so until 2026-09-24 the FPS target and the auto-profile worker
+// were blind on every installed machine. The user-session agent posts what is in front every 3 s;
+// the answer is trusted for 10 s (core/Profiles/SessionForegroundApp.cs). The GET says where the
+// current answer came from, which is how "is the agent reporting?" is checked on a device.
+app.MapPost("/session/foreground", (SessionForegroundRequest r, SessionForegroundApp foreground) =>
+{
+    if (!SessionForegroundApp.IsValidProcessName(r.Process))
+        return Results.BadRequest(new { error = new { code = "bad_process",
+            message = $"process must be null or a bare process name of at most {SessionForegroundApp.MaxProcessNameLength} characters" } });
+    foreground.Report(r.Process);
+    return Results.Json(new { accepted = true });
+});
+
+app.MapGet("/session/foreground", (SessionForegroundApp foreground) =>
+{
+    var d = foreground.Describe();
+    return Results.Json(new { process = d.Process, source = d.Source, ageMs = d.AgeMs });
 });
 
 // VRAM/UMA is a BIOS setting (GOP/_DSM at boot) — GPD Forge reads it live but never writes it
@@ -1740,10 +1805,13 @@ app.MapPost("/guardian", (GuardianRequest r, GuardianService g) =>
 // System health check / anomaly detection: pure rules (GpdForge.Health.HealthCheck) evaluated
 // against a REAL live snapshot. Catches things like this unit's parked-fan-while-warm state, a
 // firmware that's silently reverting TDP, or a critical-temp / high-discharge condition.
+//
+// Graded WITH the reading's age (audit, 2026-09-24): a sampler whose hardware read hangs keeps serving
+// its last snapshot, and grading that alone reported "ok" while the guardian had stopped.
 app.MapGet("/health/check", async (ITelemetrySource t, CancellationToken ct) =>
 {
-    var snapshot = (await t.ReadAsync(ct)).Snapshot;
-    var report = HealthCheck.Evaluate(snapshot, new HealthContext());
+    var reading = await t.ReadAsync(ct);
+    var report = HealthCheck.Evaluate(reading, DateTimeOffset.UtcNow, new HealthContext());
     return Results.Json(report);
 });
 
@@ -2003,6 +2071,9 @@ namespace GpdForge.Api
         string? AdlxVersion,
         string? Detail,
         GpdForge.Gpu.GpuSettingsSnapshot? Settings);
+    /// <summary>What the user-session agent posts to /session/foreground: the foreground process
+    /// name without a path, or null when nothing is in front.</summary>
+    public sealed record SessionForegroundRequest(string? Process);
     public sealed record VramRequest(double? RequestedMb);
 
     /// <summary>Tracks whether the manual "keep awake" override (POST /ai/anti-standby) is on, so a

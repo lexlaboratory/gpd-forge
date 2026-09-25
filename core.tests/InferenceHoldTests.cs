@@ -895,7 +895,11 @@ public class InferenceHoldWorkerTests
             bool everHeld = false;
             while (DateTime.UtcNow < deadline)
             {
-                if (anti.HolderCount > 0) everHeld = true;
+                // The sink's count as well as the live holder count: at 20 ms ticks the hold can be
+                // taken and released between two 20 ms polls, and under a loaded full-suite run a poll
+                // that only sampled HolderCount missed it and failed "never produced a hold" (seen once,
+                // 2026-09-24). An engagement the sink recorded is the same evidence, and it cannot be missed.
+                if (anti.HolderCount > 0 || sink.Engaged > 0) everHeld = true;
                 if (everHeld && anti.HolderCount == 0) break;
                 await Task.Delay(20);
             }

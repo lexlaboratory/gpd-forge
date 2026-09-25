@@ -14,13 +14,21 @@
 //   - nothing written since start means nothing owned, and nothing is adopted or written;
 //   - it yields to a rival power controller exactly as ProfileApplier does (two controllers
 //     applying TDP collapse the device, field-confirmed);
-//   - a write that lands while the read is in flight wins: the re-apply is dropped rather than
-//     undoing it.
+//   - any other write that starts or finishes while the check runs wins: the re-apply is dropped
+//     rather than undoing it. The check-and-write is atomic against every other writer
+//     (SerializedTdpController) — until the 2026-09-24 audit it only saw writes that had FINISHED, so
+//     a POST /tdp still in its closed loop could be overwritten by the stale profile.
 //
 // "What GPD Forge last wrote" is TdpState.Last — whoever wrote it: the mode, a manual override, a
 // guardian ceiling, auto-FPS. Re-asserting any other profile (the preset, say) would silently undo
 // the owner that is actually in charge. The re-apply is recorded under its own owner,
 // TdpOwner.Reassert, so GET /tdp and the audit log say that it happened and why.
+//
+// The one exception is a last write the user has since moved away from: a mode switch that YIELDED
+// to MotionAssistant or GPD Tool (TdpState.MarkStale). That write was the previous mode's; putting it
+// back once the rival exits would hold a TDP while GET /mode named another mode (audit, 2026-09-24).
+// Then what is kept is the CURRENT intent — the active mode's preset, or its manual override.
+using GpdForge.Api;
 using GpdForge.Profiles;
 using Microsoft.Extensions.Logging;
 
@@ -36,7 +44,7 @@ public enum ReassertOutcome
     Unreadable,
     /// <summary>The readback matches what was written; nothing written.</summary>
     Holding,
-    /// <summary>Another write landed during the read; the stale re-apply was dropped.</summary>
+    /// <summary>Another write started or finished during the check; the stale re-apply was dropped.</summary>
     Superseded,
     /// <summary>The limit had moved; it was re-applied and read back as holding.</summary>
     Reasserted,
@@ -46,9 +54,11 @@ public enum ReassertOutcome
 
 public sealed class TdpReasserter(
     ITdpBackend backend,
-    ITdpController tdp,
+    SerializedTdpController tdp,
     TdpState state,
     IPowerControllerDetector detector,
+    TdpIntent intent,
+    ModeState mode,
     TimeProvider? time = null,
     ILogger<TdpReasserter>? logger = null)
 {
@@ -66,8 +76,9 @@ public sealed class TdpReasserter(
     /// <summary>
     /// Runs <see cref="ReassertAsync"/> when <see cref="DefaultInterval"/> has passed since the last
     /// check (or since construction), else returns null without touching anything. Monotonic time,
-    /// so a wall-clock change cannot stall or burst it. Called from ForgeWorker's tick, which is
-    /// also where most other TDP writes happen — so the check never runs concurrently with them.
+    /// so a wall-clock change cannot stall or burst it. Called from ForgeWorker's tick. The tick's own
+    /// writes cannot overlap it, but POST /tdp, POST /mode, POST /panic and the resume restore run on
+    /// other threads — <see cref="ReassertAsync"/> is what keeps it safe against those.
     /// </summary>
     public async Task<ReassertOutcome?> ReassertIfDueAsync(CancellationToken ct)
     {
@@ -76,16 +87,32 @@ public sealed class TdpReasserter(
         return await ReassertAsync(ct);
     }
 
-    /// <summary>One check: read back, compare with the last write, re-apply only on a difference.</summary>
+    /// <summary>One check: read back, compare with what should be in force, re-apply only on a difference.</summary>
     public async Task<ReassertOutcome> ReassertAsync(CancellationToken ct)
     {
-        if (state.Last is not TdpSnapshot owned) return ReassertOutcome.NothingOwned;
+        // Read once, under one lock: the generation is what the final write is checked against, so
+        // anything that writes (or yields) after this line makes the re-apply stand down.
+        var ownership = state.Ownership;
+        if (ownership.Last is not TdpSnapshot owned) return ReassertOutcome.NothingOwned;
+
+        // A write already running will record its own result; comparing the hardware with the profile
+        // it is replacing would only ever find a "difference".
+        if (ownership.Writing) return ReassertOutcome.Superseded;
 
         if (detector.OthersRunning(out var rivals))
         {
             logger?.LogDebug("TDP reassert skipped: another power controller is active ({Names}).",
                 string.Join(", ", rivals));
             return ReassertOutcome.Yielded;
+        }
+
+        // What to keep. Normally the last write, whoever made it. After a mode switch that yielded,
+        // that write is the previous mode's, so the current intent is kept instead — never the stale one.
+        TdpProfile want = owned.Requested;
+        if (ownership.Stale)
+        {
+            if (intent.Resolve(mode.Active) is not TdpProfile current) return ReassertOutcome.NothingOwned;
+            want = current;
         }
 
         // A throw is a failed read, not a crash: this runs inside ForgeWorker's tick, and a periodic
@@ -111,20 +138,25 @@ public sealed class TdpReasserter(
         }
         _unreadableLogged = false;
 
-        if (ClosedLoopTdpController.Holds(observed, owned.Requested, ToleranceW)) return ReassertOutcome.Holding;
+        if (ClosedLoopTdpController.Holds(observed, want, ToleranceW)) return ReassertOutcome.Holding;
 
-        // The read launched a process. If anything wrote TDP meanwhile, `owned` is stale and writing it
-        // would undo that newer write — POST /tdp, a mode switch, a throttle.
-        if (!Equals(state.Last, owned)) return ReassertOutcome.Superseded;
-
-        logger?.LogInformation(
-            "TDP moved since it was written: wanted STAPM {Want}W / fast {WantFast}W (by {Owner}), read {Stapm}W / {Fast}W. Re-applying.",
-            owned.Requested.StapmW, owned.Requested.FastW, owned.Owner, observed.StapmW, observed.PptW);
+        if (ownership.Stale)
+            logger?.LogInformation(
+                "TDP: mode '{Mode}' was selected while another power controller held TDP. It is gone, so applying STAPM {Want}W / fast {WantFast}W (read {Stapm}W / {Fast}W).",
+                mode.Active, want.StapmW, want.FastW, observed.StapmW, observed.PptW);
+        else
+            logger?.LogInformation(
+                "TDP moved since it was written: wanted STAPM {Want}W / fast {WantFast}W (by {Owner}), read {Stapm}W / {Fast}W. Re-applying.",
+                want.StapmW, want.FastW, owned.Owner, observed.StapmW, observed.PptW);
 
         try
         {
-            var result = await tdp.ApplyAsync(owned.Requested, TdpOwner.Reassert, ct);
-            return result.Verified ? ReassertOutcome.Reasserted : ReassertOutcome.NotHeld;
+            // Conditional on the generation read at the top, checked inside the write gate: the read
+            // launched a process, and anything that wrote meanwhile — POST /tdp, a mode switch, a
+            // throttle — is newer than `want` and must not be undone by it.
+            var result = await tdp.ApplyIfUnchangedAsync(ownership.Generation, want, TdpOwner.Reassert, ct);
+            if (result is not TdpApplyResult applied) return ReassertOutcome.Superseded;
+            return applied.Verified ? ReassertOutcome.Reasserted : ReassertOutcome.NotHeld;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

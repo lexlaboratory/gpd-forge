@@ -59,6 +59,10 @@ public sealed class ForgeWorker(
     // in a single await forever.
     private static readonly TimeSpan SampleWait = TimeSpan.FromSeconds(2);
 
+    // Counts waits that ended without a new sample, so a hung hardware read is a warning in the service
+    // log (once per outage) instead of a loop that silently stops protecting the machine.
+    private readonly SampleStallMonitor _stall = new();
+
     // The guardian's last applied ceiling, so a steady throttle is not re-applied every tick.
     private const double ThrottleReassertSeconds = 30.0;
     private TdpProfile? _lastThrottleApplied;
@@ -82,7 +86,16 @@ public sealed class ForgeWorker(
                 // old blocking read did, rather than re-processing a stale snapshot as if it were new
                 // (which would put duplicate rows in the history and feed the guardian old data).
                 var reading = await telemetry.WaitForNewerAsync(lastSequence, SampleWait, stoppingToken);
-                if (reading.Sequence == lastSequence) continue;
+                if (reading.Sequence == lastSequence)
+                {
+                    if (_stall.Missed() == StallTransition.Stalled)
+                        logger.LogWarning(
+                            "No new telemetry sample for {Seconds:0} s: the thermal guardian, the charge guard, the AC/battery switch, the TDP reassert, history and sessions are paused until the sampler recovers.",
+                            _stall.Misses * SampleWait.TotalSeconds);
+                    continue;
+                }
+                if (_stall.Advanced() == StallTransition.Recovered)
+                    logger.LogInformation("Telemetry samples resumed; the guardian and the rest of the tick are running again.");
                 lastSequence = reading.Sequence;
                 var snapshot = reading.Snapshot;
                 var sampledAt = reading.SampledAt ?? DateTimeOffset.UtcNow;
@@ -94,16 +107,24 @@ public sealed class ForgeWorker(
                 // Per-power-source auto mode-switch — only on the AC/battery edge, mirroring how
                 // POST /mode applies: flip ModeState.Active, then apply it through the same
                 // ProfileApplier (yields if another power controller owns TDP).
-                if (_lastAcConnected is bool prevAc && prevAc != snapshot.AcConnected)
+                //
+                // Not on a reading whose AC state is unknown (a failed battery query): its "on battery"
+                // is a fallback, not an observation, and acting on it switched the mode — and back —
+                // on one WMI glitch (audit, 2026-09-24). The last known state is kept, so the real edge,
+                // if there was one, is still seen when the query recovers.
+                if (!snapshot.AcUnknown)
                 {
-                    string? desired = PowerSourceProfiles.Resolve(snapshot.AcConnected, powerSource.Config, mode.Active);
-                    if (desired is not null)
+                    if (_lastAcConnected is bool prevAc && prevAc != snapshot.AcConnected)
                     {
-                        mode.Active = desired;
-                        await profileApplier.ApplyAsync(mode.Active, stoppingToken);
+                        string? desired = PowerSourceProfiles.Resolve(snapshot.AcConnected, powerSource.Config, mode.Active);
+                        if (desired is not null)
+                        {
+                            mode.Active = desired;
+                            await profileApplier.ApplyAsync(mode.Active, stoppingToken);
+                        }
                     }
+                    _lastAcConnected = snapshot.AcConnected;
                 }
-                _lastAcConnected = snapshot.AcConnected;
 
                 // Thermal/battery guardian — evaluated every tick. A safety throttle takes priority
                 // over auto-FPS; alerts are logged and surfaced via GET /guardian.

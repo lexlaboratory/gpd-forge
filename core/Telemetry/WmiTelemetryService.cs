@@ -21,7 +21,7 @@ public sealed class WmiTelemetryService(
     GpdForge.Tdp.TdpState? tdpState = null,
     ILogger<WmiTelemetryService>? logger = null,
     IWmiTelemetryQueries? wmi = null,
-    TimeProvider? time = null) : ITelemetryService
+    TimeProvider? time = null) : ITelemetryService, IDisposable
 {
     /// <summary>
     /// How often the slow WMI classes are actually queried. Battery charge, the discharge rate and the
@@ -32,6 +32,14 @@ public sealed class WmiTelemetryService(
     public static readonly TimeSpan SlowCadence = TimeSpan.FromSeconds(5);
 
     private readonly IWmiTelemetryQueries _wmi = wmi ?? new WmiTelemetryQueries(logger);
+
+    // Disposed only when this instance built it: the four ManagementObjectSearchers inside are this
+    // service's to release (at DI shutdown, or at the end of a --probe `using`), while queries handed
+    // in belong to whoever handed them in.
+    private readonly bool _ownsWmi = wmi is null;
+
+    // Warn once per battery-query outage, not once per read; touched only under _gate.
+    private bool _batteryFailing;
     private readonly Cadenced<WmiBatteryReading?> _battery = new(SlowCadence, time ?? TimeProvider.System);
     private readonly Cadenced<double?> _discharge = new(SlowCadence, time ?? TimeProvider.System);
     private readonly Cadenced<double?> _thermal = new(SlowCadence, time ?? TimeProvider.System);
@@ -54,9 +62,13 @@ public sealed class WmiTelemetryService(
         // announced an emergency on a machine that might be at 90 %. acConnected stays a plain bool
         // and falls back to false — a deliberate asymmetry: every consumer treats "on battery" as the
         // more conservative state, so an unknown power source behaves cautiously.
+        //
+        // The fallback is flagged as unknown (AcUnknown) so nothing ACTS on it: until 2026-09-24 a
+        // failed query, cached for 5 s, read to ForgeWorker as an unplug and switched the mode.
         var battery = _battery.Get(_wmi.ReadBattery);
         int? batteryPct = battery?.Pct;
         bool acConnected = battery?.Ac ?? false;
+        NoteBatteryQuery(failed: battery is null);
         double? dischargeW = _discharge.Get(_wmi.ReadDischargeRateMw) is double mW
             ? Math.Round(mW / 1000.0, 1)
             : null;
@@ -113,7 +125,24 @@ public sealed class WmiTelemetryService(
         return new TelemetrySnapshot(
             cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fanDutyPct,
             fps, fps1PctLow, batteryPct, dischargeW, acConnected,
-            TdpVerified: tdpState?.Last?.Verified);
+            TdpVerified: tdpState?.Last?.Verified) { AcUnknown = battery is null };
+    }
+
+    // The query itself logs its failure at Debug (WmiTelemetryQueries) because most of its classes
+    // failing is routine (no ACPI zone without elevation). The battery is not routine: it decides the
+    // AC/battery mode switch, so its outage is a warning, once, and its recovery an info line.
+    private void NoteBatteryQuery(bool failed)
+    {
+        if (failed && !_batteryFailing)
+            logger?.LogWarning("The Win32_Battery query failed: the AC state is unknown, and the AC/battery mode switch is paused until it recovers.");
+        else if (!failed && _batteryFailing)
+            logger?.LogInformation("The Win32_Battery query recovered; the AC state is known again.");
+        _batteryFailing = failed;
+    }
+
+    public void Dispose()
+    {
+        if (_ownsWmi) (_wmi as IDisposable)?.Dispose();
     }
 
     /// <summary>ACPI thermal zone reports tenths of a Kelvin. Pure + unit-tested.</summary>
