@@ -75,6 +75,7 @@
         "batteryPct": "number|null",
         "dischargeW": "number|null",
         "acConnected": "boolean",
+        "acKnown": "boolean",
         "tdpVerified": "boolean|null",
         "sampledAtMs": "number|null",
         "sampleAgeMs": "number|null"

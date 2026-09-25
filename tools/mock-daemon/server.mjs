@@ -365,6 +365,8 @@ function telemetry(blind = false) {
       batteryPct: null, dischargeW: null,
       // Not nullable in the real daemon either: these are answers we always have.
       acConnected: state.acConnected,
+      // False only when the daemon's battery query failed (core/Telemetry/ITelemetryService.cs).
+      acKnown: true,
       tdpVerified: state.tdpVerified,
     }
   }
@@ -382,6 +384,7 @@ function telemetry(blind = false) {
     batteryPct: state.batteryPct,
     dischargeW: jitter(18, 2),
     acConnected: state.acConnected,
+    acKnown: true,
     tdpVerified: state.tdpVerified,
   }
 }

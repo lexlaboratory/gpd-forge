@@ -49,6 +49,11 @@ public sealed class ClosedLoopTdpController(
     /// but "we could not read it" and "the firmware refused" are different facts and only one of them
     /// should ever be reported as a reverted write.
     ///
+    /// STAPM and fast are REQUIRED; the slow limit and Tctl are judged only when the table printed
+    /// them (audit round 2, 2026-09-24). Before, a firmware that put back only its own slow limit or
+    /// Tctl read as holding forever. A missing row stays "not measured" rather than "moved": requiring
+    /// it would fail every write on a PM table that does not expose it.
+    ///
     /// Public because the 30 s reassert (<see cref="TdpReasserter"/>) must judge "still holding" by
     /// exactly the rule a write was verified by; a second copy of the comparison could drift until a
     /// limit the closed loop calls verified is one the reassert calls moved, and it rewrites forever.
@@ -56,7 +61,9 @@ public sealed class ClosedLoopTdpController(
     public static bool Holds(TdpReadout observed, TdpProfile want, int tol) =>
         observed.StapmW is int stapm && observed.PptW is int ppt
         && Math.Abs(stapm - want.StapmW) <= tol
-        && Math.Abs(ppt - want.FastW) <= tol;
+        && Math.Abs(ppt - want.FastW) <= tol
+        && (observed.PptSlowW is not int slow || Math.Abs(slow - want.SlowW) <= tol)
+        && (observed.TctlC is not int tctl || Math.Abs(tctl - want.TctlC) <= tol);
 
     private TimeSpan Backoff(int attempt)
     {

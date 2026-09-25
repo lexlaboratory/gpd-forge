@@ -80,6 +80,27 @@ public class RyzenAdjBackendTests
     }
 
     [Fact]
+    public void Parse_also_reads_the_slow_limit_and_the_tctl_limit()
+    {
+        // Audit round 2 (2026-09-24): the 30 s reassert compared only STAPM and fast, so a firmware
+        // that put back only its own slow limit or Tctl was "holding" and never corrected. ryzenadj
+        // prints both rows; they were simply not parsed.
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.StrixPointInfo);
+
+        Assert.Equal(17, readout.PptSlowW);
+        Assert.Equal(92, readout.TctlC);
+    }
+
+    [Fact]
+    public void Parse_of_a_table_without_slow_or_tctl_rows_leaves_them_unknown()
+    {
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.StrixPointNanLimits);
+
+        Assert.Null(readout.PptSlowW);
+        Assert.Null(readout.TctlC);
+    }
+
+    [Fact]
     public void Parse_takes_the_limit_row_not_the_value_row_beneath_it()
     {
         // "STAPM VALUE 6.482" sits one line under "STAPM LIMIT 15.000". Reading the live value as the
@@ -140,7 +161,7 @@ public class RyzenAdjBackendTests
 
         Assert.True(r.Verified);
         Assert.Equal(1, r.Attempts);
-        Assert.Equal(new TdpReadout(15, 20), r.Observed);
+        Assert.Equal(new TdpReadout(15, 20, 17, 92), r.Observed);   // all four limits judged
     }
 
     [Fact]

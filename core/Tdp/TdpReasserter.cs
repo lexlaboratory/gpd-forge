@@ -14,10 +14,13 @@
 //   - nothing written since start means nothing owned, and nothing is adopted or written;
 //   - it yields to a rival power controller exactly as ProfileApplier does (two controllers
 //     applying TDP collapse the device, field-confirmed);
-//   - any other write that starts or finishes while the check runs wins: the re-apply is dropped
-//     rather than undoing it. The check-and-write is atomic against every other writer
-//     (SerializedTdpController) — until the 2026-09-24 audit it only saw writes that had FINISHED, so
-//     a POST /tdp still in its closed loop could be overwritten by the stale profile.
+//   - any other write that starts or finishes before the check gets the write gate wins: the check
+//     is dropped rather than undoing it. The read-compare-write then runs as one step under that
+//     gate (SerializedTdpController) — until the 2026-09-24 audit it only saw writes that had
+//     FINISHED, so a POST /tdp still in its closed loop could be overwritten by the stale profile;
+//     until audit round 2 the read ran outside the gate, beside other writers' ryzenadj;
+//   - "differs" covers all four limits it writes: STAPM and fast always, slow and Tctl whenever the
+//     PM table prints them (audit round 2 — a firmware revert of only those used to read as holding).
 //
 // "What GPD Forge last wrote" is TdpState.Last — whoever wrote it: the mode, a manual override, a
 // guardian ceiling, auto-FPS. Re-asserting any other profile (the preset, say) would silently undo
@@ -115,6 +118,13 @@ public sealed class TdpReasserter(
             want = current;
         }
 
+        // The read, the comparison and the re-apply are ONE step under the write gate (audit round 2,
+        // 2026-09-24). The read used to run outside it, so a POST /tdp arriving meanwhile launched its
+        // own ryzenadj beside this one on the SMU mailbox. Conditional on the generation read at the
+        // top: anything that wrote or yielded since is newer than `want`, and must not be undone by it.
+        using var lease = await tdp.AcquireIfUnchangedAsync(ownership.Generation, ct);
+        if (lease is null) return ReassertOutcome.Superseded;
+
         // A throw is a failed read, not a crash: this runs inside ForgeWorker's tick, and a periodic
         // `ryzenadj --info` that cannot launch (the tool uninstalled, a locked driver) must cost the
         // reassert, never the worker — the guardian lives in the same loop.
@@ -151,11 +161,8 @@ public sealed class TdpReasserter(
 
         try
         {
-            // Conditional on the generation read at the top, checked inside the write gate: the read
-            // launched a process, and anything that wrote meanwhile — POST /tdp, a mode switch, a
-            // throttle — is newer than `want` and must not be undone by it.
-            var result = await tdp.ApplyIfUnchangedAsync(ownership.Generation, want, TdpOwner.Reassert, ct);
-            if (result is not TdpApplyResult applied) return ReassertOutcome.Superseded;
+            // Still under the lease: nothing has written since the read, so `want` is still current.
+            var applied = await lease.ApplyAsync(want, TdpOwner.Reassert, ct);
             return applied.Verified ? ReassertOutcome.Reasserted : ReassertOutcome.NotHeld;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

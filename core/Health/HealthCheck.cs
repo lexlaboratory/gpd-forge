@@ -21,6 +21,36 @@ public sealed record HealthContext(
     long StaleAfterMs = 3000);   // reading older than this → warn: three 1 Hz sampler ticks, the bound StandbyService uses
 
 /// <summary>
+/// Facts about the daemon itself, not the reading, that the caller measures and the rules grade.
+/// Added in audit round 2 (2026-09-24) for the one such fact that was silent: nobody reporting the
+/// foreground app, which blinds the FPS target and the per-app rules on the installed service.
+/// </summary>
+/// <param name="ForegroundUnreported">See <see cref="ForegroundBlind"/>.</param>
+public sealed record HealthSignals(bool ForegroundUnreported = false)
+{
+    /// <summary>
+    /// True when this process is in session 0 (the installed service — no interactive desktop, so the
+    /// local foreground query is always null) AND the answer is coming from that local query because
+    /// no user-session agent has reported recently. In a user session (a dev run) the local query is
+    /// the right answer and nothing is wrong.
+    /// </summary>
+    public static bool ForegroundBlind(int processSessionId, string foregroundSource) =>
+        processSessionId == 0 && foregroundSource == GpdForge.Profiles.SessionForegroundApp.SourceLocal;
+}
+
+/// <summary>The Windows session this process runs in, read once: it cannot change for a process.</summary>
+public static class DaemonSession
+{
+    private static readonly Lazy<int> Session = new(() =>
+    {
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        return self.SessionId;
+    });
+
+    public static int Id => Session.Value;
+}
+
+/// <summary>
 /// Pure, side-effect-free anomaly detection over a telemetry snapshot — trivially unit-testable (same
 /// shape as GpdForge.Guardian.GuardianEvaluator). Never touches hardware; the caller (GET /health/check)
 /// supplies a real snapshot from the telemetry sampler (ITelemetrySource).
@@ -34,10 +64,11 @@ public static class HealthCheck
     /// (audit, 2026-09-24). A stale or never-taken sample is reported first; the other rules still run
     /// on it, because what the machine last looked like is still worth knowing.
     /// </summary>
-    public static HealthReport Evaluate(TelemetryReading reading, DateTimeOffset now, HealthContext ctx)
+    public static HealthReport Evaluate(
+        TelemetryReading reading, DateTimeOffset now, HealthContext ctx, HealthSignals? signals = null)
     {
         ArgumentNullException.ThrowIfNull(reading);
-        var report = Evaluate(reading.Snapshot, ctx);
+        var report = WithSignals(Evaluate(reading.Snapshot, ctx), signals);
 
         HealthIssue? stale = reading.AgeMs(now) switch
         {
@@ -99,6 +130,33 @@ public static class HealthCheck
             issues.Add(new HealthIssue("warn", "high_discharge",
                 $"High discharge on battery — {watts:0.#} W."));
 
+        // The battery query failed, so `acConnected: false` above is the cautious fallback, not a
+        // reading — and ForgeWorker and FocusProfileWorker deliberately act on nothing while it lasts.
+        // Until audit round 2 (2026-09-24) that pause was a service-log line only.
+        if (t.AcUnknown)
+            issues.Add(new HealthIssue("warn", "ac_unknown",
+                "The power source could not be read (the battery query failed). The AC/battery mode " +
+                "switch and the per-app rules are paused until it can be read again."));
+
+        return Graded(issues);
+    }
+
+    private static HealthReport WithSignals(HealthReport report, HealthSignals? signals)
+    {
+        if (signals is not { ForegroundUnreported: true }) return report;
+
+        var issues = new List<HealthIssue>(report.Issues)
+        {
+            new("warn", "foreground_unreported",
+                "No app in front is being reported by the GPD Forge session agent, so the FPS target and " +
+                "the per-app rules cannot see what is running. The agent starts at logon (reinstall, or " +
+                "sign out and back in, if it is missing)."),
+        };
+        return Graded(issues);
+    }
+
+    private static HealthReport Graded(List<HealthIssue> issues)
+    {
         string status = "ok";
         foreach (var issue in issues)
         {

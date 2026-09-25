@@ -92,6 +92,38 @@ test.describe('TDP controls', () => {
     await expect(page.getByTestId('qam-verified')).toHaveCount(0)
   })
 
+  // Audit round 2 (2026-09-24): with nothing written yet — the startup apply yielded to MotionAssistant
+  // or GPD Tool — GET /tdp answers nulls, and the Dashboard kept a hardcoded 20 W on screen as if it
+  // were in force while the overlay showed the mode preset. The mock always has a write, so this path
+  // had never run.
+  test('with no TDP write yet the Dashboard opens on the active mode preset, like the overlay', async ({ page, request }) => {
+    await request.post(`${API}/mode`, { data: { name: 'windows' } })   // preset 15 W
+    await page.route('**/tdp', (route) => route.request().method() === 'GET'
+      ? route.fulfill({ json: { stapmW: null, owner: null, verified: null, backend: null, observedStapmW: null,
+          observedPptW: null, attempts: null, atUtc: null, note: 'No TDP write has happened since the daemon started.',
+          manualStapmW: null } })
+      : route.continue())
+
+    await new DashboardPage(page).goto()
+
+    await expect(page.getByTestId('tdp-value')).toHaveText('15 W')
+    await expect(page.getByTestId('tdp-value')).not.toHaveText('20 W')
+  })
+
+  test('with nothing known the Dashboard shows the TDP as unknown, not as a number', async ({ page }) => {
+    await page.route('**/tdp', (route) => route.request().method() === 'GET'
+      ? route.fulfill({ status: 503, json: { error: { code: 'down', message: 'unavailable' } } })
+      : route.continue())
+    await page.route('**/profiles', (route) => route.fulfill({ status: 503, json: { error: { code: 'down', message: 'unavailable' } } }))
+
+    await new DashboardPage(page).goto()
+
+    await expect(page.getByTestId('tdp-value')).toHaveText('--')
+    await expect(page.getByTestId('tdp-slider')).toBeDisabled()
+    await expect(page.getByTestId('tdp-inc')).toBeDisabled()
+    await expect(page.getByTestId('tdp-dec')).toBeDisabled()
+  })
+
   test('with nothing verified the Dashboard badge is unknown, not verified', async ({ page }) => {
     await page.route('**/telemetry', async (route) => {
       const res = await route.fetch()

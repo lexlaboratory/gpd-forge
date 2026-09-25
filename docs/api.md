@@ -29,7 +29,7 @@ interface Telemetry {
   cpuClockMhz: number | null; fanRpm: number | null; fanDutyPct: number | null
   fps: number | null; fps1PctLow: number | null
   batteryPct: number | null; dischargeW: number | null
-  acConnected: boolean; tdpVerified: boolean | null
+  acConnected: boolean; acKnown?: boolean; tdpVerified: boolean | null
   sampledAtMs?: number | null; sampleAgeMs?: number | null   // GET /telemetry only, see below
 }
 
@@ -130,6 +130,13 @@ in-process (`IFrameTimeSource`); no endpoint serves them yet.
 logs a warning once per outage, and nothing acts on that fallback: the AC/battery mode switch skips
 the tick instead of treating a sensor glitch as an unplug.
 
+`acKnown` (additive, audit round 2, 2026-09-24) says which of those it is: `false` exactly when
+`acConnected` is that fallback. Before it existed the fallback reached the UI as a confident "Battery
+--%" on a plugged-in machine, and nothing said the switch was paused; the UI now shows the power source
+as unknown and `GET /health/check` reports `ac_unknown`. A client that does not find the field (an
+older daemon, a `GET /history` row from one) should treat the value as known. `GET /history` rows
+from this daemon carry it too, since they are the bare snapshot.
+
 `tdpVerified` **is** nullable, and this document claimed the opposite until 2026-09-02: it read
 "`acConnected` and `tdpVerified` are not nullable — they are answers the daemon always has." It was
 not an answer at all. The field was a hardcoded `true` at the single construction site, so with the
@@ -209,14 +216,27 @@ behavior that replaces MotionAssistant's blind 30s re-apply).
   The guardian's throttle-clear restore, the charge guard's clear, the resume restore
   (`POST /standby/restore` and the automatic one) and the 30 s reassert put the override back, not
   the preset; a guardian throttle is a ceiling under the override, never above it. Any `POST /mode`
-  ends it. It is held in memory: after a restart the mode's preset applies.
+  ends it. It is held in memory: after a restart the preset of the mode last picked applies (the
+  active mode itself IS kept across restarts, in `mode.json` under the data directory — before audit
+  round 2, 2026-09-24, a restart always started, and wrote, `windows`).
+- `409 { error: { code: "tdp_superseded" } }` when a `POST /mode` (or a later `POST /tdp`) landed
+  while this write waited for the TDP write gate. The mode change ended the override and wrote its own
+  preset; writing this one anyway left the old mode's manual profile in force under the new mode, with
+  `GET /tdp` reporting no override and the 30 s reassert keeping it (audit round 2, 2026-09-24).
+  Nothing is written on a 409.
 
 ### The 30 s reassert
 Every 30 s the worker reads the limits back (`ryzenadj --info`) and compares them with the last TDP
-GPD Forge wrote, by the closed loop's own tolerance (±1 W on STAPM and the fast limit). It writes only
-when they differ — never on a failed or partial read, never while MotionAssistant or GPD Tool runs,
-and not when another write landed during the read. A re-apply appears in `GET /tdp` and `GET /audit`
-as owner `reassert`. Not during a guardian throttle, which re-asserts its own ceiling.
+GPD Forge wrote, by the closed loop's own tolerance: ±1 on STAPM and the fast limit, and on the slow
+limit and Tctl (`PPT LIMIT SLOW`, `THM LIMIT CORE`) whenever the PM table prints them — a row it does
+not print is "not measured", never "moved". Slow and Tctl since audit round 2 (2026-09-24); before,
+a firmware that put back only those read as holding. The same rule decides `verified` for every
+write. It writes only when they differ — never on a failed or partial read, never while
+MotionAssistant or GPD Tool runs, and not when another write started or finished first. The read,
+the comparison and the re-apply run as one step under the TDP write gate, so the read never runs
+beside another writer's ryzenadj on the SMU mailbox (until audit round 2 it ran outside the gate). A
+re-apply appears in `GET /tdp` and `GET /audit` as owner `reassert`. Not during a guardian throttle,
+which re-asserts its own ceiling.
 
 ### `GET /audit`  (every hardware write the daemon has made)
 `200 → { capacity: 500, total: number, failed: number, unconfirmed: number,
@@ -632,6 +652,13 @@ across `issues` (`ok` when empty). Rules today, by the `code` each emits:
   `!tdpVerified`: null means nothing has written a limit yet, and warning about a write that never
   happened would fire on every freshly started daemon.
 - `high_discharge` → warn — on battery with `dischargeW > 30`.
+- `ac_unknown` → warn — the battery query failed, so `acConnected` is the cautious fallback
+  (`acKnown: false` on `GET /telemetry`) and the AC/battery mode switch and the per-app rules are
+  paused until it recovers. Added in audit round 2 (2026-09-24); that pause was a service-log line only.
+- `foreground_unreported` → warn — the daemon runs in session 0 and no session agent has reported the
+  app in front within 10 s (`GET /session/foreground` answers `source: "local"`), so the FPS target and
+  the per-app rules cannot see what is running. Never raised when the daemon itself runs in a user
+  session (a dev run), where the local answer is the right one. Audit round 2 (2026-09-24).
 
 The
 System page's health card polls this and shows a green "All good" when `issues` is empty, or the
@@ -797,7 +824,10 @@ means the library is marked unusable and nothing else is called through it. `--p
 that check and writes nothing.
 
 ### `GET /session/foreground`  ·  `POST /session/foreground`  (what is in front, seen from your session)
-- `POST { process: string | null } → { accepted: true }` — posted by the GPU agent every 3 s.
+- `POST { process: string | null } → { accepted: true }` — posted by the session agent (`--gpu-agent`)
+  every 3 s, whether or not GPU profiles are enabled (the installer always starts it; the gate
+  governs only its ADLX half). The agent checks the status: a refusal is logged at Warning once per
+  outage.
   `process` is the foreground process name without a path or `.exe` (`eldenring`, `GPD Forge`), or
   `null` when nothing is in front (the lock screen, the bare desktop). `400 bad_process` for anything
   else: an empty string, a path, a control character, more than 260 characters.
@@ -810,10 +840,11 @@ that check and writes nothing.
 so `GetForegroundWindow` there is always NULL. Until 2026-09-24 that made the installed daemon blind
 to what the user was doing: `GET /app-rules` reported `lastMatch.process: null` three times in a row
 while windows were open, auto-profiles never switched on focus, and the FPS reading had no foreground
-to follow. The answer has to come from the user's session, and the GPU agent is the process already
+to follow. The answer has to come from the user's session, and the session agent is the process
 running there. `source: "local"` on an installed machine therefore means **the agent is not
-reporting** (not installed with `-EnableGpuProfiles`, or not running) — and the FPS target falls back
-to the busiest presenter that could be a game (see `GET /telemetry`, `fps`).
+reporting** (not running, or an install older than audit round 2, 2026-09-24, which started it only
+with `-EnableGpuProfiles`) — the FPS target falls back to the busiest presenter that could be a game
+(see `GET /telemetry`, `fps`), and `GET /health/check` reports `foreground_unreported`.
 
 ### `GET /standby/hibernate`  ·  `POST /standby/hibernate`  (hibernate instead of draining)
 `GET → { hibernateAvailable, unavailable: string | null, onAc: {...}, onBattery: {...} }`

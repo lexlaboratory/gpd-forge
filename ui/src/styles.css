@@ -402,6 +402,8 @@ input[type="range"]::-webkit-slider-thumb {
 .shell[data-stale] .power-pill { opacity: 0.45; }
 .power-pill.ac { color: var(--good); }
 .power-pill.dc { color: var(--accent); }
+/* The battery query failed: acConnected is a fallback, not a reading (acKnown: false). */
+.power-pill.unknown { color: var(--text-dim); }
 
 /* ========================================================================
    MODES

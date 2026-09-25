@@ -64,9 +64,13 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   output verbatim from an elevated shell, to replace the fixture.
 - **The daemon sees the app in front of you.** It runs as a service in session 0, where the
   foreground window is always "none", so auto-profiles never switched on focus and the FPS reading
-  had no foreground to follow. The GPU agent, which already runs in your session, now reports the
-  foreground app every 3 s (`POST /session/foreground`); `GET /session/foreground` says what the
-  daemon is using and whether it came from the agent.
+  had no foreground to follow. The session agent (`--gpu-agent`), which runs in your session, now
+  reports the foreground app every 3 s (`POST /session/foreground`); `GET /session/foreground` says
+  what the daemon is using and whether it came from the agent. The installer now **always** starts
+  this agent at logon — before, it existed only with `-EnableGpuProfiles`, so on a default install
+  nothing reported and the foreground stayed "none". Radeon profiles still need that switch; without
+  it the agent never touches ADLX. `GET /health/check` reports `foreground_unreported` when the
+  service has no agent report.
 - **A frozen reading says so.** When the daemon's sampler stops reading the hardware, the main
   window shows "Stalled · N s ago" beside the connection chip and dims the live numbers, and the
   overlay does the same; the MCP `get_telemetry` tool adds `stale: true`. `GET /health/check`
@@ -77,6 +81,29 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **A restart keeps your mode.** The daemon applies the active mode's TDP when it starts, but the
+  active mode was held only in memory and began as `windows` — so rebooting while in `gaming`
+  actively wrote windows' 15/20/17 W. The mode you pick is now saved and is what the next start
+  applies.
+- **The TDP reassert also catches a slow limit or Tctl put back behind its back.** It compared only
+  STAPM and the fast limit; `ryzenadj --info` prints the slow limit and Tctl too, and they are now
+  judged whenever the table has them — by the same rule that decides whether any write verified.
+- **The reassert's readback no longer runs beside another TDP write.** Its `ryzenadj --info` ran
+  outside the write gate, so a Dashboard or mode-switch write arriving mid-read started a second
+  ryzenadj on the SMU mailbox at the same moment. Read, compare and re-apply are now one step under
+  the gate.
+- **A manual TDP no longer outlives a mode switch that raced it.** A `POST /mode` landing while a
+  `POST /tdp` waited its turn wrote the new mode, and then the manual write — built for the old
+  mode — landed on top and was kept every 30 s while the app said there was no override. The manual
+  write now stands down and answers `409 tdp_superseded`.
+- **A power source the daemon could not read is shown as unknown.** A failed battery query reached
+  the top bar as "Battery --%" on a plugged-in machine. `GET /telemetry` now carries `acKnown`; the
+  pill reads "Power --", the Profiles page says rule switching is paused, and `GET /health/check`
+  reports `ac_unknown`.
+- **The Dashboard's TDP never shows a made-up 20 W.** With nothing written yet (the startup apply
+  yielded to MotionAssistant or GPD Tool) or `GET /tdp` failing, the slider sat on a hardcoded 20 W
+  as if it were in force, while the overlay showed the mode preset. It now opens on the same value
+  the overlay does, and on "--" (disabled) when nothing is known.
 - **FPS reads the game even when the foreground is unknown.** Without a foreground (the service in
   session 0 with no agent reporting), a Steam game that no rule names lost to `steamwebhelper`,
   which the shipped `steam` rule matches — the reading was Steam's UI or nothing, and auto-FPS went

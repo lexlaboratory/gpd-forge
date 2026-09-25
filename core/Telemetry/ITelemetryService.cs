@@ -55,10 +55,19 @@ public readonly record struct TelemetrySnapshot(
     /// ForgeWorker read it as an AC edge: one WMI glitch on a plugged-in machine switched the mode to
     /// the battery profile and back, ending any manual override on the way. Consumers that ACT on the
     /// power source check this; the value itself is unchanged, so GET /telemetry keeps its contract.
-    /// Off the wire for the same reason — the field would be new, and the shape is a published one.
+    /// Off the wire under this name; <see cref="AcKnown"/> is its wire form.
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool AcUnknown { get; init; }
+
+    /// <summary>
+    /// <c>acKnown</c> on GET /telemetry: false when <see cref="AcConnected"/> is the fallback rather
+    /// than a reading. Additive, audit round 2 (2026-09-24): with the flag kept off the wire the UI
+    /// showed a confident "Battery --%" on a plugged-in machine whose battery query had failed, and
+    /// nothing said the AC/battery switch was paused. A client that predates the field treats its
+    /// absence as known, which is what every older daemon meant.
+    /// </summary>
+    public bool AcKnown => !AcUnknown;
 
     /// <summary>Nothing measured: every sensor null, on battery (the conservative answer), no TDP write.</summary>
     public static TelemetrySnapshot Unmeasured { get; } = new(

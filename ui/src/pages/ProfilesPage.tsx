@@ -1,6 +1,6 @@
 // GPD Forge UI — Profiles page (per-app rules + MotionAssistant import). GPL-3.0-or-later.
 import { useCallback, useEffect, useState } from 'react'
-import type { AppRule, AppRulesInfo, GpuFeature, GpuInfo, ImportResult, ModeId } from '../types'
+import type { AppRule, AppRulesInfo, GpuFeature, GpuInfo, ImportResult, ModeId, Telemetry } from '../types'
 import {
   importMotionAssistant,
   getAppRules, addAppRule, updateAppRule, deleteAppRule, moveAppRule, getGpu,
@@ -101,7 +101,7 @@ function RuleForm({ match, mode, modes, onMatch, onMode, onSave, onCancel, saveL
   )
 }
 
-export function PerAppRulesCard() {
+export function PerAppRulesCard({ tele = null }: { tele?: Telemetry | null } = {}) {
   const toast = useToast()
   const [info, setInfo] = useState<AppRulesInfo | null>(null)
   const [offline, setOffline] = useState(false)
@@ -164,6 +164,15 @@ export function PerAppRulesCard() {
         <Unavailable
           testid="rules-auto-off"
           reason="Automatic profile switching is disabled (GPDFORGE_AUTO_PROFILES=0). These rules are stored and editable, but nothing is applying them."
+        />
+      )}
+
+      {/* The daemon skips its whole rules tick while the battery query fails (acKnown: false), so the
+          readout below stops moving. It said nothing about why until audit round 2 (2026-09-24). */}
+      {tele?.acKnown === false && (
+        <Unavailable
+          testid="rules-paused"
+          reason="The power source cannot be read right now, so rule switching is paused and the readout below is the last one taken. It resumes on its own once the battery query recovers."
         />
       )}
 
@@ -231,11 +240,11 @@ export function PerAppRulesCard() {
   )
 }
 
-export function ProfilesPage() {
+export function ProfilesPage({ tele = null }: { tele?: Telemetry | null } = {}) {
   return (
     <>
       <MotionAssistantImportCard />
-      <PerAppRulesCard />
+      <PerAppRulesCard tele={tele} />
       <GpuProfileCard />
     </>
   )

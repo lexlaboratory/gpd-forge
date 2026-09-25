@@ -11,8 +11,8 @@
 // including a re-selection of the same mode, because picking a mode is asking for its preset. It is
 // also keyed to the mode it was set in, so a mode switch that bypassed ProfileApplier still cannot
 // carry it into another mode. In memory only: after a restart the daemon applies the mode preset
-// (ForgeWorker's startup apply), which is what a restart has always meant for every other setting
-// that is not persisted.
+// (ForgeWorker's startup apply) of the mode the user last picked — the mode is persisted (ModeStore,
+// audit round 2), the override deliberately is not: a hand-set watt figure is a for-now decision.
 using GpdForge.Tdp;
 
 namespace GpdForge.Profiles;

@@ -294,6 +294,13 @@ public sealed class ForgeWorker(
     /// mode whose limits were not in force. Through ProfileApplier, so it yields exactly as a mode
     /// switch does when MotionAssistant or GPD Tool is running. A failure is logged and the loop starts
     /// anyway: the rest of this worker (guardian, history, sessions) must not depend on one ryzenadj run.
+    /// <para>
+    /// "The active mode" is the one the user last picked, read back from disk (ModeState over
+    /// ModeStore). It was an in-memory `windows` until audit round 2 (2026-09-24), so a restart while
+    /// in `gaming` actively wrote windows' 15/20/17 W. The AC/battery mapping is not consulted here: its
+    /// config is not persisted, so at start it is always off, and the switch it drives fires only on
+    /// an edge the loop below observes.
+    /// </para>
     /// </summary>
     private async Task ApplyStartupTdpAsync(CancellationToken ct)
     {

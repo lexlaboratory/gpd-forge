@@ -187,6 +187,55 @@ public class HealthCheckTests
         Assert.Contains(r.Issues, i => i.Code == "telemetry_stale");
     }
 
+    // --- audit round 2 (2026-09-24): pauses that used to be visible only in the service log ---
+
+    [Fact]
+    public void A_power_source_that_could_not_be_read_is_reported()
+    {
+        // The battery query failed: acConnected is the cautious "on battery" fallback, and the AC/battery
+        // switch and the per-app rules are paused. That was a service-log warning and nothing else.
+        var r = HealthCheck.Evaluate(Snap(acConnected: false) with { AcUnknown = true }, Ctx);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal("ac_unknown", issue.Code);
+        Assert.Equal("warn", issue.Level);
+        Assert.Contains("paused", issue.Message);
+    }
+
+    [Fact]
+    public void A_known_power_source_raises_nothing()
+    {
+        Assert.DoesNotContain(HealthCheck.Evaluate(Snap(acConnected: false), Ctx).Issues, i => i.Code == "ac_unknown");
+    }
+
+    [Fact]
+    public void No_foreground_report_from_the_session_agent_is_reported()
+    {
+        // The installed service is in session 0, where the local foreground query is always null: with
+        // no agent reporting, the FPS target and the per-app rules cannot see what is running.
+        var reading = new TelemetryReading(Snap(), T0, 5);
+        var r = HealthCheck.Evaluate(reading, T0.AddMilliseconds(500), Ctx, new HealthSignals(ForegroundUnreported: true));
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal("foreground_unreported", issue.Code);
+        Assert.Equal("warn", issue.Level);
+        Assert.Equal("warn", r.Status);
+    }
+
+    [Fact]
+    public void With_the_agent_reporting_there_is_no_foreground_issue()
+    {
+        var reading = new TelemetryReading(Snap(), T0, 5);
+        Assert.Empty(HealthCheck.Evaluate(reading, T0.AddMilliseconds(500), Ctx, new HealthSignals()).Issues);
+    }
+
+    [Theory]
+    [InlineData(0, "local", true)]    // the service, and nobody reporting: blind
+    [InlineData(0, "agent", false)]   // the service, with the agent reporting
+    [InlineData(1, "local", false)]   // a dev run in a user session: the local query IS the answer
+    public void The_foreground_is_unreported_only_in_session_zero_without_an_agent(int sessionId, string source, bool blind)
+    {
+        Assert.Equal(blind, HealthSignals.ForegroundBlind(sessionId, source));
+    }
+
     [Fact]
     public void The_stale_threshold_is_three_sampler_ticks()
     {

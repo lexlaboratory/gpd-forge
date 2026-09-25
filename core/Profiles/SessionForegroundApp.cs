@@ -6,9 +6,9 @@
 // "what is in front?" was silently blind on the installed service: the FPS target (FrameTarget) and
 // the auto-profile worker alike.
 //
-// The answer has to come from the user's session. The GPU agent already runs there (`--gpu-agent`,
-// started at logon) and already checks in with the daemon every 3 s, so it reports the foreground
-// process too (POST /session/foreground). This class prefers that report while it is fresh and falls
+// The answer has to come from the user's session. The session agent runs there (`--gpu-agent`,
+// started at logon — on every install since audit round 2, 2026-09-24, not only with GPU profiles
+// enabled) and reports the foreground process every 3 s (POST /session/foreground). This class prefers that report while it is fresh and falls
 // back to the local Win32 query otherwise — which is the right answer when the daemon itself runs in
 // a user session (a dev run, `--probe-focus`) and a harmless null in session 0.
 namespace GpdForge.Profiles;

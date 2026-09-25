@@ -23,7 +23,10 @@ writes stay gated regardless.
 Two things must run in YOUR session rather than in the service, and not for convenience: a Windows
 service in session 0 cannot register a user-session hotkey, and cannot reach ADLX at all.
 
-- **GPU agent** (`-EnableGpuProfiles`) — applies the Radeon profile for the active mode.
+- **Session agent** (always installed) — tells the service which app is in front, which the service
+  cannot see from session 0 (the FPS target and the per-app rules need it). With
+  `-EnableGpuProfiles` it also applies the Radeon profile for the active mode; without it, it never
+  touches ADLX.
 - **Hotkeys** (`-EnableHotkeys`) — `Ctrl+Alt+Home` toggles the overlay; `Ctrl+Alt+Up`/`Down` step TDP;
   `Ctrl+Alt+M` cycles mode. Opt-in because a global hotkey is a claim on chords the whole machine
   shares. Test either without going resident with `-SelfTest`.

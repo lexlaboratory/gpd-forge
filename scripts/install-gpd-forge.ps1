@@ -525,22 +525,26 @@ foreach ($hk in $hotkeyLinks) {
 }
 if ($EnableHotkeys) { Write-Host "  Global hotkeys will start at logon (Ctrl+Alt+Home / Up / Down / M)." -ForegroundColor DarkGray }
 
+# ALWAYS created (audit round 2, 2026-09-24). The agent is also the only thing that can tell the
+# service which app is in front - the service is in session 0, where there is no foreground window -
+# and the FPS target and the per-app rules depend on that. It used to exist only with
+# -EnableGpuProfiles, so a default install left both blind. The Radeon half stays behind the machine-
+# wide GPDFORGE_ENABLE_GPU_PROFILES gate above: without it the agent reports the foreground and never
+# initialises ADLX, so this shortcut cannot drive the GPU without the opt-in.
 $agentLink = "$StartupDir\GPD Forge GPU Agent.lnk"
+$dotnetPath = (Get-Command dotnet).Source
+$gpuLink = $wsh.CreateShortcut($agentLink)
+# Headless, not minimised: a minimised console is still a console window for the whole session.
+$gpuLink.TargetPath = $Conhost
+$gpuLink.Arguments = "--headless `"$dotnetPath`" `"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent"
+$gpuLink.WorkingDirectory = "$InstallDir\service"
+$gpuLink.IconLocation = "$InstallDir\icon.ico"
+$gpuLink.Description = 'GPD Forge session agent (reports the app in front; applies Radeon profiles when enabled)'
+$gpuLink.Save()
 if ($EnableGpuProfiles) {
-    $dotnetPath = (Get-Command dotnet).Source
-    $gpuLink = $wsh.CreateShortcut($agentLink)
-    # Headless, not minimised: a minimised console is still a console window for the whole session.
-    $gpuLink.TargetPath = $Conhost
-    $gpuLink.Arguments = "--headless `"$dotnetPath`" `"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent"
-    $gpuLink.WorkingDirectory = "$InstallDir\service"
-    $gpuLink.IconLocation = "$InstallDir\icon.ico"
-    $gpuLink.Description = 'GPD Forge GPU agent (applies Radeon profiles; must run in your session)'
-    $gpuLink.Save()
-    Write-Host "  GPU agent will start at logon (Radeon profiles)." -ForegroundColor DarkGray
-} elseif (Test-Path $agentLink) {
-    # Installing without the gate must not leave an agent behind that keeps driving the GPU.
-    Remove-Item -Force $agentLink
-    Write-Host "  removed the GPU agent autostart (GPU profiles not enabled)." -ForegroundColor DarkGray
+    Write-Host "  Session agent will start at logon (foreground app + Radeon profiles)." -ForegroundColor DarkGray
+} else {
+    Write-Host "  Session agent will start at logon (foreground app only; Radeon profiles off)." -ForegroundColor DarkGray
 }
 
 # --- 6) start the service ---
@@ -622,15 +626,14 @@ if ($shellFailure) {
     exit 1
 }
 
-# Start the agent now rather than making the user log out to see the feature work.
-if ($EnableGpuProfiles) {
-    foreach ($p in Get-Process dotnet -ErrorAction SilentlyContinue) {
-        # A previous agent still running would hold the old assembly and post stale reports.
-        try { if ($p.CommandLine -like '*--gpu-agent*') { $p.Kill() } } catch { }
-    }
-    Start-Process (Get-Command dotnet).Source -ArgumentList "`"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent" -WindowStyle Hidden
-    Write-Host "GPU agent started in this session." -ForegroundColor DarkGray
+# Start the agent now rather than making the user log out to see the feature work. Always, like its
+# autostart above: without it the service cannot see which app is in front.
+foreach ($p in Get-Process dotnet -ErrorAction SilentlyContinue) {
+    # A previous agent still running would hold the old assembly and post stale reports.
+    try { if ($p.CommandLine -like '*--gpu-agent*') { $p.Kill() } } catch { }
 }
+Start-Process (Get-Command dotnet).Source -ArgumentList "`"$InstallDir\service\GpdForge.Service.dll`" --gpu-agent" -WindowStyle Hidden
+Write-Host "Session agent started in this session." -ForegroundColor DarkGray
 
 Start-Process "$InstallDir\GPD Forge.exe"
 Write-Host "`nDone. GPD Forge runs as a service (autostart). Open the dashboard from the Start Menu" -ForegroundColor Green

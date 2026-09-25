@@ -38,6 +38,43 @@ test.describe('Unmeasured sensors', () => {
     }
   })
 
+  // Audit round 2 (2026-09-24): a failed battery query arrives as `acConnected: false` with no
+  // battery percentage. The pill read that as a confident "Battery --%" on a plugged-in machine, and
+  // nothing on screen said the AC/battery switch and the per-app rules had paused.
+  const unknownPowerRoute = async (page: import('@playwright/test').Page) => {
+    await page.route('**/telemetry', async (route) => {
+      const res = await route.fetch()
+      return route.fulfill({ response: res, json: { ...(await res.json()), acConnected: false, acKnown: false, batteryPct: null } })
+    })
+  }
+
+  test('a power source the daemon could not read is unknown, not battery', async ({ page }) => {
+    await unknownPowerRoute(page)
+
+    await new DashboardPage(page).goto()
+
+    const pill = page.getByTestId('power-source')
+    await expect(pill).toHaveText('Power --')
+    await expect(pill).toHaveAttribute('data-state', 'unknown')
+    await expect(pill).not.toContainText('Battery')
+  })
+
+  test('the per-app rules say they are paused while the power source is unknown', async ({ page }) => {
+    await unknownPowerRoute(page)
+
+    await new DashboardPage(page).goto()
+    await page.getByTestId('nav-profiles').click()
+
+    await expect(page.getByTestId('rules-paused')).toContainText('paused')
+  })
+
+  test('a known power source is still shown as AC or battery', async ({ page }) => {
+    await new DashboardPage(page).goto()
+
+    await expect(page.getByTestId('power-source')).toHaveText(/^(AC|Battery \d+%)$/)
+    await expect(page.getByTestId('rules-paused')).toHaveCount(0)
+  })
+
   test('real readings still render as numbers', async ({ page }) => {
     // The regression guard for the guard: if the placeholder path swallowed the normal one, the test
     // above would still pass and the app would show '--' forever. No route override here, so this

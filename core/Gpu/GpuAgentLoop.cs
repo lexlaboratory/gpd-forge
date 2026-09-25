@@ -14,11 +14,17 @@
 // flips Chill in Adrenalin while the mode is steady should keep their change, not have it stamped
 // over within seconds by a tool that was not asked to.
 //
-// Since 2026-09-24 it also reports the FOREGROUND APP (POST /session/foreground). The daemon runs in
-// session 0, where GetForegroundWindow is always NULL, so without this the FPS target and the
-// auto-profile worker cannot see what the user is playing. This process is in the user's session and
-// already checks in every tick, so it is the one place that can answer. Reported before the ADLX work
-// and on its own try: a GPU agent whose ADLX is unusable must still say what is in front.
+// Since 2026-09-24 it also reports the FOREGROUND APP (POST /session/foreground; ForegroundReporter).
+// The daemon runs in session 0, where GetForegroundWindow is always NULL, so without this the FPS
+// target and the auto-profile worker cannot see what the user is playing. This process is in the
+// user's session, so it is the one place that can answer.
+//
+// That half runs WHATEVER the GPU-profiles gate says (audit round 2, 2026-09-24). It used to sit
+// behind the gate's early exit, and the installer only autostarted the agent with -EnableGpuProfiles
+// (off by default), so on a default install nothing reported and the foreground was null forever. Now
+// the installer always starts the agent, the gate governs only ADLX — which is not even initialised
+// when it is closed — and the foreground is reported first each tick, on its own try: an agent whose
+// ADLX is unusable must still say what is in front.
 using System.Net.Http.Json;
 using System.Text.Json;
 using GpdForge.Profiles;
@@ -38,16 +44,40 @@ public static class GpuAgentLoop
     {
         using var http = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = HttpTimeout };
 
-        // The agent honours the same gate as the rest of the feature. Without this it would drive the
-        // Radeon settings whenever someone started it, regardless of whether the machine was ever
-        // configured to allow that — an autostart entry outliving its own opt-in.
-        if (Environment.GetEnvironmentVariable(GpuProfileService.GateVariable) != "1")
+        // The Radeon half honours the same gate as the rest of the feature. Without this it would drive
+        // the Radeon settings whenever someone started the agent, regardless of whether the machine was
+        // ever configured to allow that — an autostart entry outliving its own opt-in.
+        bool gpuProfiles = Environment.GetEnvironmentVariable(GpuProfileService.GateVariable) == "1";
+        return await RunAsync(http, new Win32ForegroundApp(), gpuProfiles, logger, ct);
+    }
+
+    /// <summary>The loop itself, over an injected client and foreground source (tests).</summary>
+    public static async Task<int> RunAsync(
+        HttpClient http, IForegroundApp foreground, bool gpuProfiles, ILogger? logger, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(foreground);
+        var reporter = new ForegroundReporter(http, foreground, logger);
+
+        if (!gpuProfiles)
         {
-            Console.WriteLine($"GPD Forge GPU agent: {GpuProfileService.GateVariable} is not set — exiting.");
-            Console.WriteLine("  Install with -EnableGpuProfiles to allow GPD Forge to set Radeon profiles.");
+            Console.WriteLine("GPD Forge session agent — reporting the app in front every 3 s.");
+            Console.WriteLine($"  Radeon profiles are off ({GpuProfileService.GateVariable} is not set; install with -EnableGpuProfiles to allow them).");
+            while (!ct.IsCancellationRequested)
+            {
+                try { await reporter.ReportAsync(ct); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                try { await Task.Delay(Tick, ct); } catch (OperationCanceledException) { break; }
+            }
             return 0;
         }
 
+        return await RunWithGpuProfilesAsync(http, reporter, logger, ct);
+    }
+
+    private static async Task<int> RunWithGpuProfilesAsync(
+        HttpClient http, ForegroundReporter reporter, ILogger? logger, CancellationToken ct)
+    {
         // Exactly ONE AdlxInterop per process, for its whole lifetime. A second one would call
         // ADLXTerminate on Dispose, which invalidates every ADLX object in the process and turns the
         // survivor's pointers into invalid memory — that crashed the daemon on 2026-08-30, and an
@@ -67,16 +97,12 @@ public static class GpuAgentLoop
         string? lastAppliedMode = null;
         int? lastAppliedCap = null;
         var capEverApplied = false;
-        var foreground = new Win32ForegroundApp();
 
         while (!ct.IsCancellationRequested)
         {
-            try
-            {
-                await http.PostAsJsonAsync("/session/foreground", new { process = foreground.Current() }, ct);
-            }
+            // Its own try, and first: never costs the GPU work below, and never waits on it.
+            try { await reporter.ReportAsync(ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-            catch (Exception e) { logger?.LogDebug(e, "Foreground report failed."); }
 
             try
             {

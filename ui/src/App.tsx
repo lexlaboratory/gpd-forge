@@ -16,6 +16,7 @@ import { Wizard, isSetupDone } from './Wizard'
 import { ErrorBoundary } from './ErrorBoundary'
 import { CommandPalette } from './CommandPalette'
 import { NavIcon } from './components/NavIcon'
+import { PowerPill } from './PowerPill'
 
 const NAV = [
   { id: 'dashboard',  label: 'Dashboard' },
@@ -174,9 +175,7 @@ export function App() {
                 Stalled · {staleS} s ago
               </span>
             )}
-            <span className={`power-pill ${tele?.acConnected ? 'ac' : 'dc'}`} data-testid="power-source">
-              {tele?.acConnected ? 'AC' : `Battery ${tele?.batteryPct ?? '--'}%`}
-            </span>
+            <PowerPill tele={tele} />
           </div>
         </header>
 
@@ -198,7 +197,7 @@ export function App() {
           {page === 'fan'        && <FanPage tele={tele} />}
           {page === 'hardware'   && <HardwarePage />}
           {page === 'display'    && <DisplayPage />}
-          {page === 'profiles'   && <ProfilesPage />}
+          {page === 'profiles'   && <ProfilesPage tele={tele} />}
           {page === 'monitor'    && <MonitorPage tele={tele} />}
           {page === 'sessions'   && <SessionsPage />}
           {page === 'system'     && <SystemPage tele={tele} />}

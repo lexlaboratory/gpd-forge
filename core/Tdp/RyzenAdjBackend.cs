@@ -64,16 +64,19 @@ public sealed partial class RyzenAdjBackend(
 public static partial class RyzenAdjOutput
 {
     /// <summary>
-    /// Reads the two limits out of `ryzenadj --info`. A label that is not in the output yields
-    /// <c>null</c>, never 0 — see <see cref="TdpReadout"/>. The `?? 0` that used to be here turned a
-    /// missing line into a confident zero-watt reading.
+    /// Reads the four limits GPD Forge writes out of `ryzenadj --info`. A label that is not in the
+    /// output yields <c>null</c>, never 0 — see <see cref="TdpReadout"/>. The `?? 0` that used to be
+    /// here turned a missing line into a confident zero-watt reading. Slow and Tctl since audit round
+    /// 2 (2026-09-24): ryzenadj always printed them, and a reassert that did not read them could not
+    /// see the firmware put its own back.
     /// </summary>
-    public static TdpReadout Parse(string info)
-    {
-        int? stapm = FindValue(info, "STAPM LIMIT") is double s ? (int)Math.Round(s) : null;
-        int? ppt = FindValue(info, "PPT LIMIT FAST") is double p ? (int)Math.Round(p) : null;
-        return new TdpReadout(stapm, ppt);
-    }
+    public static TdpReadout Parse(string info) => new(
+        Whole(FindValue(info, "STAPM LIMIT")),
+        Whole(FindValue(info, "PPT LIMIT FAST")),
+        Whole(FindValue(info, "PPT LIMIT SLOW")),
+        Whole(FindValue(info, "THM LIMIT CORE")));
+
+    private static int? Whole(double? v) => v is double d ? (int)Math.Round(d) : null;
 
     private static double? FindValue(string text, string label)
     {

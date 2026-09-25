@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiInfo, InferenceHold, TuneGoal, TunerInfo } from '../types'
 import {
-  setTdp as apiSetTdp, getTdp, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
+  setTdp as apiSetTdp, getTdp, getProfiles, getMode, getAi, setAntiStandby, getTuner, startTuner, type TdpResult,
 } from '../api'
 import { Badge, Button, Frame, Icon, Readout, Segmented, Slider, Toggle, type Tone } from '../components'
 import { useToast } from '../Toast'
@@ -33,9 +33,11 @@ const tdpBadge = (v: boolean | null): { tone: Tone; label: string } =>
 
 export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
   const toast = useToast()
-  // Placeholder until GET /tdp answers. It used to be the value, full stop: a remembered 12 W manual
-  // override (TdpIntent, 2026-09-24) opened here as 20 W.
-  const [tdp, setTdp] = useState(20)
+  // Null until something says what is in force — never a placeholder number. It was a hardcoded 20
+  // that looked like the value: first a remembered 12 W override opened as 20 W (2026-09-24), then,
+  // with that fixed, a GET /tdp with nothing written yet (the startup apply yielded to a rival) or a
+  // failed request still left 20 on screen while the overlay showed the mode preset (audit round 2).
+  const [tdp, setTdp] = useState<number | null>(null)
   const [tdpResult, setTdpResult] = useState<TdpResult | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Set once the user moves the control, so a GET /tdp that answers late cannot yank it back.
@@ -43,14 +45,19 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
   // The last value the daemon accepted: where the control returns to when a write is refused.
   const applied = useRef<number | null>(null)
 
+  // Seeded exactly as the overlay seeds its stepper, so the two controls cannot disagree: the manual
+  // override, else the last write, else the ACTIVE mode's preset. The mode is asked for here rather
+  // than taken from Shared.active, which reads 'windows' until the shell's own GET /mode answers.
   useEffect(() => {
     let alive = true
-    getTdp().then((t) => {
-      const w = tdpInForce(t)
-      if (!alive || w == null) return
+    Promise.allSettled([getTdp(), getProfiles(), getMode()]).then(([t, p, m]) => {
+      if (!alive) return
+      const preset = p.status === 'fulfilled' && m.status === 'fulfilled' ? p.value[m.value]?.stapmW : undefined
+      const w = tdpInForce(t.status === 'fulfilled' ? t.value : null) ?? preset
+      if (w == null) return
       applied.current = clampTdp(w)
       if (!touched.current) setTdp(clampTdp(w))
-    }).catch(() => {})
+    })
     return () => { alive = false; if (timer.current) clearTimeout(timer.current) }
   }, [])
 
@@ -101,14 +108,18 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
 
       <Frame title="Sustained TDP" hint={<Badge tone={badge.tone} testid="tdp-badge">{badge.label}</Badge>}>
         <div className="tdp-row">
-          <input type="range" min={5} max={MAX_TDP_W} step={1} value={tdp} data-testid="tdp-slider" aria-label="Sustained TDP in watts" onChange={(e) => onTdp(Number(e.target.value))} />
+          {/* Unknown is disabled, not parked on a number: a range input always shows SOME position,
+              and any position would read as the value in force. */}
+          <input type="range" min={5} max={MAX_TDP_W} step={1} value={tdp ?? 5} disabled={tdp == null}
+            data-testid="tdp-slider" aria-label="Sustained TDP in watts" aria-valuetext={tdp == null ? 'unknown' : `${tdp} W`}
+            onChange={(e) => onTdp(Number(e.target.value))} />
           {/* ±1 W buttons beside the slider: a d-pad can press a button but cannot drag a range. */}
           <div className="stepper">
             <button type="button" className="stepper-btn" aria-label="Sustained TDP down" data-testid="tdp-dec"
-              disabled={tdp <= 5} onClick={() => onTdp(Math.max(5, tdp - 1))}>&minus;</button>
-            <output className="tdp-value" data-testid="tdp-value">{tdp} W</output>
+              disabled={tdp == null || tdp <= 5} onClick={() => tdp != null && onTdp(Math.max(5, tdp - 1))}>&minus;</button>
+            <output className="tdp-value" data-testid="tdp-value">{tdp == null ? '--' : `${tdp} W`}</output>
             <button type="button" className="stepper-btn" aria-label="Sustained TDP up" data-testid="tdp-inc"
-              disabled={tdp >= MAX_TDP_W} onClick={() => onTdp(Math.min(MAX_TDP_W, tdp + 1))}>+</button>
+              disabled={tdp == null || tdp >= MAX_TDP_W} onClick={() => tdp != null && onTdp(Math.min(MAX_TDP_W, tdp + 1))}>+</button>
           </div>
         </div>
         <p className="muted">Applied with a closed loop — GPD Forge re-reads the PM table and warns if the firmware reverts it.</p>

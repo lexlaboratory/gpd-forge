@@ -32,6 +32,9 @@ export interface Telemetry {
   batteryPct: number | null
   dischargeW: number | null
   acConnected: boolean
+  /** False when the daemon's battery query failed, so `acConnected` is the cautious fallback rather
+   *  than a reading and the AC/battery switch is paused. Absent (older daemon, history rows) = known. */
+  acKnown?: boolean
   /** Null when nothing has written TDP yet, or the backend cannot report a readback. Was a
    * hardcoded `true` in the daemon until 2026-09-02 — see GET /tdp for the provenance. */
   tdpVerified: boolean | null

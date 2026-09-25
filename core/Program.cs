@@ -115,6 +115,10 @@ if (args.Contains("--probe-hid-diff"))
 // display driver stack of an interactive session (measured 2026-08-29). This is the same assembly
 // rather than a second executable on purpose: every new unsigned binary is another thing Smart App
 // Control can refuse, and reusing one Windows already accepts costs nothing.
+//
+// Despite the name it is the SESSION agent: it always reports the app in front (the daemon cannot see
+// it from session 0), and only drives Radeon settings when GPDFORGE_ENABLE_GPU_PROFILES=1. The switch
+// keeps its name because installed shortcuts and the installer's process matching use it.
 if (args.Contains("--gpu-agent"))
 {
     // Not `return await ...`: this file is a top-level program, and returning a value here would
@@ -126,7 +130,10 @@ if (args.Contains("--gpu-agent"))
     var agentPort = Environment.GetEnvironmentVariable("GPDFORGE_PORT") is string ap && int.TryParse(ap, out var parsedAgentPort)
         ? parsedAgentPort
         : 8787;
-    await GpuAgentLoop.RunAsync($"http://127.0.0.1:{agentPort}", null, agentCts.Token);
+    // A real logger since audit round 2 (2026-09-24): a refused foreground report is logged at Warning
+    // once per outage, and with a null logger that warning went nowhere.
+    using var agentLogs = LoggerFactory.Create(b => b.AddSimpleConsole(o => o.SingleLine = true));
+    await GpuAgentLoop.RunAsync($"http://127.0.0.1:{agentPort}", agentLogs.CreateLogger("GpdForge.Agent"), agentCts.Token);
     return;
 }
 
@@ -204,6 +211,8 @@ if (args.Contains("--probe-tdp"))
     var parsed = RyzenAdjOutput.Parse(info);
     Console.WriteLine($"  parsed STAPM LIMIT    = {parsed.StapmW?.ToString() ?? "(not found)"} W");
     Console.WriteLine($"  parsed PPT LIMIT FAST = {parsed.PptW?.ToString() ?? "(not found)"} W");
+    Console.WriteLine($"  parsed PPT LIMIT SLOW = {parsed.PptSlowW?.ToString() ?? "(not found — not judged)"} W");
+    Console.WriteLine($"  parsed THM LIMIT CORE = {parsed.TctlC?.ToString() ?? "(not found — not judged)"} °C");
     if (parsed.StapmW is null || parsed.PptW is null)
         Console.WriteLine("  Unreadable: the 30 s reassert would do nothing with this. Not elevated? (WinRing0 needs it.)");
     return;
@@ -611,7 +620,9 @@ builder.Services.AddSingleton(sp => new HidReenumerator(
     sp.GetService<IProcessRunner>() ?? new SystemProcessRunner(),
     sp.GetService<ILogger<HidReenumerator>>()));
 builder.Services.AddHostedService<SleepStudyWorker>();
-builder.Services.AddSingleton<ModeState>();
+// Persisted (core/Profiles/ModeStore.cs): ForgeWorker writes the active mode's TDP at start, so after a
+// restart the active mode must be the one the user picked, not an in-memory `windows`.
+builder.Services.AddSingleton(sp => new ModeState(new ModeStore(DataRoot.Current), sp.GetService<ILogger<ModeState>>()));
 builder.Services.AddSingleton<TelemetryHistory>();
 
 // Agents / AI mode: anti-Modern-Standby during inference (REAL — an unprivileged, fully reversible
@@ -1099,16 +1110,20 @@ app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
 // asking for fewer watts. And the band is enforced: docs/api.md always promised a 400 outside it and
 // the mock daemon gave one, while this handed any number straight to ryzenadj. Validated before the
 // override is recorded, because a remembered bad value would be re-asserted every 30 s.
-app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, ModeState m, TdpIntent intent, CancellationToken ct) =>
+//
+// 409 `tdp_superseded` (audit round 2, 2026-09-24): a POST /mode that landed while this write waited
+// for the gate ended the override, and writing it anyway left the old mode's manual profile in force
+// under the new mode (core/Profiles/ManualTdpWrite.cs). Nothing was written.
+app.MapPost("/tdp", async (TdpRequest req, SerializedTdpController tdp, ModeState m, TdpIntent intent, CancellationToken ct) =>
 {
     if (!TdpIntent.IsManualInRange(req.StapmW))
         return Results.BadRequest(new { error = new { code = "bad_tdp",
             message = $"stapmW must be {TdpIntent.ManualMinW}..{TdpIntent.ManualMaxW}" } });
 
-    string mode = m.Active;
-    var profile = TdpIntent.ManualProfile(req.StapmW, mode);
-    intent.SetManual(mode, profile);
-    var r = await tdp.ApplyAsync(profile, TdpOwner.Manual, ct);
+    if (await ManualTdpWrite.ApplyAsync(tdp, m, intent, req.StapmW, ct) is not TdpApplyResult r)
+        return Results.Json(new { error = new { code = "tdp_superseded",
+            message = $"The mode changed to '{m.Active}' while this write waited; that mode's TDP is in force and nothing was written." } },
+            statusCode: 409);
     return Results.Json(new { requested = r.Requested.StapmW, observed = r.Observed.StapmW, verified = r.Verified });
 });
 
@@ -1808,10 +1823,16 @@ app.MapPost("/guardian", (GuardianRequest r, GuardianService g) =>
 //
 // Graded WITH the reading's age (audit, 2026-09-24): a sampler whose hardware read hangs keeps serving
 // its last snapshot, and grading that alone reported "ok" while the guardian had stopped.
-app.MapGet("/health/check", async (ITelemetrySource t, CancellationToken ct) =>
+//
+// And with the one daemon-side fact that was silent (audit round 2, 2026-09-24): the installed service
+// is in session 0 and sees no foreground app of its own, so `foreground_unreported` says when no
+// session agent is reporting one. `ac_unknown` comes from the snapshot itself.
+app.MapGet("/health/check", async (ITelemetrySource t, SessionForegroundApp foreground, CancellationToken ct) =>
 {
     var reading = await t.ReadAsync(ct);
-    var report = HealthCheck.Evaluate(reading, DateTimeOffset.UtcNow, new HealthContext());
+    var signals = new HealthSignals(ForegroundUnreported: HealthSignals.ForegroundBlind(
+        DaemonSession.Id, foreground.Describe().Source));
+    var report = HealthCheck.Evaluate(reading, DateTimeOffset.UtcNow, new HealthContext(), signals);
     return Results.Json(report);
 });
 
@@ -1921,8 +1942,7 @@ static object RulesPayload(IAppRuleStore rules, bool autoProfilesEnabled) => new
 
 namespace GpdForge.Api
 {
-    /// <summary>Mutable active-mode holder for the local API.</summary>
-    public sealed class ModeState { public string Active { get; set; } = "windows"; }
+    // ModeState: core/Api/ModeState.cs (persisted since audit round 2, 2026-09-24).
 
     public sealed record ModeRequest(string? Name);
     public sealed record TdpRequest(int StapmW);

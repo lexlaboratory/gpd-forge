@@ -26,6 +26,9 @@ public sealed class FakeSilicon : ITdpBackend
     public int Writes { get; private set; }
     public bool Unreadable { get; set; }
     public bool ThrowOnRead { get; set; }
+    /// <summary>When set, writes land on all four limits (slow and Tctl too), as a real PM table
+    /// reports them. Off by default so the two-limit readouts the older tests compare stay exact.</summary>
+    public bool FullTable { get; set; }
     /// <summary>Called inside a read, after it is counted — lets a test race a write against it.</summary>
     public Action? DuringRead { get; set; }
 
@@ -37,7 +40,13 @@ public sealed class FakeSilicon : ITdpBackend
 
     public async Task ApplyAsync(TdpProfile profile, CancellationToken ct)
     {
-        lock (_gate) { Writes++; _limits = new TdpReadout(profile.StapmW, profile.FastW); }
+        lock (_gate)
+        {
+            Writes++;
+            _limits = FullTable
+                ? new TdpReadout(profile.StapmW, profile.FastW, profile.SlowW, profile.TctlC)
+                : new TdpReadout(profile.StapmW, profile.FastW);
+        }
         if (HoldApply is Task hold) await hold;
     }
 
@@ -58,8 +67,12 @@ public sealed class NoWait : IDelay
 public sealed class SwitchableDetector : IPowerControllerDetector
 {
     public bool Rival { get; set; }
+    /// <summary>Called on each check — lets a test start a write between the reassert's ownership
+    /// read and its turn at the write gate.</summary>
+    public Action? OnCheck { get; set; }
     public bool OthersRunning(out string[] names)
     {
+        OnCheck?.Invoke();
         names = Rival ? ["MotionAssistant"] : [];
         return Rival;
     }
@@ -207,24 +220,33 @@ public class TdpReasserterTests
     }
 
     [Fact]
-    public async Task A_write_that_lands_during_the_read_wins_over_the_stale_profile()
+    public async Task A_write_that_arrives_during_the_read_waits_for_it_and_lands_last()
     {
-        // The read takes a ryzenadj process launch. If POST /tdp lands meanwhile, what was "owned"
-        // when the read started is no longer what the user wants, and writing it would undo them.
+        // Audit round 2 (2026-09-24): the read-compare-write is ONE step under the write gate. Before,
+        // `ryzenadj --info` ran outside it, so a POST /tdp arriving mid-read launched its own ryzenadj
+        // while the read was still talking to the SMU mailbox — two processes interleaving messages on
+        // registers with no cross-process lock. Now the write queues behind the check and lands after it.
         var rig = Build();
         await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, CancellationToken.None);
         var manual = new TdpProfile(10, 10, 10, 92);
-        rig.Silicon.Limits = new TdpReadout(25, 30);
+        rig.Silicon.Limits = new TdpReadout(25, 30);   // the firmware moved it
+        int writesBefore = rig.Silicon.Writes;
+        int writesSeenDuringRead = -1;
+        Task? pending = null;
         rig.Silicon.DuringRead = () =>
         {
             rig.Silicon.DuringRead = null;
-            rig.Tdp.ApplyAsync(manual, TdpOwner.Manual, CancellationToken.None).GetAwaiter().GetResult();
-            rig.Silicon.Limits = new TdpReadout(25, 30);   // and the firmware moves it again
+            pending = rig.Tdp.ApplyAsync(manual, TdpOwner.Manual, CancellationToken.None);
+            writesSeenDuringRead = rig.Silicon.Writes;
         };
 
-        Assert.Equal(ReassertOutcome.Superseded, await rig.Reasserter.ReassertAsync(CancellationToken.None));
+        Assert.Equal(ReassertOutcome.Reasserted, await rig.Reasserter.ReassertAsync(CancellationToken.None));
+        Assert.Equal(writesBefore, writesSeenDuringRead);   // queued at the gate, not writing beside the read
+        await pending!;
+
         Assert.Equal(TdpOwner.Manual, rig.State.Last!.Value.Owner);
         Assert.Equal(manual, rig.State.Last!.Value.Requested);
+        Assert.Equal(new TdpReadout(10, 10), rig.Silicon.Limits);
     }
 
     [Fact]
@@ -343,35 +365,92 @@ public class TdpReasserterTests
     }
 
     [Fact]
-    public async Task A_write_that_starts_during_the_read_and_is_still_running_wins()
+    public async Task The_readback_never_starts_while_a_gated_write_is_talking_to_the_smu()
     {
-        // Last = windows. During the reassert's `ryzenadj --info`, POST /tdp 10 W starts its closed
-        // loop. The read sees 10 W, which does not hold windows — the old guard compared TdpState.Last,
-        // still windows because the manual write had not finished, and re-wrote windows over it.
+        // The window the old code left open: the ownership read says "idle", then POST /tdp takes the
+        // gate and its closed loop is mid-flight in ryzenadj. The reassert's `--info` used to launch
+        // right then. It must wait for the gate, and once the write is done it is superseded — never
+        // read beside it, never written over it.
         var rig = Build();
         var ct = CancellationToken.None;
         await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, ct);
         var manual = new TdpProfile(10, 10, 10, 92);
         var release = new TaskCompletionSource();
         Task? inFlight = null;
-        rig.Silicon.DuringRead = () =>
+        rig.Detector.OnCheck = () =>
         {
-            rig.Silicon.DuringRead = null;
+            rig.Detector.OnCheck = null;
             rig.Silicon.HoldApply = release.Task;
             inFlight = rig.Tdp.ApplyAsync(manual, TdpOwner.Manual, ct);
         };
+        int reads = rig.Silicon.Reads;
 
         var check = rig.Reasserter.ReassertAsync(ct);
-        Assert.False(check.IsCompleted);   // waiting for the manual write's gate, not writing over it
+        Assert.False(check.IsCompleted);            // waiting at the gate...
+        Assert.Equal(reads, rig.Silicon.Reads);     // ...without having read
 
         rig.Silicon.HoldApply = null;
         release.SetResult();
-        Assert.Equal(ReassertOutcome.Superseded, await check);
         await inFlight!;
+        Assert.Equal(ReassertOutcome.Superseded, await check);
+        Assert.Equal(reads + 1, rig.Silicon.Reads);   // only the manual write's own verification read
 
         Assert.Equal(TdpOwner.Manual, rig.State.Last!.Value.Owner);
-        Assert.Equal(manual, rig.State.Last!.Value.Requested);
         Assert.Equal(new TdpReadout(10, 10), rig.Silicon.Limits);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Slow limit and Tctl (audit round 2, 2026-09-24): the readback compared only STAPM and fast
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_slow_limit_the_firmware_put_back_is_reasserted()
+    {
+        var rig = Build();
+        rig.Silicon.FullTable = true;
+        await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, CancellationToken.None);
+        rig.Silicon.Limits = rig.Silicon.Limits with { PptSlowW = 30 };   // only slow moved
+
+        Assert.Equal(ReassertOutcome.Reasserted, await rig.Reasserter.ReassertAsync(CancellationToken.None));
+        Assert.Equal(17, rig.Silicon.Limits.PptSlowW);
+    }
+
+    [Fact]
+    public async Task A_tctl_the_firmware_put_back_is_reasserted()
+    {
+        var rig = Build();
+        rig.Silicon.FullTable = true;
+        await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, CancellationToken.None);
+        rig.Silicon.Limits = rig.Silicon.Limits with { TctlC = 100 };
+
+        Assert.Equal(ReassertOutcome.Reasserted, await rig.Reasserter.ReassertAsync(CancellationToken.None));
+        Assert.Equal(92, rig.Silicon.Limits.TctlC);
+    }
+
+    [Fact]
+    public async Task A_missing_slow_or_tctl_reading_is_unknown_not_a_difference()
+    {
+        // A PM table that does not expose a row reads as null. That is "not measured", and writing on
+        // it would be the blind re-apply this class exists to avoid.
+        var rig = Build();
+        await rig.Tdp.ApplyAsync(Windows, TdpOwner.Mode, CancellationToken.None);   // two-limit table
+        int writes = rig.Silicon.Writes;
+
+        Assert.Equal(ReassertOutcome.Holding, await rig.Reasserter.ReassertAsync(CancellationToken.None));
+        Assert.Equal(writes, rig.Silicon.Writes);
+    }
+
+    [Fact]
+    public void Holds_judges_slow_and_tctl_only_when_they_were_read()
+    {
+        // One rule for the closed loop and the reassert, so "verified" and "holding" cannot disagree
+        // and rewrite the same limit every 30 s.
+        var want = new TdpProfile(15, 20, 17, 92);
+        Assert.True(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, 17, 92), want, 1));
+        Assert.True(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, 18, 91), want, 1));   // inside tolerance
+        Assert.True(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, null, null), want, 1));
+        Assert.False(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, 25, 92), want, 1));
+        Assert.False(ClosedLoopTdpController.Holds(new TdpReadout(15, 20, 17, 100), want, 1));
     }
 
     private sealed class StubbornSilicon(TdpReadout stuckAt) : ITdpBackend

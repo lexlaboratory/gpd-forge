@@ -248,6 +248,20 @@ public class TelemetrySamplerTests
     }
 
     [Fact]
+    public void A_power_source_the_battery_query_could_not_read_goes_out_as_not_known()
+    {
+        // Audit round 2 (2026-09-24): the unknown flag was kept off the wire, so a failed battery query
+        // on a plugged-in machine reached the UI as a confident `acConnected: false`.
+        var at = new DateTimeOffset(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
+        var unknown = TelemetrySnapshot.Unmeasured with { AcUnknown = true };
+        var known = TelemetrySnapshot.Unmeasured with { AcConnected = true };
+
+        Assert.False(TelemetryWire.ToJson(new TelemetryReading(unknown, at, 1), at, Web)["acKnown"]!.GetValue<bool>());
+        Assert.True(TelemetryWire.ToJson(new TelemetryReading(known, at, 1), at, Web)["acKnown"]!.GetValue<bool>());
+        Assert.False(TelemetryWire.ToJson(new TelemetryReading(unknown, at, 1), at, Web).ContainsKey("acUnknown"));
+    }
+
+    [Fact]
     public void An_unsampled_reading_goes_out_with_null_time_fields()
     {
         var json = TelemetryWire.ToJson(TelemetryReading.Unsampled, DateTimeOffset.UtcNow, Web);
