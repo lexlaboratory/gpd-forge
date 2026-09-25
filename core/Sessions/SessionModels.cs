@@ -81,7 +81,9 @@ public sealed record GameSession(
     int? BatteryUsedPct,
     IReadOnlyList<double> FpsTrend);
 
-/// <summary>Per-app rollup across sessions — the "by game" view.</summary>
+/// <summary>Per-app rollup across sessions — the "by game" view and the Games page.</summary>
+/// <param name="PackageAvgW">Duration-weighted package power (F1, 2026-09-25): what the game costs
+/// next to what it delivers, so a per-game TDP can be judged against it. Null when no session read it.</param>
 public sealed record GameSummary(
     string App,
     int Sessions,
@@ -90,7 +92,8 @@ public sealed record GameSummary(
     double? FpsAvg,
     double? FpsBest,
     double? Fps1PctLow,
-    double? CpuTempMaxC);
+    double? CpuTempMaxC,
+    double? PackageAvgW);
 
 /// <summary>
 /// The thresholds that decide where one session ends and the next begins. Defaults are tuned for a

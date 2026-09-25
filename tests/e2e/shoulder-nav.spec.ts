@@ -1,6 +1,6 @@
 // GPD Forge — LB/RB switch pages from a gamepad. GPL-3.0-or-later.
 //
-// On the handheld the sidebar is 11 entries tall; reaching Alerts from the Dashboard took ten
+// On the handheld the sidebar is 12 entries tall (11 before the Games page); reaching Alerts from the Dashboard took ten
 // D-pad presses and a confirm. The shoulder buttons now step through the sections, wrapping.
 import { test, expect, type Page } from '@playwright/test'
 
@@ -39,6 +39,18 @@ test.describe('Shoulder-button page switching', () => {
     await expect(page.getByTestId('page-fan')).toBeVisible()
     await tap(page, LB)
     await expect(page.getByTestId('page-power')).toBeVisible()
+  })
+
+  // F1 (2026-09-25): Games sits between Profiles and Monitor, and the shoulders walk the rail's order.
+  test('Games is one RB past Profiles and one LB before Monitor', async ({ page }) => {
+    await page.getByTestId('nav-profiles').click()
+    await expect(page.getByTestId('page-profiles')).toBeVisible()
+    await tap(page, RB)
+    await expect(page.getByTestId('page-games')).toBeVisible()
+    await tap(page, RB)
+    await expect(page.getByTestId('page-monitor')).toBeVisible()
+    await tap(page, LB)
+    await expect(page.getByTestId('page-games')).toBeVisible()
   })
 
   test('LB on the first section wraps to the last', async ({ page }) => {

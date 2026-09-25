@@ -6,7 +6,7 @@
 // panel became 402px in a 380px window. These checks are geometric, so they hold across re-skins.
 import { test, expect, type Page } from '@playwright/test'
 
-const PAGES = ['dashboard', 'power', 'fan', 'hardware', 'display', 'profiles', 'monitor',
+const PAGES = ['dashboard', 'power', 'fan', 'hardware', 'display', 'profiles', 'games', 'monitor',
   'sessions', 'system', 'settings', 'alerts'] as const
 
 async function prime(page: Page, textscale: 'normal' | 'large', density: 'pad' | 'mouse' = 'pad') {
@@ -48,6 +48,18 @@ for (const vp of [{ width: 1280, height: 800 }, { width: 720, height: 600 }]) {
           expect(await noHorizontalScroll(page), `${id} scrolls horizontally`).toBe(true)
           expect(await offscreen(page), `${id} has controls off screen`).toEqual([])
         }
+      })
+
+      // The Games editor is the widest thing F1 added: a side sheet beside the list at 1280, stacked
+      // full width below 1100px. Checked open, with the TDP row showing, since that is its widest state.
+      test('the game profile editor fits, open with every row showing', async ({ page }) => {
+        await prime(page, scale)
+        await page.goto('/#games')
+        await page.getByTestId('games-card-cyberpunk2077').click()
+        await page.getByTestId('game-tdp-toggle').click()
+        await expect(page.getByTestId('game-tdp')).toBeVisible()
+        expect(await noHorizontalScroll(page), 'the editor scrolls horizontally').toBe(true)
+        expect(await offscreen(page), 'the editor has controls off screen').toEqual([])
       })
     })
   }

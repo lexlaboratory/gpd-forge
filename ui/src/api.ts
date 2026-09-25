@@ -14,7 +14,7 @@ import type {
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, StandbyRestoreOutcome,
-  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, TdpInfo,
+  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, TdpInfo, RuleOverrides,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -197,8 +197,10 @@ const sendJson = (method: string, body: unknown): RequestInit =>
   ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
 export const getAppRules = () => rules()
-export const addAppRule = (match: string, mode: ModeId) =>
-  rules('', sendJson('POST', { match, mode, enabled: true }))
+// `overrides` (F1) is omitted, not sent as null, when absent: the Profiles page's add line predates
+// game profiles and a plain mode rule is exactly what it means.
+export const addAppRule = (match: string, mode: ModeId, overrides?: RuleOverrides | null) =>
+  rules('', sendJson('POST', overrides === undefined ? { match, mode, enabled: true } : { match, mode, enabled: true, overrides }))
 export const updateAppRule = (id: string, r: Omit<AppRule, 'id'>) => rules(`/${id}`, sendJson('PUT', r))
 export const deleteAppRule = (id: string) => rules(`/${id}`, { method: 'DELETE' })
 export const moveAppRule = (id: string, delta: number) => rules(`/${id}/move`, sendJson('POST', { delta }))

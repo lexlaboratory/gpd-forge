@@ -50,9 +50,15 @@ if (typeof window !== 'undefined') {
   // A gamepad only appears in getGamepads() after its first input, so the connect event is the
   // earliest reliable signal.
   window.addEventListener('gamepadconnected', () => detected('pad'))
-  window.addEventListener('pointerdown', (e: PointerEvent) => {
-    if (e.pointerType === 'mouse') detected('mouse')
-    else if (e.pointerType === 'touch' || e.pointerType === 'pen') detected('pad')
+  // After the press, never during it. This switched on pointerdown until 2026-09-25: a density change
+  // resizes every control (the rail's entries go from 45 to 37 px), so the release landed on a different
+  // element than the press and the browser dropped the click — the first touchpad click after using
+  // the pad did nothing. The task that delivers pointerup delivers the click too; a zero timeout lands
+  // after both.
+  window.addEventListener('pointerup', (e: PointerEvent) => {
+    const next: Density | null = e.pointerType === 'mouse' ? 'mouse'
+      : e.pointerType === 'touch' || e.pointerType === 'pen' ? 'pad' : null
+    if (next) setTimeout(() => detected(next), 0)
   })
   // A gamepad button press wins pad density back after the mouse was used.
   const poll = () => {

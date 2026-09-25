@@ -41,8 +41,9 @@ const VIEWPORTS = [
   { name: '720x600', width: 720, height: 600 },
 ] as const
 
-// The eleven sidebar sections (App.tsx NAV). The twelfth surface, the overlay, is a separate HTML
-// entry point and gets its own test.
+// The sidebar sections (App.tsx NAV) but one. The overlay is a separate HTML entry point and gets its
+// own test, and so does Games (F1): it renders the app rules, which are shared mutable mock state
+// (every rules spec adds and removes rows), so it is shot below against a frozen ruleset instead.
 const SECTIONS = [
   'dashboard', 'power', 'fan', 'hardware', 'display',
   'profiles', 'sessions', 'monitor', 'system', 'settings', 'alerts',
@@ -62,6 +63,32 @@ const THEMES = ['dark', 'light'] as const
 // syntax error rather than a missing value — the whole file fails to load.
 const UI_VERSION: string = JSON.parse(
   readFileSync(join(__dirname, '..', '..', 'ui', 'package.json'), 'utf8')).version
+
+const INACTIVE_PROFILE = {
+  active: false, game: null, ruleId: null, match: null, mode: null,
+  applied: null, skipped: [], freeze: [], sinceUtc: null,
+}
+
+// The Games page's own frozen state (F1): one game with a profile that is in force, one claimed by a
+// rule that only picks the mode, one with nothing — the three states a card can show.
+const GAMES_RULES = {
+  rules: [
+    { id: 'vis-r1', match: 'steam', mode: 'gaming', enabled: true, overrides: null },
+    { id: 'vis-r2', match: 'hades2', mode: 'gaming', enabled: true, overrides: null },
+    {
+      id: 'vis-r3', match: 'cyberpunk2077', mode: 'gaming', enabled: true,
+      overrides: { stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null }, freeze: null },
+    },
+  ],
+  modes: ['battery', 'windows', 'gaming', 'ai'],
+  autoProfiles: true,
+  lastMatch: null,
+}
+const GAMES_ACTIVE = {
+  active: true, game: 'cyberpunk2077.exe', ruleId: 'vis-r3', match: 'cyberpunk2077', mode: 'gaming',
+  applied: { stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null } },
+  skipped: [], freeze: [], sinceUtc: '2026-08-28T09:00:00.000Z',
+}
 
 const ALERT_SEEN = '2026-08-28T09:12:00.000Z'
 const ALERT_LAST = '2026-08-28T09:41:00.000Z'
@@ -179,10 +206,26 @@ const FIXTURES: Record<string, unknown> = {
   '/sessions/games': {
     fpsAvailable: true,
     games: [
-      { app: 'cyberpunk2077', sessions: 2, totalSeconds: 9000, fpsAvg: 56.1, fps1PctLow: 40.5, lastPlayedUtc: '2026-08-27T20:00:00.000Z' },
-      { app: 'hades2', sessions: 1, totalSeconds: 1800, fpsAvg: null, fps1PctLow: null, lastPlayedUtc: '2026-08-26T09:00:00.000Z' },
+      {
+        app: 'cyberpunk2077', sessions: 2, totalSeconds: 9000, fpsAvg: 56.1, fpsBest: 78.9, fps1PctLow: 40.5,
+        cpuTempMaxC: 94.2, packageAvgW: 27.3, lastPlayedUtc: '2026-08-27T20:00:00.000Z',
+      },
+      {
+        app: 'hades2', sessions: 1, totalSeconds: 1800, fpsAvg: null, fpsBest: null, fps1PctLow: null,
+        cpuTempMaxC: 72.8, packageAvgW: 15.1, lastPlayedUtc: '2026-08-26T09:00:00.000Z',
+      },
+      // A real process name as the daemon records it (2026-09-25, GET /sessions/games on the device):
+      // mixed case, spaces and the .exe tail — the shape the card's name and wrapping have to survive.
+      {
+        app: 'League of Legends.exe', sessions: 3, totalSeconds: 1400, fpsAvg: 88.3, fpsBest: 143.9, fps1PctLow: 5.3,
+        cpuTempMaxC: 94.5, packageAvgW: 24.8, lastPlayedUtc: '2026-08-25T21:30:00.000Z',
+      },
     ],
   },
+  // Frozen inactive for every shot: the mock reports the steam rule's profile as active, and specs that
+  // run earlier give it overrides and clear them — a notice line in the overlay's header must not
+  // depend on how the spec before this one tidied up.
+  '/profiles/active': INACTIVE_PROFILE,
   '/freezer': { frozen: [] },
   '/auto-fps': { enabled: false, targetFps: 60 },
   '/health/check': {
@@ -348,6 +391,28 @@ for (const vp of VIEWPORTS) {
             // it writes all eleven missing baselines in a single pass instead of one per run.
             await expect.soft(page).toHaveScreenshot(`${id}-${theme}-${vp.name}.png`, { fullPage: true })
           }
+        })
+
+        test(`games — ${theme} — ${vp.name}`, async ({ page }) => {
+          await prepare(page, { theme })
+          // Registered after prepare(), so these win over the shared fixtures for the same paths.
+          await page.route(`${API}/app-rules`, (route) => route.request().method() === 'GET'
+            ? route.fulfill({ json: GAMES_RULES }) : route.continue())
+          await page.route(`${API}/profiles/active`, (route) => route.fulfill({ json: GAMES_ACTIVE }))
+          await page.goto('/#games', { waitUntil: 'domcontentloaded' })
+          await expect(page.getByTestId('conn')).toHaveText('Live', { timeout: 15_000 })
+          await expect(page.getByTestId('games-state-cyberpunk2077')).toHaveText('Profile')
+          await expect(page.getByTestId('games-live-cyberpunk2077')).toBeVisible()
+          await settle(page)
+          await expect.soft(page).toHaveScreenshot(`games-${theme}-${vp.name}.png`, { fullPage: true })
+
+          // The editor open on the stored profile: every row showing, TDP included.
+          await page.getByTestId('games-card-cyberpunk2077').click()
+          await expect(page.getByTestId('game-tdp')).toContainText('22')
+          // Park the pointer: opening scrolls the page under it, and whatever it then rests on would be
+          // captured in its hover state.
+          await page.mouse.move(1, 1)
+          await expect.soft(page).toHaveScreenshot(`games-sheet-${theme}-${vp.name}.png`, { fullPage: true })
         })
 
         test(`overlay — ${theme} — ${vp.name}`, async ({ page }) => {

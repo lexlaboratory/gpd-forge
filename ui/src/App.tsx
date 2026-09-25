@@ -5,11 +5,14 @@ import { getTelemetry, getMode, setMode as apiSetMode, getAlertSummary } from '.
 import { Toggle } from './ui'
 import { useDensity } from './hooks/useDensity'
 import { useHashRoute } from './hooks/useHashRoute'
-import { useSpatialNav } from './hooks/useSpatialNav'
+import { useSpatialNav, CANCEL_EVENT } from './hooks/useSpatialNav'
+import { useActiveProfile } from './hooks/useActiveProfile'
+import { useToast } from './Toast'
+import { noticeText } from './gameProfile'
 import { DaemonOfflineBanner } from './DaemonOfflineBanner'
 import {
   MODES, DashboardPage, PowerPage, FanPage, HardwarePage, DisplayPage,
-  ProfilesPage, MonitorPage, SessionsPage, SystemPage, SettingsPage, AlertsPage, type Shared,
+  ProfilesPage, GamesPage, MonitorPage, SessionsPage, SystemPage, SettingsPage, AlertsPage, type Shared,
 } from './pages'
 import { staleSeconds, unsampled } from './pages/shared'
 import { Wizard, isSetupDone } from './Wizard'
@@ -27,6 +30,8 @@ const NAV = [
   { id: 'hardware',   label: 'Hardware' },
   { id: 'display',    label: 'Display' },
   { id: 'profiles',   label: 'Profiles' },
+  // F1 (2026-09-25): per-game profiles, next to the per-app rules they are stored in.
+  { id: 'games',      label: 'Games' },
   { id: 'monitor',    label: 'Monitor' },
   { id: 'sessions',   label: 'Sessions' },
   { id: 'system',     label: 'System' },
@@ -45,9 +50,10 @@ export function App() {
   // Sets data-density on <html>; the tokens do the rest. Settings gets a manual override in the
   // page redesign.
   useDensity()
-  // Gamepad navigation now covers the whole app, not just the overlay. No cancel action: there is
-  // nothing to close in the main window, and B should not quit it by accident. LB/RB step through
-  // the sections (wrapping), so Alerts is one press from the Dashboard instead of ten.
+  // Gamepad navigation now covers the whole app, not just the overlay. B / Escape never closes the
+  // main window — it only broadcasts CANCEL_EVENT, which a surface open over the page (the Games
+  // editor, since F1) answers by closing itself. LB/RB step through the sections (wrapping), so
+  // Alerts is one press from the Dashboard instead of ten.
   const pageNow = useRef(page)
   pageNow.current = page
   const stepPage = useCallback((delta: number) => {
@@ -56,7 +62,13 @@ export function App() {
   }, [setPage])
   const prevPage = useCallback(() => stepPage(-1), [stepPage])
   const nextPage = useCallback(() => stepPage(1), [stepPage])
-  useSpatialNav(shellRef, { onPrevPage: prevPage, onNextPage: nextPage })
+  const cancel = useCallback(() => { window.dispatchEvent(new Event(CANCEL_EVENT)) }, [])
+  useSpatialNav(shellRef, { onCancel: cancel, onPrevPage: prevPage, onNextPage: nextPage })
+  // "Automatic with notice" (F1): a game profile the daemon just applied is announced with what it
+  // actually applied. Warn-toned when part of it was refused, so the refusal is not read as success.
+  const toast = useToast()
+  const activeProfile = useActiveProfile((p) =>
+    toast.push({ kind: p.skipped.length > 0 ? 'warn' : 'info', message: noticeText(p), duration: 6000 }))
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
@@ -212,6 +224,7 @@ export function App() {
           {page === 'hardware'   && <HardwarePage />}
           {page === 'display'    && <DisplayPage />}
           {page === 'profiles'   && <ProfilesPage tele={tele} />}
+          {page === 'games'      && <GamesPage active={activeProfile} />}
           {page === 'monitor'    && <MonitorPage tele={tele} />}
           {page === 'sessions'   && <SessionsPage />}
           {page === 'system'     && <SystemPage tele={tele} />}

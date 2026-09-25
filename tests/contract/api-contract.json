@@ -462,10 +462,13 @@
             "totalSeconds": "number",
             "lastPlayedUtc": "string",
             "fpsAvg": "number|null",
-            "fpsBest": "number|null"
+            "fpsBest": "number|null",
+            "fps1PctLow": "number|null",
+            "packageAvgW": "number|null"
           }
         }
-      }
+      },
+      "$comment": "`packageAvgW` added in F1 (2026-09-25) for the Games page: duration-weighted like the FPS averages, null when no session read the package power."
     },
     {
       "method": "GET",

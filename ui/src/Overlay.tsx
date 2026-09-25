@@ -11,11 +11,17 @@ import type { ModeId, Telemetry, BatteryBudget } from './types'
 import {
   getTelemetry, getMode, setMode, setTdp, getTdp, getProfiles, getFan, setFan,
   getBrightness, setBrightness, getAutoFps, setAutoFps, getBudget, restoreStandby, getGpu, setFrameCap,
+  getAppRules, getSessions,
 } from './api'
 import { Segmented, Stepper } from './components'
 import { useToast } from './Toast'
 import { useDensity } from './hooks/useDensity'
 import { useSpatialNav } from './hooks/useSpatialNav'
+import { useActiveProfile } from './hooks/useActiveProfile'
+import {
+  captureOverrides, describeOverrides, displayName, exactRule, governingRule, noticeParts, noticeText, toRuleFanMode,
+} from './gameProfile'
+import { saveGameProfile } from './gameProfileSave'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
 // nullable on 2026-09-01 because an unreadable sensor used to arrive as a confident zero.
 import {
@@ -98,6 +104,13 @@ export function OverlayApp() {
   const [capSupported, setCapSupported] = useState(false)
   const [bright, setBright] = useState(70)
   const [budget, setBudget] = useState<BatteryBudget | null>(null)
+  // The game under the overlay (F1): what the daemon's focus loop judged — `lastMatch.process`, which
+  // skips the overlay's own Edge window by design (FocusProfileLoop) — else the app presenting frames.
+  // Null when neither knows; the save button then says so rather than guessing.
+  const [game, setGame] = useState<string | null>(null)
+  const [savingProfile, setSavingProfile] = useState(false)
+  // The profile in force, shown as one line in the header: the overlay is where a player looks mid-game.
+  const activeProfile = useActiveProfile()
 
   useEffect(() => {
     let alive = true
@@ -121,7 +134,13 @@ export function OverlayApp() {
     getAutoFps().then((a) => alive && setFpsTarget(a.enabled ? a.targetFps : 0)).catch(() => {})
     const bt = () => getBudget().then((b) => alive && setBudget(b)).catch(() => {})
     bt(); const bid = setInterval(bt, 5000)
-    return () => { alive = false; clearInterval(id); clearInterval(bid) }
+    const fg = async () => {
+      const inFront = await getAppRules().then((r) => r.lastMatch?.process ?? null).catch(() => null)
+      const presenting = inFront ?? await getSessions(1).then((s) => s.current).catch(() => null)
+      if (alive) setGame(presenting)
+    }
+    fg(); const gid = setInterval(fg, 5000)
+    return () => { alive = false; clearInterval(id); clearInterval(bid); clearInterval(gid) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -205,6 +224,32 @@ export function OverlayApp() {
     setBright(next)
     try { const b = await setBrightness(next); setBright(b) } catch { /* ignore */ }
   }
+  // "Save as profile for this game": what is in force right now — the stepper's TDP, the driver cap
+  // (only when the GPU offers one; otherwise the mode keeps deciding it) and the fan — into the game's
+  // own rule. The Radeon toggles and the freeze list, which this panel cannot see, are kept as stored.
+  const saveProfile = async () => {
+    if (!game) return
+    setSavingProfile(true)
+    try {
+      const info = await getAppRules()
+      const own = exactRule(info.rules, game)
+      // An existing rule keeps its mode; a new one takes the rule that claims the game today, else the
+      // mode in force if a rule may select it, else gaming.
+      const ruleMode = own?.mode ?? governingRule(info.rules, game)?.mode
+        ?? (info.modes.includes(mode) ? mode : 'gaming')
+      const overrides = captureOverrides(own?.overrides, {
+        stapmW: tdp,
+        frameCapFps: capSupported ? (frameCap ?? 0) : null,
+        fanMode: toRuleFanMode(fan),
+      })
+      await saveGameProfile(game, ruleMode, overrides)
+      toast.push({ kind: 'success', message: `Saved as the ${displayName(game)} profile: ${describeOverrides(overrides)}` })
+    } catch (e) {
+      toast.push({ kind: 'error', message: `Profile not saved — ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      setSavingProfile(false)
+    }
+  }
   const doRestore = async () => { try { await restoreStandby(); toast.push({ kind: 'success', message: 'Standby state restored' }) } catch { /* ignore */ } }
   const openFull = useCallback(() => { window.location.assign('/') }, [])
   // The daemon answers GET /telemetry from its sampler's cache, so a sampler whose hardware read hangs
@@ -244,6 +289,14 @@ export function OverlayApp() {
           <span className={`qam-dot ${tele && !offline && staleS == null && !noReading ? 'on' : ''}`}
                 title={offline ? 'offline' : noReading ? 'no reading yet' : staleS == null ? 'live' : 'stalled'} />
         </div>
+        {activeProfile?.active && (() => {
+          const { lead, detail } = noticeParts(activeProfile)
+          return (
+            <p className="qam-profile" data-testid="qam-profile" role="status" title={noticeText(activeProfile)}>
+              <span className="qam-profile-lead">{lead}</span>{' '}<span className="qam-profile-detail">{detail}</span>
+            </p>
+          )
+        })()}
         {/* The live triple is the first thing a player looks at, so it gets the largest type in the
             panel and its own bracketed frame. Dimmed when stale: a frozen reading must not look live. */}
         <div className="qam-live" data-stale={offline || staleS != null || noReading || undefined}>
@@ -313,6 +366,14 @@ export function OverlayApp() {
       </div>
 
       <footer className="qam-foot">
+        <button className="qam-action qam-save" data-testid="qam-save-profile" onClick={saveProfile}
+                disabled={!game || savingProfile}>
+          <Icon name="save" />
+          <span className="qam-action-text">
+            <span>{savingProfile ? 'Saving…' : 'Save as profile for this game'}</span>
+            <span className="qam-action-sub">{game ? displayName(game) : 'No game in front'}</span>
+          </span>
+        </button>
         <button className="qam-action" data-testid="qam-restore" onClick={doRestore}><Icon name="restore" />Restore standby</button>
         <button className="qam-action" data-testid="qam-full" onClick={openFull}><Icon name="expand" />Full UI</button>
         <button className="qam-action qam-close" data-testid="qam-close" onClick={closeOverlay}><Icon name="close" />Close</button>

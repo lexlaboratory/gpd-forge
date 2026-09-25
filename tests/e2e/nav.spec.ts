@@ -7,7 +7,7 @@ test.describe('Multi-page UI', () => {
 
   test('navigates across the sections', async ({ page }) => {
     await expect(page.getByTestId('page-dashboard')).toBeVisible()
-    for (const id of ['power', 'fan', 'hardware', 'display', 'profiles', 'monitor', 'system', 'settings']) {
+    for (const id of ['power', 'fan', 'hardware', 'display', 'profiles', 'games', 'monitor', 'system', 'settings']) {
       await page.getByTestId(`nav-${id}`).click()
       await expect(page.getByTestId(`page-${id}`)).toBeVisible()
     }

@@ -76,7 +76,8 @@ public static class SessionMath
                 FpsAvg: Weighted(g, s => s.FpsAvg),
                 FpsBest: MaxOrNull(g, s => s.FpsMax ?? s.FpsAvg),
                 Fps1PctLow: Weighted(g, s => s.Fps1PctLow),
-                CpuTempMaxC: MaxOrNull(g, s => s.CpuTempMaxC)))
+                CpuTempMaxC: MaxOrNull(g, s => s.CpuTempMaxC),
+                PackageAvgW: Weighted(g, s => s.PackageAvgW)))
             .OrderByDescending(x => x.TotalSeconds)
             .ThenByDescending(x => x.LastPlayedUtc)
             .ToArray();

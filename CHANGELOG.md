@@ -64,7 +64,29 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   in force, what it applied and what it refused and why (a cap below the auto-FPS target, say).
   `freeze` is stored only until F5 acts on it. Older `app-rules.json` files load unchanged; an
   out-of-band value in a hand-edited file is repaired instead of costing the rule. The Games page
-  and the overlay's "save as this game's profile" button are the next step.
+  and the overlay's "Save as profile for this game" button, below, are how you set them.
+- **A Games page** (joystick icon, between Profiles and Monitor; LB/RB walk it in rail order). Every
+  game the play history has seen — last played, sessions, average FPS and 1 % low, average package
+  watts (new on `GET /sessions/games` as `packageAvgW`, duration-weighted, null when unmeasured) —
+  and whether it has a profile, only a rule that picks its mode, or nothing. Selecting one opens its
+  profile editor, a side sheet from 1100 px and stacked above the list below that: mode, TDP (off by
+  default; slider plus ±1 W), frame cap (Off / 30 / 40 / 45 / 60 / mode default), fan (Auto / Quiet /
+  Balanced / Aggressive / mode default), Anti-Lag and Chill (turning one on turns the other off —
+  AMD refuses the pair). Save writes the game's OWN rule: a broader rule that governs it today
+  (`elden` over `eldenring`) is never edited, and a new rule is moved above it, since a rule added
+  at the end of the list would otherwise be stored and never win. Remove clears the settings and
+  keeps the rule, which may have picked the game's mode long before (the seeded `yuzu` does). B or
+  Escape closes the editor and returns to the game.
+- **"Profile Elden Ring applied: 22 W · 60 FPS · Aggressive."** When a game profile takes effect the
+  main window says so, from what `GET /profiles/active` reports as applied rather than what the rule
+  asked for, and names anything refused and why. A profile already in force when the window opens is
+  not announced as new; one re-applied after an edit is. The overlay shows the profile in force as
+  one line in its header, where a long game name gives way before the values do.
+- **"Save as profile for this game" in the overlay.** One press stores the TDP, driver frame cap
+  (when the GPU offers one) and fan mode in force into the rule for the game under the overlay — the
+  process the focus loop judged, not the overlay's own window — creating the rule or updating it,
+  and keeping the Radeon toggles the overlay cannot see. The button names the game, and says "No
+  game in front" instead of guessing.
 - **The active mode's TDP is applied when the daemon starts.** It used to wait for the first mode
   change, so after a reboot the machine ran on whatever the last writer or the firmware had left
   while the app named a mode that was not in force. It yields to MotionAssistant / GPD Tool exactly
@@ -95,6 +117,11 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **The first touchpad click after using the gamepad did nothing.** A mouse press switched the UI from
+  pad to mouse density on `pointerdown`, which shrank every control (the rail's entries from 45 to
+  37 px) before the release — so the release landed on a different element and the browser dropped
+  the click. Density now switches after the click. Found adding the Games page, whose shoulder-button
+  test clicked the rail with a pad connected.
 - **Picking a mode no longer lifts a hot device out of a guardian throttle.** `POST /mode` (and an
   auto-profile switch) wrote the mode's preset even while the thermal guardian held a lower ceiling,
   and the guardian re-asserted it only up to 30 s later. The apply now reports `HeldByGuardian` and

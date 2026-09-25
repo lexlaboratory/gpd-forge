@@ -597,6 +597,33 @@ function appRulesInfo() {
   return { rules: state.appRules, modes: RULE_MODES, autoProfiles: true, lastMatch: lastRuleMatch() }
 }
 
+// When each rule's overrides last changed (rule id -> ISO). Kept beside the rules, not on them: a
+// field on the rule object would leak into every /app-rules response the contract pins.
+const profileSince = new Map()
+const INACTIVE_PROFILE = {
+  active: false, game: null, ruleId: null, match: null, mode: null,
+  applied: null, skipped: [], freeze: [], sinceUtc: null,
+}
+/** The game profile in force (F1), as core/Profiles/FocusProfileLoop would settle it: the rule that
+ *  claims the mock's fixed foreground, when it carries overrides. The mock has no focus loop, so it
+ *  takes the rule's mode as already switched to — the daemon's auto-switch would have done that — and
+ *  reports every field as applied, the way the daemon does when the driver accepts all of them.
+ *  `sinceUtc` moves when the overrides are edited, as a re-applied profile's does. */
+function activeProfile() {
+  const match = lastRuleMatch()
+  const rule = state.appRules.find((r) => r.id === match.ruleId)
+  const o = rule?.overrides
+  if (!rule || !o) return INACTIVE_PROFILE
+  return {
+    active: true, game: MOCK_FOREGROUND, ruleId: rule.id, match: rule.match, mode: rule.mode,
+    applied: {
+      stapmW: o.stapmW, frameCapFps: o.frameCapFps, fanMode: o.fanMode,
+      gpu: { antiLag: o.gpu?.antiLag ?? null, chill: o.gpu?.chill ?? null },
+    },
+    skipped: [], freeze: o.freeze ?? [], sinceUtc: profileSince.get(rule.id) ?? null,
+  }
+}
+
 const round1 = (v) => Math.round(v * 10) / 10
 /** Mirrors GpdForge.Sessions.SessionMath.PerGame: duration-weighted averages (a two-minute run must
  *  not drag a three-hour one around), nulls preserved, most-played first. */
@@ -636,6 +663,7 @@ function perGame(sessions) {
       fpsBest: maxOrNull(rows, (s) => s.fpsMax ?? s.fpsAvg),
       fps1PctLow: weighted(rows, (s) => s.fps1PctLow),
       cpuTempMaxC: maxOrNull(rows, (s) => s.cpuTempMaxC),
+      packageAvgW: weighted(rows, (s) => s.packageAvgW),
     }))
     .sort((a, b) => b.totalSeconds - a.totalSeconds || (a.lastPlayedUtc < b.lastPlayedUtc ? 1 : -1))
 }
@@ -865,14 +893,9 @@ async function handle(req, res) {
   }
 
   if (method === 'GET' && path === '/profiles') return send(res, 200, state.presets)
-  // The game profile in force (F1). The mock has no focus loop, so — like the daemon with
-  // auto-profiles off or right after a restart — nothing is active.
-  if (method === 'GET' && path === '/profiles/active') {
-    return send(res, 200, {
-      active: false, game: null, ruleId: null, match: null, mode: null,
-      applied: null, skipped: [], freeze: [], sinceUtc: null,
-    })
-  }
+  // The game profile in force (F1): see activeProfile(). With the seeded rules (no overrides) nothing
+  // is active — the state the daemon reports right after a restart or with auto-profiles off.
+  if (method === 'GET' && path === '/profiles/active') return send(res, 200, activeProfile())
   if (method === 'POST' && path.startsWith('/profiles/')) {
     const mode = path.slice('/profiles/'.length)
     const body = await readBody(req)
@@ -899,10 +922,12 @@ async function handle(req, res) {
     if (overrides.error) return send(res, 400, { error: overrides.error.message, code: overrides.error.code })
     const error = validateRule(body?.match, body?.mode, state.appRules, null)
     if (error) return send(res, 400, { error, code: 'bad_rule' })
+    const id = `rule-${++ruleSeq}`
     state.appRules.push({
-      id: `rule-${++ruleSeq}`, match: normalizeMatch(body.match), mode: body.mode, enabled: body.enabled !== false,
+      id, match: normalizeMatch(body.match), mode: body.mode, enabled: body.enabled !== false,
       overrides: overrides.value,
     })
+    profileSince.set(id, new Date().toISOString())
     return send(res, 200, appRulesInfo())
   }
   if (method === 'POST' && /^\/app-rules\/[^/]+\/move$/.test(path)) {
@@ -930,7 +955,10 @@ async function handle(req, res) {
     rule.mode = body.mode
     rule.enabled = body.enabled !== false
     // Absent keeps the game profile (the Profiles page's enable toggle never sends it); null clears.
-    if (overrides.present) rule.overrides = overrides.value
+    if (overrides.present) {
+      rule.overrides = overrides.value
+      profileSince.set(rule.id, new Date().toISOString())
+    }
     return send(res, 200, appRulesInfo())
   }
   if (method === 'DELETE' && path.startsWith('/app-rules/')) {

@@ -431,7 +431,8 @@ the daemon never manufactures one out of "a game was probably running".
   - `current` is the app presenting right now, or `null` when nothing is being recorded.
 - `GET /sessions/games → { fpsAvailable: boolean, games: GameSummary[] }` — the per-app rollup, most
   played first. Averages are weighted by duration, so a two-minute run cannot drag the average of a
-  three-hour one around.
+  three-hour one around. `packageAvgW` (F1, 2026-09-25) is weighted the same way; the Games page
+  shows it next to the FPS so a per-game TDP can be judged against what the game actually draws.
 - `GET /sessions/:id → GameSession`, `404 { error: "session not found" }` if unknown.
 - `DELETE /sessions/:id → 204`, same `404` if unknown.
 
@@ -442,7 +443,7 @@ GameSession = { id: guid, app: string, startedUtc, endedUtc, durationSeconds: nu
                 onBattery: boolean, batteryStartPct, batteryEndPct, batteryUsedPct: number | null,
                 fpsTrend: number[] }
 GameSummary = { app: string, sessions: number, totalSeconds: number, lastPlayedUtc,
-                fpsAvg, fpsBest, fps1PctLow, cpuTempMaxC: number | null }
+                fpsAvg, fpsBest, fps1PctLow, cpuTempMaxC, packageAvgW: number | null }
 ```
 
 Every metric is nullable because every sensor behind it is optional on this hardware: `null` means

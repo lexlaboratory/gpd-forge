@@ -11,6 +11,13 @@ import { useEffect, type RefObject } from 'react'
 
 export type Direction = 'up' | 'down' | 'left' | 'right'
 
+/**
+ * Broadcast by the main window on B / Escape (F1, 2026-09-25). The shell itself has nothing to close
+ * and must never quit on B; a surface that opens over the page (the Games editor) listens for this
+ * and closes itself — only while focus is inside it, so closing the palette does not close it too.
+ */
+export const CANCEL_EVENT = 'forge:cancel'
+
 const FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 interface Box { el: HTMLElement; x: number; y: number }

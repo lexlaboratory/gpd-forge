@@ -392,6 +392,8 @@ export interface GameSummary {
   fpsBest: number | null
   fps1PctLow: number | null
   cpuTempMaxC: number | null
+  /** Duration-weighted package power (F1). Optional because a daemon older than F1 omits it. */
+  packageAvgW?: number | null
 }
 
 export interface SessionsResponse {

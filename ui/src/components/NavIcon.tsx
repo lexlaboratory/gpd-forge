@@ -2,7 +2,7 @@
 import { Icon } from './Icon'
 
 export type NavIconName =
-  'dashboard' | 'power' | 'fan' | 'hardware' | 'display' | 'profiles' |
+  'dashboard' | 'power' | 'fan' | 'hardware' | 'display' | 'profiles' | 'games' |
   'monitor' | 'sessions' | 'system' | 'settings' | 'alerts'
 
 export function NavIcon({ name }: { name: NavIconName }) {
