@@ -36,6 +36,7 @@ public static class TdpOwner
     public const string Restore = "restore";                  // clearing a throttle back to the mode preset
     public const string ResumeRestore = "resume-restore";     // the post-suspend re-apply
     public const string Reassert = "reassert";                // the 30 s readback found the limit moved (TdpReasserter)
+    public const string GameProfile = "game-profile";         // a rule's per-game stapmW (F1; TdpIntent's game layer)
 }
 
 /// <summary>

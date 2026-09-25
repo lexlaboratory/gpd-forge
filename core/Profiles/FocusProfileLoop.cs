@@ -27,6 +27,18 @@
 //
 // The switch is automatic, so it goes through SwitchAutomatically: a restart does not restore it as the
 // user's pick (see ModeState).
+//
+// F1 (2026-09-25): a rule can carry per-game overrides (RuleOverrides), layered by GameProfileApplier.
+// The mode engine alone cannot drive them: Steam and Elden Ring are both `gaming`, so moving from one
+// to the other switches no mode, yet it has to put Elden Ring's 22 W on. So the RULE settles too, with
+// the same hysteresis — a two-second alt-tab must not restore the fan and rewrite TDP — and its profile
+// is in force while that settled rule's app is in front AND the mode is the rule's. A mode the user
+// picked by hand over the game (the engine never overrides one) therefore ends the profile, without a
+// TDP write: the user's own apply already wrote their mode.
+//
+// Order within a tick is what keeps it to ONE write: the old profile comes off and the new one goes on
+// (TdpIntent's game layer) before the mode is applied, so ProfileApplier writes the game's watts
+// directly instead of the preset followed by the game a moment later.
 using System.Diagnostics;
 using GpdForge.Api;
 using GpdForge.Telemetry;
@@ -41,11 +53,18 @@ public sealed class FocusProfileLoop(
     ProfileApplier applier,
     IAppRuleStore rules,
     ILogger? logger = null,
-    Func<string, bool>? isRunning = null)
+    Func<string, bool>? isRunning = null,
+    GameProfileApplier? games = null)
 {
     private readonly Func<string, bool> _isRunning = isRunning ?? IsProcessRunning;
     private FocusProfileEngine? _engine;
     private string? _lastGameLike;
+
+    // The rule's own hysteresis (see the header): a candidate rule id and how many ticks it has held.
+    private Guid? _ruleCandidate;
+    private int _ruleCandidateTicks;
+    private Guid? _settledRule;
+    private string? _settledGame;
 
     /// <summary>Samples once and switches the mode if the engine says so. Returns the new mode, or null
     /// when nothing switched (including a tick skipped for lack of a sampled AC state).</summary>
@@ -72,12 +91,43 @@ public sealed class FocusProfileLoop(
         // decided — the game under the overlay, not the overlay.
         rules.RecordMatch(proc, _engine.Resolve(proc, ac), ac);
         var switched = _engine.Tick(proc, ac);
-        if (switched is null) return null;
+        bool gameTdpChanged = games is not null && LayerGameProfile(games, proc, switched ?? mode.Active);
+
+        if (switched is null)
+        {
+            // Same mode, different game (or none): only the game layer moved, and only it is written.
+            if (gameTdpChanged) await applier.ApplyAsync(mode.Active, ct);
+            return null;
+        }
 
         mode.SwitchAutomatically(switched);
         logger?.LogInformation("Auto-profile -> {Mode} (foreground={Proc})", switched, proc ?? "(none)");
-        await applier.ApplyAsync(switched, ct);   // apply the mode's TDP (yields if a rival is running)
+        await applier.ApplyAsync(switched, ct);   // the mode's TDP, or its game layer (yields if a rival is running)
         return switched;
+    }
+
+    /// <summary>Settles the rule in front and swaps the game profile when the settled one changes.
+    /// True when the swap moved TDP in <paramref name="modeAfter"/> and the caller must write it.</summary>
+    private bool LayerGameProfile(GameProfileApplier games, string? proc, string modeAfter)
+    {
+        var inFront = rules.RuleFor(proc);
+        if (inFront?.Id == _ruleCandidate) _ruleCandidateTicks++;
+        else { _ruleCandidate = inFront?.Id; _ruleCandidateTicks = 1; }
+        if (_ruleCandidateTicks >= FocusProfileEngine.DefaultStabilityTicks && _settledRule != _ruleCandidate)
+        {
+            _settledRule = _ruleCandidate;
+            _settledGame = proc;
+        }
+
+        // Looked up by id every tick, not kept: an edit, a disable or a delete of the rule mid-game has
+        // to reach the profile in force, and the store is the one place that knows.
+        var want = _settledRule is Guid id ? rules.List().FirstOrDefault(r => r.Id == id && r.Enabled) : null;
+        if (want is not null && !string.Equals(want.Mode, modeAfter, StringComparison.OrdinalIgnoreCase)) want = null;
+        if (Equals(games.Rule, want)) return false;
+
+        bool tdp = games.Rule is not null && games.End(modeAfter);
+        if (want is not null) tdp |= games.Begin(want, _settledGame ?? want.Match, modeAfter);
+        return tdp;
     }
 
     /// <summary>The foreground the engine should judge: <paramref name="current"/>, unless it is a known

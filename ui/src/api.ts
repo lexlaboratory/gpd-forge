@@ -14,7 +14,7 @@ import type {
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, StandbyRestoreOutcome,
-  AppRulesInfo, AppRule, GameSession, SessionsResponse, GamesResponse, TdpInfo,
+  AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, TdpInfo,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -202,6 +202,8 @@ export const addAppRule = (match: string, mode: ModeId) =>
 export const updateAppRule = (id: string, r: Omit<AppRule, 'id'>) => rules(`/${id}`, sendJson('PUT', r))
 export const deleteAppRule = (id: string) => rules(`/${id}`, { method: 'DELETE' })
 export const moveAppRule = (id: string, delta: number) => rules(`/${id}/move`, sendJson('POST', { delta }))
+/** The game profile in force right now (F1). `active:false` whenever no ruled game is settled in front. */
+export const getActiveProfile = () => json<ActiveGameProfile>('/profiles/active')
 
 // --- play sessions (/sessions) ---
 export const getSessions = (limit = 100) => json<SessionsResponse>(`/sessions?limit=${limit}`)

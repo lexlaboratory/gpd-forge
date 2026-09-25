@@ -178,7 +178,14 @@ kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
 - `GET  → { active: ModeId }`
 - `POST { name: ModeId } → { active: ModeId, tdp: string, frameCap: string | null }` — switches the
   active mode (applies its TDP + fan curve). `400` on unknown mode. Selecting a mode — the same one
-  included — ends a manual `POST /tdp` override.
+  included — ends a manual `POST /tdp` override. It does not end a game profile's TDP
+  (`GET /profiles/active`): re-picking `gaming` with that game in front writes the game's watts
+  (owner `game-profile`); picking another mode ends the profile.
+- `tdp` is the apply outcome: `AppliedVerified`, `AppliedUnverified`, `SkippedConflict` (a rival
+  power controller holds TDP), `UnknownMode`, or `HeldByGuardian` (F1, 2026-09-25) — the thermal
+  guardian is throttling, so nothing was written; its ceiling, computed under the new mode, stays in
+  force and the mode's TDP comes back when the throttle clears. A mode pick used to lift a hot device
+  out of its throttle for up to the guardian's 30 s re-assert.
 - The daemon applies the active mode's TDP once when it **starts** (it used to wait for the first
   mode change), yielding like any mode switch when MotionAssistant or GPD Tool is running.
 
@@ -330,7 +337,32 @@ already claims that space, and a literal segment under a parameterized route wou
 endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on their own path.
 
 - `GET → { rules: AppRule[], modes: ModeId[], autoProfiles: boolean, lastMatch: AppRuleMatch | null }`
-  - `AppRule = { id: guid, match: string, mode: ModeId, enabled: boolean }`, in precedence order.
+  - `AppRule = { id: guid, match: string, mode: ModeId, enabled: boolean, overrides: RuleOverrides | null }`,
+    in precedence order. `overrides` is null for a rule that only picks a mode (every seeded rule).
+  - `RuleOverrides = { stapmW: number | null, frameCapFps: number | null, fanMode: string | null,
+    gpu: { antiLag: boolean | null, chill: boolean | null } | null, freeze: string[] | null }` — per-game
+    settings layered over the mode while that rule's app is settled in front (F1, 2026-09-25). Every
+    field null = the mode decides:
+    - `stapmW` 5–40 W (the preset band), applied **flat** at the mode's Tctl like a manual value, as
+      owner `game-profile`. A manual `POST /tdp` mid-game sits above it; the thermal guardian's
+      ceiling is computed under it, and its throttle-clear restore, the resume restore and the 30 s
+      reassert all put the game's value back rather than the preset.
+    - `frameCapFps` `0` = cap off, else a frame rate. Requested through `GpuDesiredState` after the
+      same checks as `POST /gpu/frame-cap` (driver range, the auto-FPS pairing); a refused cap is
+      reported in `GET /profiles/active` `skipped`, and the rest of the profile still applies.
+    - `fanMode` `Auto` / `Quiet` / `Balanced` / `Aggressive` (not `Manual`). Set on `FanState` but
+      **never saved to `fan.json`** — a game's fan is not the user's global preference — and put
+      back on exit unless the user changed the fan meanwhile.
+    - `gpu` Anti-Lag / Chill over the mode's Radeon profile (`GET /gpu/desired` carries them to the
+      agent). Both `true` is refused: AMD's driver excludes the pair.
+    - `freeze` bare process names, at most 32. **Stored only** until F5 acts on it.
+    
+    Leaving the game (after the same ~4.5 s hysteresis as a mode switch, so an alt-tab restores
+    nothing) removes the layer: the previous cap, fan mode and Radeon profile come back, and TDP goes
+    back to the mode's intent. A mode the user picks by hand over the game ends the profile too.
+    A value out of range in a hand-edited `app-rules.json` is repaired on load (watts clamped,
+    anything unintelligible dropped to null) rather than costing the rule; a wrong JSON type still
+    quarantines the file as before. Unknown fields are ignored.
   - `modes` is what a rule may select: `battery` / `windows` / `gaming` / `ai`. `standby` is excluded
     on purpose — it is a preset for a system state, and a foreground app able to select it would be
     a trap.
@@ -345,9 +377,11 @@ endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on the
     running — the overlay (an Edge `--app` window), GPD Forge itself, the shell, Steam's overlay —
     leaves the game deciding, so opening the overlay does not switch the mode (audit round 3,
     2026-09-25).
-- `POST { match, mode, enabled? } → (the GET shape)` — appends a rule at **lowest** precedence.
-- `PUT /app-rules/:id { match, mode, enabled } → (the GET shape)` — replaces the rule in place,
-  keeping its position. `404` if the id is unknown.
+- `POST { match, mode, enabled?, overrides? } → (the GET shape)` — appends a rule at **lowest** precedence.
+- `PUT /app-rules/:id { match, mode, enabled, overrides? } → (the GET shape)` — replaces the rule in
+  place, keeping its position. `overrides` **absent keeps** the rule's overrides (the Profiles page's
+  enable toggle never sends them), `null` clears them, an object replaces them. `404` if the id is
+  unknown.
 - `DELETE /app-rules/:id → (the GET shape)`, `404` if the id is unknown.
 - `POST /app-rules/:id/move { delta: number } → (the GET shape)` — shifts the rule by `delta`
   positions; negative moves it towards **higher** precedence. Clamped to the ends: a rule already at
@@ -355,10 +389,26 @@ endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on the
 
 Every mutation answers with the **whole** ruleset, not just the row that changed, so a client can
 never end up rendering a list the daemon no longer holds. A rejected rule comes back as
-`400 { error: string }` — the bare-`error` shape, not the `{ error: { code, message } }` used
-elsewhere — carrying `GpdForge.Profiles.AppRulePolicy`'s message verbatim (e.g.
+`400 { error: string, code: string }` — the bare-`error` shape, not the `{ error: { code, message } }`
+used elsewhere — carrying `GpdForge.Profiles.AppRulePolicy`'s message verbatim (e.g.
 `"A rule for 'steam' already exists."`). That message is written for the person reading it and the
-UI shows it as-is, so it must not be rewritten or reduced to a status code.
+UI shows it as-is, so it must not be rewritten or reduced to a status code. `code` (added in F1,
+beside the message rather than replacing it) is `bad_rule` for the rule itself and `bad_stapm`,
+`bad_frame_cap`, `bad_fan_mode`, `bad_gpu`, `bad_freeze` or `bad_overrides` for the overrides — a
+wrong JSON type (`"stapmW": "22"`) gets the field's code too, not a framework error.
+
+### `GET /profiles/active`  (the game profile in force)
+`→ { active: boolean, game: string | null, ruleId: guid | null, match: string | null,
+mode: ModeId | null, applied: { stapmW, frameCapFps, fanMode, gpu: { antiLag, chill } } | null,
+skipped: { field, reason }[], freeze: string[], sinceUtc: string | null }` (F1, 2026-09-25).
+
+What the focus loop layered for the ruled game settled in front — the source of the "Elden Ring
+profile applied: 22 W · 60 FPS · Aggressive" notice. `applied` lists what was actually set (null
+fields were left to the mode; `frameCapFps: 0` = cap turned off), `skipped` what the rule asked for
+and was refused with the reason, `freeze` the stored list (nothing is frozen before F5). `game` is
+the app that decided — the game under the overlay, not the overlay. In memory only: `active: false`
+with every field null after a restart until the loop settles again, and always while
+`GPDFORGE_AUTO_PROFILES=0`.
 
 Rules persist to `%ProgramData%\GPD Forge\app-rules.json`. A fresh install is seeded from the exact
 ruleset the daemon used to hardcode (`ModeRules.DefaultRuleSet`), so turning rules into data cannot
@@ -833,6 +883,10 @@ steers TDP toward a target and does not stop the GPU exceeding it. `fps: null` d
   means nobody has asked for anything and the GPU must be left alone — starting the daemon is not a
   reason to change someone's Adrenalin settings. Desired state rather than a command queue, so an
   agent that restarts or misses ticks converges instead of replaying.
+- `GET /gpu/desired` also carries `antiLag` / `chill` (`boolean | null`, F1): a game profile's Radeon
+  features, which the agent layers over the mode's profile while the game is in front and drops when
+  it leaves. A game's Chill turns the mode's Anti-Lag off (and vice versa) instead of sending the pair
+  the driver refuses. `null` = the mode decides; independent of `requested`, which is about the cap.
 
 ⚠️ **Order is forced by the driver:** FRTC must be ENABLED before its FPS can be written. The
 intuitive order (value first, so enabling never briefly applies a stale cap) returns `ADLX_FAIL`

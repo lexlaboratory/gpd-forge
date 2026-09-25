@@ -306,8 +306,39 @@ export interface AlertSummary {
 }
 
 // --- per-app profile rules (mirror of core/Profiles/AppRule.cs, GET/POST /app-rules) -------------
-/** A rule claims a process for a mode. Precedence is list order: first ENABLED match wins. */
-export interface AppRule { id: string; match: string; mode: ModeId; enabled: boolean }
+/** Per-game settings a rule layers over its mode while the game is in front (F1, core/Profiles/
+ *  RuleOverrides.cs). Every field null = the mode decides. `frameCapFps: 0` turns the cap off.
+ *  `freeze` is stored only until F5 acts on it. */
+export type RuleFanMode = 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive'
+export interface RuleOverrides {
+  stapmW: number | null
+  frameCapFps: number | null
+  fanMode: RuleFanMode | null
+  gpu: { antiLag: boolean | null; chill: boolean | null } | null
+  freeze: string[] | null
+}
+/** A rule claims a process for a mode. Precedence is list order: first ENABLED match wins.
+ *  `overrides` is optional on the type so a PUT that only toggles `enabled` can omit it — the daemon
+ *  then keeps the rule's overrides; `null` clears them. */
+export interface AppRule { id: string; match: string; mode: ModeId; enabled: boolean; overrides?: RuleOverrides | null }
+/** GET /profiles/active — the game profile in force right now, and what it actually changed. */
+export interface ActiveGameProfile {
+  active: boolean
+  game: string | null
+  ruleId: string | null
+  match: string | null
+  mode: ModeId | null
+  applied: {
+    stapmW: number | null
+    frameCapFps: number | null
+    fanMode: RuleFanMode | null
+    gpu: { antiLag: boolean | null; chill: boolean | null }
+  } | null
+  /** What the rule asked for and was refused, with why (e.g. a cap below the auto-FPS target). */
+  skipped: { field: string; reason: string }[]
+  freeze: string[]
+  sinceUtc: string | null
+}
 /** What decided the mode on the daemon's most recent foreground tick. `ruleId` is null when nothing
  *  matched and the mode came from the AC/battery fallback — the UI must be able to say which. */
 export interface AppRuleMatch {

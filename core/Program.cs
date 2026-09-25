@@ -826,6 +826,13 @@ builder.Services.AddSingleton<IAppRuleStore>(_ => new AppRuleStore(DataRoot.Curr
 builder.Services.AddSingleton(_ => new SessionForegroundApp(new Win32ForegroundApp()));
 builder.Services.AddSingleton<IForegroundApp>(sp => sp.GetRequiredService<SessionForegroundApp>());
 
+// Per-game overrides (F1): the in-memory "which profile is in force" record behind GET /profiles/active,
+// the fan layer that keeps a game's fan mode out of fan.json, and the applier the focus worker drives.
+// Registered outside the gate so the endpoint answers ("nothing active") with auto-profiles off.
+builder.Services.AddSingleton<FanOverride>();
+builder.Services.AddSingleton<ActiveGameProfileState>();
+builder.Services.AddSingleton<GameProfileApplier>();
+
 if (autoProfiles)
 {
     builder.Services.AddHostedService<FocusProfileWorker>();
@@ -1139,10 +1146,12 @@ app.MapPost("/tdp", async (TdpRequest req, SerializedTdpController tdp, ModeStat
 // closed-loop controller every other TDP write uses (so it's honestly reported, not a blind write)
 // and pushes the fan preference to Aggressive. `applied` mirrors the closed loop's verification —
 // never claims success the firmware didn't actually hold.
-app.MapPost("/panic", async (ITdpController tdp, FanState fan, CancellationToken ct) =>
+app.MapPost("/panic", async (ITdpController tdp, FanState fan, FanOverride fanOverride, CancellationToken ct) =>
 {
     var floor = new TdpProfile(8, 8, 8, 90);
     var r = await tdp.ApplyAsync(floor, TdpOwner.Panic, ct);
+    // An emergency outranks a game profile: leaving the game must not put a quieter fan back.
+    fanOverride.Release();
     fan.Mode = "Aggressive";
     return Results.Json(new { applied = r.Verified, stapmW = floor.StapmW });
 });
@@ -1360,6 +1369,9 @@ app.MapGet("/gpu/desired", (GpuDesiredState desired) => Results.Json(new
     requested = desired.Requested,
     frameCapFps = desired.FrameCapFps,
     requestedAtUtc = desired.RequestedAtUtc,
+    // A game profile's Radeon features over the mode's (F1); null = the mode decides.
+    antiLag = desired.AntiLag,
+    chill = desired.Chill,
 }));
 
 // Where the agent checks in. Localhost-only like the rest of this API.
@@ -1441,21 +1453,62 @@ app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
 // end up rendering a list the daemon no longer holds. A rejected rule comes back as
 // 400 { error: "<message>" }, with AppRulePolicy's message passed through verbatim: it is written
 // for the person reading it, and the UI shows it as-is.
+//
+// F1 (2026-09-25): a rule can carry `overrides` (per-game stapmW, frameCapFps, fanMode, gpu, freeze).
+// Absent keeps what the rule has (the Profiles page's enable toggle never sends it), null clears, an
+// object replaces. A refusal now also carries a `code` BESIDE the sentence — `error` stays the bare
+// string every client already shows: bad_rule for the rule itself, bad_stapm / bad_frame_cap /
+// bad_fan_mode / bad_gpu / bad_freeze / bad_overrides for the overrides.
 app.MapGet("/app-rules", (IAppRuleStore rules) => Results.Json(RulesPayload(rules, autoProfiles)));
 
 app.MapPost("/app-rules", (AppRuleEdit e, IAppRuleStore rules) =>
 {
-    try { rules.Add(e.Match, e.Mode, e.Enabled ?? true); }
-    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    var overrides = RuleOverridesJson.Parse(e.Overrides);
+    if (overrides.Error is OverrideError bad) return RuleRejected(bad.Code, bad.Message);
+    try { rules.Add(e.Match, e.Mode, e.Enabled ?? true, overrides.Value); }
+    catch (ArgumentException ex) { return RuleRejectedFrom(ex); }
     return Results.Json(RulesPayload(rules, autoProfiles));
 });
 
 app.MapPut("/app-rules/{id:guid}", (Guid id, AppRuleEdit e, IAppRuleStore rules) =>
 {
-    try { rules.Update(id, e.Match, e.Mode, e.Enabled ?? true); }
+    var overrides = RuleOverridesJson.Parse(e.Overrides);
+    if (overrides.Error is OverrideError bad) return RuleRejected(bad.Code, bad.Message);
+    try
+    {
+        if (overrides.Present) rules.Update(id, e.Match, e.Mode, e.Enabled ?? true, overrides.Value);
+        else rules.Update(id, e.Match, e.Mode, e.Enabled ?? true);
+    }
     catch (KeyNotFoundException) { return Results.NotFound(new { error = "That rule no longer exists." }); }
-    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (ArgumentException ex) { return RuleRejectedFrom(ex); }
     return Results.Json(RulesPayload(rules, autoProfiles));
+});
+
+// Which game profile is in force right now (F1) — the source of the "Elden Ring profile applied:
+// 22 W · 60 FPS · Aggressive" notice. `applied` is what was actually layered, `skipped` what the rule
+// asked for and was refused (with why), `freeze` is stored only until F5. In memory: `active:false`
+// after a restart until the focus loop settles on the game again, and always with auto-profiles off.
+app.MapGet("/profiles/active", (ActiveGameProfileState state) =>
+{
+    var p = state.Current;
+    return Results.Json(new
+    {
+        active = p is not null,
+        game = p?.Game,
+        ruleId = p?.RuleId,
+        match = p?.Match,
+        mode = p?.Mode,
+        applied = p is null ? null : new
+        {
+            stapmW = p.Applied.StapmW,
+            frameCapFps = p.Applied.FrameCapFps,
+            fanMode = p.Applied.FanMode,
+            gpu = new { antiLag = p.Applied.AntiLag, chill = p.Applied.Chill },
+        },
+        skipped = p?.Skipped.Select(s => new { field = s.Field, reason = s.Reason }).ToArray() ?? [],
+        freeze = p?.Freeze ?? [],
+        sinceUtc = p?.SinceUtc,
+    });
 });
 
 app.MapDelete("/app-rules/{id:guid}", (Guid id, IAppRuleStore rules) =>
@@ -1537,13 +1590,14 @@ app.MapPost("/power-source", (PowerSourceRequest r, PowerSourceState s) =>
 // GPDFORGE_ENABLE_FAN_CONTROL=1 AND a matched board) — see core/Fan/FanWorker.cs for the 1 s loop that
 // applies this, and core/Fan/GpdFanController.cs for the write path itself.
 app.MapGet("/fan", (FanState f, IGpdFanController controller) => Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available }));
-app.MapPost("/fan", (FanRequest r, FanState f, FanPreferenceStore store, IGpdFanController controller, ILogger<FanState> log) =>
+app.MapPost("/fan", (FanRequest r, FanState f, FanPreferenceStore store, FanOverride gameFan, IGpdFanController controller, ILogger<FanState> log) =>
 {
     if (r.Mode is not null && !FanControlPolicy.IsValidMode(r.Mode))
         return Results.BadRequest(new { error = new { code = "bad_mode", message = "mode must be one of Auto, Quiet, Balanced, Aggressive, Manual" } });
-    if (r.Mode is not null) f.Mode = r.Mode;
+    // Picking a mode mid-game takes the fan from the game profile: it stays after the game.
+    if (r.Mode is not null) { gameFan.Release(); f.Mode = r.Mode; }
     if (r.ManualDuty is int d) f.ManualDuty = Math.Clamp(d, 0, 255);
-    SaveFanPreference(store, f, log);
+    SaveFanPreference(store, f, gameFan, log);
     return Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available });
 });
 
@@ -1848,7 +1902,7 @@ app.MapGet("/health/check", async (ITelemetrySource t, SessionForegroundApp fore
 // (no new persistence layer). Import is tolerant — each section applies only if present, unknown
 // JSON fields are ignored by the default deserializer, and every value still goes through the same
 // clamping/merge the section's own POST endpoint uses.
-app.MapGet("/settings/export", (GuardianService guardian, FanState fan, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
+app.MapGet("/settings/export", (GuardianService guardian, FanState fan, FanOverride gameFan, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
     Results.Json(new
     {
         modePresets = ModeProfiles.Map.ToDictionary(k => k.Key, v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC }),
@@ -1859,13 +1913,13 @@ app.MapGet("/settings/export", (GuardianService guardian, FanState fan, DisplayS
             throttleFloorW = guardian.Config.ThrottleFloorW, batteryLowPct = guardian.Config.BatteryLowPct,
             batteryCriticalPct = guardian.Config.BatteryCriticalPct,
         },
-        fanMode = fan.Mode,
+        fanMode = gameFan.PersistableMode(fan),   // a backup holds the user's fan, not a game's
         brightness = display.GetBrightness(),
         powerSource = new { enabled = powerSource.Config.Enabled, onBatteryMode = powerSource.Config.OnBatteryMode, onAcMode = powerSource.Config.OnAcMode },
         autoFps = new { enabled = autoFps.Enabled, targetFps = autoFps.TargetFps },
     }));
 
-app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, FanPreferenceStore fanStore, ILogger<FanState> fanLog, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
+app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, FanPreferenceStore fanStore, FanOverride gameFan, ILogger<FanState> fanLog, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
 {
     var applied = new List<string>();
 
@@ -1895,8 +1949,9 @@ app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guar
     }
     if (FanControlPolicy.IsValidMode(req.FanMode))
     {
+        gameFan.Release();
         fan.Mode = req.FanMode!;
-        SaveFanPreference(fanStore, fan, fanLog);
+        SaveFanPreference(fanStore, fan, gameFan, fanLog);
         applied.Add("fanMode");
     }
     if (req.Brightness is int level) { display.SetBrightness(level); applied.Add("brightness"); }
@@ -1931,14 +1986,21 @@ app.Run();
 // has to be able to say "these are stored but nothing is applying them" when the gate is closed.
 // A preference that cannot be saved still applies for this run; it is logged, never thrown, so a
 // read-only data directory degrades to yesterday's behaviour instead of failing the request.
-static void SaveFanPreference(FanPreferenceStore store, FanState f, ILogger log)
+static void SaveFanPreference(FanPreferenceStore store, FanState f, FanOverride gameFan, ILogger log)
 {
-    try { store.Write(new FanPreference(f.Mode, f.ManualDuty)); }
+    // The user's mode, not a game profile's that happens to hold the fan right now (F1): a duty-only
+    // POST /fan mid-game must not save "Aggressive" as the global preference.
+    try { store.Write(new FanPreference(gameFan.PersistableMode(f), f.ManualDuty)); }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
     {
         log.LogWarning(ex, "Fan preference {Mode} applies now but could not be saved; it will not survive a restart.", f.Mode);
     }
 }
+
+// 400 { error, code }: the sentence the UI shows verbatim, and a stable code beside it.
+static IResult RuleRejected(string code, string message) => Results.BadRequest(new { error = message, code });
+static IResult RuleRejectedFrom(ArgumentException ex) =>
+    RuleRejected(ex is AppRuleRejectedException r ? r.Code : "bad_rule", ex.Message);
 
 static object RulesPayload(IAppRuleStore rules, bool autoProfilesEnabled) => new
 {
@@ -1959,7 +2021,9 @@ namespace GpdForge.Api
     /// <summary>Body of POST/PUT /app-rules. Nullable so a malformed body reaches
     /// <c>AppRulePolicy.Validate</c> and comes back as a sentence the user can act on, rather than as
     /// a model-binding failure.</summary>
-    public sealed record AppRuleEdit(string? Match, string? Mode, bool? Enabled);
+    /// <para><c>Overrides</c> is kept raw (F1): an absent key must stay distinguishable from null, and a
+    /// wrong type must come back as a coded 400 — RuleOverridesJson reads it.</para>
+    public sealed record AppRuleEdit(string? Match, string? Mode, bool? Enabled, System.Text.Json.JsonElement Overrides = default);
 
     /// <summary>Body of POST /app-rules/{id}/move. Negative moves the rule towards higher precedence.</summary>
     public sealed record AppRuleMove(int Delta);

@@ -51,6 +51,20 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Per-game profiles, in the daemon.** A rule in `/app-rules` can now carry `overrides` —
+  `stapmW` (5–40 W), `frameCapFps` (`0` = cap off), `fanMode` (Auto / Quiet / Balanced /
+  Aggressive), `gpu { antiLag, chill }` and `freeze` — and while that game is settled in front, in
+  the rule's mode, the auto-profile worker layers them over the mode: the watts through the same
+  intent the manual override uses (one write, owner `game-profile`, kept by the 30 s reassert and
+  put back after a guardian throttle), the cap and Radeon features through the GPU agent's desired
+  state, the fan through `FanState`. Leaving the game (after the same ~4.5 s hysteresis as a mode
+  switch) puts the previous cap, fan and Radeon profile back; a cap or fan the user changed
+  mid-game stays theirs. The game's fan mode is never saved to `fan.json`. Steam → Elden Ring
+  applies the profile even though both are `gaming`. `GET /profiles/active` says which profile is
+  in force, what it applied and what it refused and why (a cap below the auto-FPS target, say).
+  `freeze` is stored only until F5 acts on it. Older `app-rules.json` files load unchanged; an
+  out-of-band value in a hand-edited file is repaired instead of costing the rule. The Games page
+  and the overlay's "save as this game's profile" button are the next step.
 - **The active mode's TDP is applied when the daemon starts.** It used to wait for the first mode
   change, so after a reboot the machine ran on whatever the last writer or the firmware had left
   while the app named a mode that was not in force. It yields to MotionAssistant / GPD Tool exactly
@@ -81,6 +95,15 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **Picking a mode no longer lifts a hot device out of a guardian throttle.** `POST /mode` (and an
+  auto-profile switch) wrote the mode's preset even while the thermal guardian held a lower ceiling,
+  and the guardian re-asserted it only up to 30 s later. The apply now reports `HeldByGuardian` and
+  writes nothing; the ceiling, computed under the new mode, stays, and the mode's TDP comes back when
+  the throttle clears.
+- **`/app-rules` refusals carry a `code`** beside the sentence the UI shows (`bad_rule`, or the
+  override field's code). A wrong JSON type is a coded 400 naming the field, not a framework error.
+- **`GET /fan`'s contract lists Quiet, Balanced and Aggressive.** `POST /fan` always accepted them and
+  `/panic` sets Aggressive, but the contract only allowed Auto / Manual / Curve.
 - **The E2E suite no longer fails a random handful of tests one run in three.** The cause was not
   the mock, the UI or the tests: on the dev handheld, Windows stops completing *new* connections to
   127.0.0.1 — every listener at once, for 10–35 s — after a burst of roughly a thousand of them, and

@@ -12,7 +12,11 @@ public sealed class FocusProfileEngine
     private string? _candidate;
     private int _candidateTicks;
 
-    public FocusProfileEngine(string initial = "windows", IModeResolver? rules = null, int stabilityTicks = 3)
+    /// <summary>Ticks a new target must hold before it wins (~4.5 s at the worker's 1.5 s). The focus
+    /// loop settles a rule's game profile on the same count, so the two move together.</summary>
+    public const int DefaultStabilityTicks = 3;
+
+    public FocusProfileEngine(string initial = "windows", IModeResolver? rules = null, int stabilityTicks = DefaultStabilityTicks)
     {
         _active = initial;
         _rules = rules ?? ModeRules.Default();

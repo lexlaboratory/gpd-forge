@@ -24,6 +24,26 @@ public sealed class GpuDesiredState
     private int? _frameCapFps;
     private bool _requested;
     private DateTimeOffset? _requestedAtUtc;
+    private long _capVersion;
+    private bool? _antiLag;
+    private bool? _chill;
+
+    /// <summary>Rises on every cap request. A game profile restores its predecessor's cap only if
+    /// this is still the value its own request left — otherwise someone asked for a cap since (the
+    /// user, a mode), and that request is newer than the one being undone.</summary>
+    public long CapVersion { get { lock (_gate) return _capVersion; } }
+
+    /// <summary>A game profile's Anti-Lag / Chill, layered over the mode's Radeon profile by the agent
+    /// (GpuFeatureOverride). Null = the mode decides. Independent of <see cref="Requested"/>, which is
+    /// about the cap only.</summary>
+    public bool? AntiLag { get { lock (_gate) return _antiLag; } }
+
+    public bool? Chill { get { lock (_gate) return _chill; } }
+
+    public void RequestFeatures(bool? antiLag, bool? chill)
+    {
+        lock (_gate) { _antiLag = antiLag; _chill = chill; }
+    }
 
     /// <summary>Whether anything has ever been asked for. Until then the agent must leave the GPU
     /// alone — starting the daemon is not a reason to change someone's Adrenalin settings.</summary>
@@ -41,6 +61,7 @@ public sealed class GpuDesiredState
             _frameCapFps = fps;
             _requested = true;
             _requestedAtUtc = now;
+            _capVersion++;
         }
     }
 

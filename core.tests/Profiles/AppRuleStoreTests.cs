@@ -218,6 +218,125 @@ public sealed class AppRuleStoreTests
         Assert.Equal("windows", engine.Tick("explorer.exe", acConnected: true));
     }
 
+    // --- per-game overrides (F1) ----------------------------------------------------------------
+
+    private static readonly RuleOverrides EldenRing =
+        new(22, 60, "Aggressive", new GpuOverrides(AntiLag: true), ["discord"]);
+
+    [Fact]
+    public void Overrides_survive_a_reload()
+    {
+        using var temp = new TempDir();
+        var added = new AppRuleStore(temp.Path, seedDefaults: false).Add("eldenring", "gaming", true, EldenRing);
+
+        var found = new AppRuleStore(temp.Path, seedDefaults: false).List().Single(r => r.Id == added.Id);
+        Assert.Equal(EldenRing, found.Overrides);
+    }
+
+    [Fact]
+    public void A_file_written_before_overrides_existed_loads_with_none_and_is_not_rewritten()
+    {
+        // The exact shape the daemon wrote until F1 (PascalCase, four fields). Loading it must neither
+        // drop the rules nor invent overrides, and must not rewrite a file that was already valid.
+        using var temp = new TempDir();
+        var path = Path.Combine(temp.Path, FileName);
+        var legacy = """
+        [
+          {
+            "Id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+            "Match": "steam",
+            "Mode": "gaming",
+            "Enabled": true
+          }
+        ]
+        """;
+        File.WriteAllText(path, legacy);
+
+        var rule = new AppRuleStore(temp.Path).List().Single();
+
+        Assert.Equal("steam", rule.Match);
+        Assert.Null(rule.Overrides);
+        Assert.Equal(legacy, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void Unknown_fields_in_the_file_are_ignored_rather_than_quarantining_it()
+    {
+        // A newer build's field (F4's RSR, say) read by this one after a downgrade.
+        using var temp = new TempDir();
+        File.WriteAllText(Path.Combine(temp.Path, FileName), """
+        [ { "Match": "game", "Mode": "gaming", "Future": 1,
+            "Overrides": { "StapmW": 20, "Rsr": true, "Gpu": { "Chill": false, "Boost": true } } } ]
+        """);
+
+        var rule = new AppRuleStore(temp.Path).List().Single();
+
+        Assert.Empty(Directory.GetFiles(temp.Path, FileName + ".corrupt-*"));
+        Assert.Equal(20, rule.Overrides!.StapmW);
+        Assert.Equal(false, rule.Overrides.Gpu!.Chill);
+    }
+
+    [Fact]
+    public void Out_of_range_overrides_in_the_file_are_repaired_and_the_repair_is_saved()
+    {
+        using var temp = new TempDir();
+        var path = Path.Combine(temp.Path, FileName);
+        File.WriteAllText(path, """
+        [ { "Match": "game", "Mode": "gaming", "Overrides": { "StapmW": 90, "FanMode": "Turbo" } } ]
+        """);
+
+        var rule = new AppRuleStore(temp.Path).List().Single();
+
+        Assert.Equal(40, rule.Overrides!.StapmW);
+        Assert.Null(rule.Overrides.FanMode);
+        Assert.Equal(40, new AppRuleStore(temp.Path).List().Single().Overrides!.StapmW);
+        Assert.DoesNotContain("Turbo", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void A_type_error_in_the_overrides_still_quarantines_the_file_as_before()
+    {
+        using var temp = new TempDir();
+        File.WriteAllText(Path.Combine(temp.Path, FileName), """
+        [ { "Match": "game", "Mode": "gaming", "Overrides": { "StapmW": "lots" } } ]
+        """);
+
+        var store = new AppRuleStore(temp.Path);
+
+        Assert.Single(Directory.GetFiles(temp.Path, FileName + ".corrupt-*"));
+        Assert.Equal("gaming", store.ModeFor("steam"));   // seeded defaults came back
+    }
+
+    [Fact]
+    public void Update_without_overrides_keeps_them_and_the_overload_replaces_them()
+    {
+        // The Profiles page toggles `enabled` with a PUT that carries only match/mode/enabled; that
+        // must not wipe a game profile the user built elsewhere.
+        using var temp = new TempDir();
+        var store = new AppRuleStore(temp.Path, seedDefaults: false);
+        var rule = store.Add("eldenring", "gaming", true, EldenRing);
+
+        Assert.Equal(EldenRing, store.Update(rule.Id, "eldenring", "gaming", enabled: false).Overrides);
+        Assert.Null(store.Update(rule.Id, "eldenring", "gaming", true, overrides: null).Overrides);
+        Assert.Equal(20, store.Update(rule.Id, "eldenring", "gaming", true, new RuleOverrides(StapmW: 20)).Overrides!.StapmW);
+    }
+
+    [Fact]
+    public void Invalid_overrides_are_rejected_with_their_code_and_nothing_is_written()
+    {
+        using var temp = new TempDir();
+        var store = new AppRuleStore(temp.Path, seedDefaults: false);
+        var rule = store.Add("game", "gaming");
+        var before = File.ReadAllText(Path.Combine(temp.Path, FileName));
+
+        var add = Assert.Throws<AppRuleRejectedException>(() => store.Add("other", "gaming", true, new RuleOverrides(StapmW: 3)));
+        var put = Assert.Throws<AppRuleRejectedException>(() => store.Update(rule.Id, "game", "gaming", true, new RuleOverrides(FanMode: "Manual")));
+
+        Assert.Equal("bad_stapm", add.Code);
+        Assert.Equal("bad_fan_mode", put.Code);
+        Assert.Equal(before, File.ReadAllText(Path.Combine(temp.Path, FileName)));
+    }
+
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gpd-rules-" + Guid.NewGuid().ToString("N"));

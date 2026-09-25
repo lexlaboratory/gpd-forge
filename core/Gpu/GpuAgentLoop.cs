@@ -94,7 +94,8 @@ public static class GpuAgentLoop
         // agent that never started.
         AdlxSettings? settings = probe.Status == AdlxStatus.Ready ? new AdlxSettings(adlx.System, logger) : null;
 
-        string? lastAppliedMode = null;
+        // Mode plus a game profile's Anti-Lag / Chill (F1): the profile is re-applied when either moves.
+        string? lastAppliedKey = null;
         int? lastAppliedCap = null;
         var capEverApplied = false;
 
@@ -120,24 +121,27 @@ public static class GpuAgentLoop
                 if (settings is not null)
                 {
                     var mode = await ReadActiveModeAsync(http, ct);
-                    if (mode is not null && mode != lastAppliedMode)
+                    // Read before the profile now: a game's Anti-Lag / Chill is part of what to apply.
+                    // Unreadable desired state means "no game opinion", never "turn them off".
+                    var desired = await ReadDesiredAsync(http, ct);
+                    var key = mode is null ? null : GpuFeatureOverride.Key(mode, desired?.AntiLag, desired?.Chill);
+                    if (mode is not null && key != lastAppliedKey)
                     {
-                        var profile = GpuModeProfiles.For(mode);
+                        var profile = GpuFeatureOverride.Merge(GpuModeProfiles.For(mode), desired?.AntiLag, desired?.Chill);
                         if (profile is not null && profile.Conflict is null)
                         {
                             var applied = settings.Apply(profile);
                             foreach (var (feature, ok) in applied)
-                                Console.WriteLine($"  {mode}: {feature} -> {(ok ? "applied" : "NOT applied")}");
+                                Console.WriteLine($"  {profile.Name}: {feature} -> {(ok ? "applied" : "NOT applied")}");
                         }
                         // Recorded even when the mode had no profile, so an unmapped mode does not
                         // make every subsequent tick retry the same nothing.
-                        lastAppliedMode = mode;
+                        lastAppliedKey = key;
                     }
 
                     // Reconcile the frame cap towards what the daemon wants. Desired state, not
                     // commands: an agent that missed ten ticks or restarted converges on the same
                     // result instead of replaying a queue.
-                    var desired = await ReadDesiredAsync(http, ct);
                     if (desired is { Requested: true } && (!capEverApplied || desired.FrameCapFps != lastAppliedCap))
                     {
                         var (ok, detail) = settings.SetFrameRateCapDetailed(desired.FrameCapFps);
@@ -187,12 +191,16 @@ public static class GpuAgentLoop
             if (root.TryGetProperty("frameCapFps", out var f) && f.ValueKind == JsonValueKind.Number)
                 cap = f.GetInt32();
 
-            return new DesiredGpuState(requested.GetBoolean(), cap);
+            // Absent on a daemon older than F1, which reads as "no game opinion".
+            return new DesiredGpuState(requested.GetBoolean(), cap, Bool(root, "antiLag"), Bool(root, "chill"));
         }
         catch (JsonException) { return null; }
     }
 
-    private sealed record DesiredGpuState(bool Requested, int? FrameCapFps);
+    private static bool? Bool(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
+
+    private sealed record DesiredGpuState(bool Requested, int? FrameCapFps, bool? AntiLag, bool? Chill);
 
     private static async Task<string?> ReadActiveModeAsync(HttpClient http, CancellationToken ct)
     {

@@ -73,6 +73,58 @@ function validateRule(match, mode, existing, excludingId) {
   return null
 }
 
+// Per-game overrides (F1). Mirrors core/Profiles/RuleOverridesJson.cs + RuleOverridesPolicy.cs: the
+// same codes, the same bands, absent vs null kept apart. Returns { present, value, error } where
+// error is { code, message } or null.
+const FAN_OVERRIDE_MODES = ['Auto', 'Quiet', 'Balanced', 'Aggressive']
+const MAX_FREEZE = 32
+const isInt = (v) => typeof v === 'number' && Number.isInteger(v)
+const nothing = (v) => v === undefined || v === null
+const isProcessName = (p) =>
+  typeof p === 'string' && p.trim().length > 0 && p.trim().length <= 260 && !/[\\/:]/.test(p) && !/[\x00-\x1f]/.test(p)
+function parseOverrides(body) {
+  if (!body || !('overrides' in body)) return { present: false, value: null, error: null }
+  const o = body.overrides
+  const fail = (code, message) => ({ present: true, value: null, error: { code, message } })
+  if (o === null) return { present: true, value: null, error: null }
+  if (typeof o !== 'object' || Array.isArray(o)) return fail('bad_overrides', 'overrides must be an object or null.')
+  if (!nothing(o.stapmW) && !isInt(o.stapmW)) return fail('bad_stapm', 'stapmW must be a whole number of watts or null.')
+  if (!nothing(o.frameCapFps) && !isInt(o.frameCapFps)) return fail('bad_frame_cap', 'frameCapFps must be a whole number or null.')
+  if (!nothing(o.fanMode) && typeof o.fanMode !== 'string') return fail('bad_fan_mode', 'fanMode must be a string or null.')
+  const gpu = o.gpu
+  if (!nothing(gpu) && (typeof gpu !== 'object' || Array.isArray(gpu)
+      || (!nothing(gpu.antiLag) && typeof gpu.antiLag !== 'boolean') || (!nothing(gpu.chill) && typeof gpu.chill !== 'boolean')))
+    return fail('bad_gpu', 'gpu must be an object with boolean-or-null antiLag and chill.')
+  if (!nothing(o.freeze) && (!Array.isArray(o.freeze) || o.freeze.some((f) => typeof f !== 'string')))
+    return fail('bad_freeze', 'freeze must be an array of process names or null.')
+
+  if (isInt(o.stapmW) && (o.stapmW < TDP_MIN || o.stapmW > TDP_MAX))
+    return fail('bad_stapm', `stapmW must be between ${TDP_MIN} and ${TDP_MAX} W.`)
+  if (isInt(o.frameCapFps) && o.frameCapFps !== 0 && (o.frameCapFps < 0 || o.frameCapFps > 1000))
+    return fail('bad_frame_cap', 'frameCapFps must be 0 (cap off) or a frame rate.')
+  if (typeof o.fanMode === 'string' && !FAN_OVERRIDE_MODES.includes(o.fanMode))
+    return fail('bad_fan_mode', `fanMode must be one of ${FAN_OVERRIDE_MODES.join(', ')}.`)
+  if (gpu && gpu.antiLag === true && gpu.chill === true)
+    return fail('bad_gpu', "Radeon Chill cannot be on together with Anti-Lag; AMD's driver refuses the pair.")
+  if (Array.isArray(o.freeze) && o.freeze.length > MAX_FREEZE) return fail('bad_freeze', `freeze holds at most ${MAX_FREEZE} process names.`)
+  if (Array.isArray(o.freeze) && o.freeze.some((f) => !isProcessName(f)))
+    return fail('bad_freeze', 'freeze entries must be bare process names (no paths).')
+
+  // Normalised like RuleOverridesPolicy.Normalize: freeze canonicalised and de-duplicated, an empty
+  // gpu block dropped, nothing-at-all collapsed to null.
+  const freeze = Array.isArray(o.freeze) ? [...new Set(o.freeze.map(normalizeMatch).filter(Boolean))] : []
+  const g = gpu && (!nothing(gpu.antiLag) || !nothing(gpu.chill)) ? { antiLag: gpu.antiLag ?? null, chill: gpu.chill ?? null } : null
+  const value = {
+    stapmW: isInt(o.stapmW) ? o.stapmW : null,
+    frameCapFps: isInt(o.frameCapFps) ? o.frameCapFps : null,
+    fanMode: o.fanMode ?? null,
+    gpu: g,
+    freeze: freeze.length ? freeze : null,
+  }
+  const empty = value.stapmW === null && value.frameCapFps === null && value.fanMode === null && !g && !value.freeze
+  return { present: true, value: empty ? null : value, error: null }
+}
+
 // --- play sessions (mirrors core/Sessions/) -------------------------------------------------------
 /** A plausible frame-rate trend: a slow drift around the session's average with a couple of dips,
  *  deterministic so repeated reads (and screenshots) are stable. */
@@ -159,7 +211,7 @@ const state = {
   // Per-app profile rules — seeded from the SAME default ruleset the real daemon flattens on a fresh
   // install (core/Profiles/ModeRules.DefaultRuleSet), in the same precedence order.
   appRules: DEFAULT_APP_RULES.flatMap(([mode, needles]) =>
-    needles.map((match) => ({ id: `rule-${++ruleSeq}`, match, mode, enabled: true }))),
+    needles.map((match) => ({ id: `rule-${++ruleSeq}`, match, mode, enabled: true, overrides: null }))),
   // Play sessions, newest first. Deliberately covers all three shapes the UI must render honestly:
   // a full battery run, a plugged-in run whose battery fields are null, and a run the frame probe
   // never produced a reading for (fpsAvg/fps1PctLow/fpsMax null, fpsTrend []).
@@ -813,6 +865,14 @@ async function handle(req, res) {
   }
 
   if (method === 'GET' && path === '/profiles') return send(res, 200, state.presets)
+  // The game profile in force (F1). The mock has no focus loop, so — like the daemon with
+  // auto-profiles off or right after a restart — nothing is active.
+  if (method === 'GET' && path === '/profiles/active') {
+    return send(res, 200, {
+      active: false, game: null, ruleId: null, match: null, mode: null,
+      applied: null, skipped: [], freeze: [], sinceUtc: null,
+    })
+  }
   if (method === 'POST' && path.startsWith('/profiles/')) {
     const mode = path.slice('/profiles/'.length)
     const body = await readBody(req)
@@ -829,15 +889,19 @@ async function handle(req, res) {
   }
   // --- per-app profile rules -----------------------------------------------------------------
   // Prefix is /app-rules, NOT /profiles/rules: POST /profiles/:mode above already owns that space.
-  // A rejected rule answers 400 { error: "<sentence>" } — the bare `error` string of core/Program.cs,
-  // not this file's { error: { code, message } } shape — because that sentence is what the user sees.
+  // A rejected rule answers 400 { error: "<sentence>", code } — the bare `error` string of
+  // core/Program.cs, not this file's { error: { code, message } } shape — because that sentence is
+  // what the user sees. `code` rides beside it since F1 (bad_rule, bad_stapm, bad_frame_cap, ...).
   if (method === 'GET' && path === '/app-rules') return send(res, 200, appRulesInfo())
   if (method === 'POST' && path === '/app-rules') {
     const body = await readBody(req)
+    const overrides = parseOverrides(body)
+    if (overrides.error) return send(res, 400, { error: overrides.error.message, code: overrides.error.code })
     const error = validateRule(body?.match, body?.mode, state.appRules, null)
-    if (error) return send(res, 400, { error })
+    if (error) return send(res, 400, { error, code: 'bad_rule' })
     state.appRules.push({
       id: `rule-${++ruleSeq}`, match: normalizeMatch(body.match), mode: body.mode, enabled: body.enabled !== false,
+      overrides: overrides.value,
     })
     return send(res, 200, appRulesInfo())
   }
@@ -858,11 +922,15 @@ async function handle(req, res) {
     const rule = state.appRules.find((r) => r.id === id)
     if (!rule) return send(res, 404, { error: 'That rule no longer exists.' })
     const body = await readBody(req)
+    const overrides = parseOverrides(body)
+    if (overrides.error) return send(res, 400, { error: overrides.error.message, code: overrides.error.code })
     const error = validateRule(body?.match, body?.mode, state.appRules, id)
-    if (error) return send(res, 400, { error })
+    if (error) return send(res, 400, { error, code: 'bad_rule' })
     rule.match = normalizeMatch(body.match)
     rule.mode = body.mode
     rule.enabled = body.enabled !== false
+    // Absent keeps the game profile (the Profiles page's enable toggle never sends it); null clears.
+    if (overrides.present) rule.overrides = overrides.value
     return send(res, 200, appRulesInfo())
   }
   if (method === 'DELETE' && path.startsWith('/app-rules/')) {
@@ -1046,7 +1114,10 @@ async function handle(req, res) {
     return send(res, 200, { process: null, source: 'local', ageMs: null })
   }
   if (method === 'GET' && path === '/gpu/desired') {
-    return send(res, 200, { requested: state.gpu.capRequested, frameCapFps: state.gpu.frameCapFps, requestedAtUtc: null })
+    return send(res, 200, {
+      requested: state.gpu.capRequested, frameCapFps: state.gpu.frameCapFps, requestedAtUtc: null,
+      antiLag: null, chill: null, // a game profile's Radeon features (F1); none without a focus loop
+    })
   }
   // Mirrors the daemon: never claims applied:true, because the daemon cannot apply it either — the
   // user-session agent does, seconds later. A mock that answered "applied" would train the UI to

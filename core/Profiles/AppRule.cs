@@ -5,7 +5,9 @@
 namespace GpdForge.Profiles;
 
 /// <param name="Match">Normalized (lowercase, no ".exe") process-name fragment.</param>
-public sealed record AppRule(Guid Id, string Match, string Mode, bool Enabled);
+/// <param name="Overrides">Per-game settings layered over the mode while this rule's app is in front
+/// (F1, 2026-09-25); null for a rule that only picks a mode — every rule written before F1.</param>
+public sealed record AppRule(Guid Id, string Match, string Mode, bool Enabled, RuleOverrides? Overrides = null);
 
 /// <summary>
 /// The last resolution the focus worker performed. <see cref="RuleId"/> is null when no rule

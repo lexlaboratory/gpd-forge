@@ -117,10 +117,11 @@
       "method": "GET",
       "path": "/fan",
       "shape": {
-        "mode": { "type": "string", "oneOf": ["Auto", "Manual", "Curve"] },
+        "mode": { "type": "string", "oneOf": ["Auto", "Quiet", "Balanced", "Aggressive", "Manual", "Curve"] },
         "manualDuty": "number",
         "controllable": "boolean"
-      }
+      },
+      "$comment": "Quiet/Balanced/Aggressive added 2026-09-25 (F1). POST /fan has always accepted them (FanControlPolicy) and /panic sets Aggressive, so the old list failed the moment anyone picked one; a game profile now sets them automatically, which made the gap certain to bite."
     },
     {
       "method": "GET",
@@ -141,9 +142,34 @@
       "shape": {
         "rules": {
           "type": "array",
-          "items": { "id": "string", "match": "string", "mode": "string", "enabled": "boolean" }
+          "items": { "id": "string", "match": "string", "mode": "string", "enabled": "boolean", "overrides": "object|null" }
         }
-      }
+      },
+      "$comment": "`overrides` added in F1 (2026-09-25): per-game stapmW, frameCapFps, fanMode, gpu { antiLag, chill } and freeze, each nullable. Null for a rule that only picks a mode — every seeded rule."
+    },
+    {
+      "method": "GET",
+      "path": "/profiles/active",
+      "shape": {
+        "active": "boolean",
+        "game": "string|null",
+        "ruleId": "string|null",
+        "match": "string|null",
+        "mode": "string|null",
+        "applied": {
+          "type": "object|null",
+          "fields": {
+            "stapmW": "number|null",
+            "frameCapFps": "number|null",
+            "fanMode": "string|null",
+            "gpu": { "type": "object", "fields": { "antiLag": "boolean|null", "chill": "boolean|null" } }
+          }
+        },
+        "skipped": { "type": "array", "items": { "field": "string", "reason": "string" } },
+        "freeze": "array",
+        "sinceUtc": "string|null"
+      },
+      "$comment": "F1 (2026-09-25). The game profile in force, in memory: `active:false` with every field null after a restart and whenever auto-profiles are off. `applied` is what was actually layered; `skipped` what the rule asked for and was refused, with why; `freeze` is stored only until F5."
     },
     {
       "method": "GET",
@@ -274,7 +300,14 @@
     {
       "method": "GET",
       "path": "/gpu/desired",
-      "shape": { "requested": "boolean", "frameCapFps": "number|null", "requestedAtUtc": "string|null" }
+      "shape": {
+        "requested": "boolean",
+        "frameCapFps": "number|null",
+        "requestedAtUtc": "string|null",
+        "antiLag": "boolean|null",
+        "chill": "boolean|null"
+      },
+      "$comment": "antiLag/chill added in F1 (2026-09-25): a game profile's Radeon features, layered over the mode's by the agent. Null = the mode decides."
     },
     {
       "method": "GET",
