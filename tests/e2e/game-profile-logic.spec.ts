@@ -5,7 +5,7 @@
 // invisible in a screenshot — which rule a game actually lands on (first ENABLED substring match, as
 // core/Profiles/AppRulePolicy.Matches does it), where a new rule has to sit to win, and what the notice
 // says was applied.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import {
   normalizeMatch, displayName, governingRule, exactRule, profileState, describeOverrides, noticeText, noticeParts,
   profileKey, planSave, precedenceDelta, captureOverrides, toRuleFanMode, hasOverrides,
@@ -161,5 +161,30 @@ test.describe('game profile logic', () => {
     expect(capInForce(off, none)).toEqual({ supported: true, fps: 0 })
     // GET /gpu/desired failed: the driver's own answer still stands.
     expect(capInForce(on45, null)).toEqual({ supported: true, fps: 45 })
+  })
+
+  // F1 audit round 3: `requested` stays true for good once anything asked, and the agent applies a
+  // request only when its value changes — so a cap the user set in Adrenalin later is never corrected
+  // back. The device held 45 under a day-old request for 60 (2026-09-25), and the overlay showed and
+  // saved 60. A request counts only until a driver reading taken two agent ticks after it.
+  test('an old request the driver has since moved away from is history; the driver is the cap', () => {
+    const at = (iso: string, fps: number) => ({
+      available: true, lastReportUtc: iso,
+      settings: { antiLag: null, chill: null, boost: null, imageSharpening: null,
+        frameRateCap: { supported: true, enabled: true, value: fps } },
+    })
+    const req = (iso: string | null, fps: number | null) => ({ requested: true, frameCapFps: fps, requestedAtUtc: iso })
+
+    // The device's numbers: requested 60 on the 24th, the driver at 45 in a report from the 25th.
+    expect(capInForce(at('2026-09-25T13:22:28Z', 45), req('2026-09-24T23:21:02Z', 60))).toEqual({ supported: true, fps: 45 })
+    // A request newer than the reading (the agent reconciles a tick later) is still the cap in force.
+    expect(capInForce(at('2026-09-25T13:22:28Z', 45), req('2026-09-25T13:22:27Z', 60))).toEqual({ supported: true, fps: 60 })
+    // One tick after it is not enough: the agent posts its reading BEFORE it reconciles.
+    expect(capInForce(at('2026-09-25T13:22:30Z', 45), req('2026-09-25T13:22:27Z', 60))).toEqual({ supported: true, fps: 60 })
+    expect(capInForce(at('2026-09-25T13:22:33Z', 45), req('2026-09-25T13:22:27Z', 60))).toEqual({ supported: true, fps: 45 })
+    // No timestamps to compare: the request stands, as before.
+    expect(capInForce({ ...at('2026-09-25T13:22:28Z', 45), lastReportUtc: null }, req('2026-09-24T23:21:02Z', 60)))
+      .toEqual({ supported: true, fps: 60 })
+    expect(capInForce(at('2026-09-25T13:22:28Z', 45), req(null, 60))).toEqual({ supported: true, fps: 60 })
   })
 })

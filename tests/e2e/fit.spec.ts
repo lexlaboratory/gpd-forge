@@ -4,7 +4,7 @@
 // Menu opens in a 380px-wide window. Visual baselines catch a changed pixel but not a control
 // pushed off the edge, and the previous overlay did exactly that with large text: a fixed 23rem
 // panel became 402px in a 380px window. These checks are geometric, so they hold across re-skins.
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures'
 
 const PAGES = ['dashboard', 'power', 'fan', 'hardware', 'display', 'profiles', 'games', 'monitor',
   'sessions', 'system', 'settings', 'alerts'] as const

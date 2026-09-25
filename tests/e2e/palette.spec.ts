@@ -1,5 +1,5 @@
 // GPD Forge — command palette E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('Command palette', () => {
   test.beforeEach(async ({ page }) => {

@@ -1,5 +1,5 @@
 // GPD Forge — multi-page navigation E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Multi-page UI', () => {

@@ -4,7 +4,7 @@
 // invites the assumption "it stops charging at 80 %", and this board has no path to that. If the
 // card lets someone believe otherwise, they stop worrying about a pack that is still ageing — which
 // is a worse outcome than not shipping the feature at all.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Charge guard', () => {

@@ -1,7 +1,7 @@
 // GPD Forge — E2E against the local API (mock daemon). GPL-3.0-or-later.
 // Verifies the UI ↔ daemon contract from docs/api.md: live connection, mode round-trip,
 // and the honest TDP closed-loop (verified vs. reverted).
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Local API integration', () => {

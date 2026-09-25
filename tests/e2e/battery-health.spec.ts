@@ -3,7 +3,7 @@
 // The card's whole job is to be honest about a board that will not answer two of the four questions
 // anyone asks about a battery. So these tests are mostly about what it says when it does NOT know:
 // a blank row looks like a bug, and an invented number is worse than either.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Battery health', () => {

@@ -3,7 +3,7 @@
 // F1 (2026-09-25). The mock reports as active the profile of the rule claiming its fixed foreground
 // (`steam`, a seeded rule), so giving that rule overrides is how these tests make a profile "apply".
 // It is always cleared again: every other spec expects the seeded rule to carry none.
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext } from './fixtures'
 
 const API = 'http://127.0.0.1:8799'
 const PROFILE = { stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive' }

@@ -1,5 +1,5 @@
 // GPD Forge — Auto-tuner E2E (against the mock's simulated sweep). GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Auto-tuner', () => {

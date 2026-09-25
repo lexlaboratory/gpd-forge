@@ -1,5 +1,5 @@
 // GPD Forge — Agents/AI mode: anti-standby + sustained profile + VRAM/UMA advisory E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Agents / AI mode', () => {

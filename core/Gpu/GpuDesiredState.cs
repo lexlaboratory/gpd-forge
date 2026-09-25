@@ -53,6 +53,23 @@ public sealed class GpuDesiredState
 
     public DateTimeOffset? RequestedAtUtc { get { lock (_gate) return _requestedAtUtc; } }
 
+    /// <summary>
+    /// How long after a cap request the agent's reading can be relied on to include it: two agent
+    /// ticks (3 s each). The agent posts what the driver holds BEFORE it reconciles in the same tick,
+    /// so a report up to one tick after a request can still be the cap the request is replacing.
+    /// </summary>
+    public static readonly TimeSpan CapSettle = TimeSpan.FromSeconds(6);
+
+    /// <summary>
+    /// Whether a driver reading taken at <paramref name="reportAtUtc"/> supersedes a request made at
+    /// <paramref name="requestedAtUtc"/>. The agent applies a request once, when its value changes, and
+    /// never re-asserts it — so a cap the user sets in Adrenalin afterwards is what holds, and the
+    /// request is history. Measured on the device 2026-09-25: a 60 FPS request from the day before
+    /// against a driver at 45 (F1 audit round 3). Within the settle window the request is the truth.
+    /// </summary>
+    public static bool SupersededBy(DateTimeOffset? requestedAtUtc, DateTimeOffset reportAtUtc) =>
+        requestedAtUtc is DateTimeOffset at && reportAtUtc - at >= CapSettle;
+
     /// <summary>Record an intent. <paramref name="fps"/> null disables the cap.</summary>
     public void RequestFrameCap(int? fps, DateTimeOffset now)
     {

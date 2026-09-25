@@ -4,7 +4,7 @@
 // raised card is still readable at arm's length on a 6" panel; a contrast ratio can. Every pair
 // below is one the stylesheets actually draw, and each must reach 4.5:1 (AA for normal text) —
 // the eyebrow labels are 12px, so the large-text allowance does not apply.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 // A background that is not a token on its own (F1 audit round 1, 2026-09-25): `mix` is CSS
 // color-mix(in srgb, a p%, b) — the open game card's accent tint — and `over` is a translucent token

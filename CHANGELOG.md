@@ -117,6 +117,19 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **Leaving a game puts back the cap you set in Adrenalin, not an old one of ours.** The cap to
+  restore was GPD Forge's last request whenever there had ever been one; but the GPU agent applies a
+  request once and never re-asserts it, so a cap changed in Adrenalin afterwards stayed changed. On
+  the device a day-old 60 FPS request sat under a driver at 45, and leaving a 30 FPS game wrote 60.
+  A driver reading taken after the request had time to apply (two agent ticks) now wins.
+- **The overlay's cap row and "Save as profile" read the driver's cap, not a stale request.** The
+  same day-old request made the overlay show 60 FPS while the driver held 45, and saving stored 60
+  as the game's cap. A request counts only until the agent reports back after it.
+- **The E2E suite rides out loopback connect stalls.** On the dev handheld new connections to
+  127.0.0.1 fail for seconds at a time whatever the suite does — a probe logged them at ~30 suite
+  connections a run, disproving the earlier "the suite opens too many" diagnosis. The mock and the
+  preview server now keep idle sockets for the run, and a connect that fails before the request
+  left (API setup calls, `page.goto`) is retried for up to 40 s instead of failing a random test.
 - **"Save as profile for this game" no longer saves a profile for the overlay itself.** With a game
   that had no rule yet in front, opening the overlay (an Edge window) made the button name `msedge`,
   and pressing it wrote `msedge -> gaming` with the game's watts — applied to every browser from then

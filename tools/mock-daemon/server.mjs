@@ -1555,5 +1555,12 @@ const server = http.createServer(async (req, res) => {
 process.on('unhandledRejection', (e) => console.error('[gpd-forge mock] unhandled rejection:', e))
 process.on('uncaughtException', (e) => console.error('[gpd-forge mock] uncaught exception:', e))
 
+// Idle keep-alive sockets stay open for the whole run instead of Node's 5 s. On the dev handheld NEW
+// loopback connects fail for seconds at a time, whatever the suite does (tests/e2e/fixtures.ts has the
+// measurement, 2026-09-25); a client that can reuse an open socket never meets that window. With the
+// 5 s default the mock closed the request fixture's socket between tests, and the next setup call had
+// to connect again.
+server.keepAliveTimeout = 10 * 60_000
+
 attachDiagnostics(server, process.env.MOCK_LOG)
 server.listen(PORT, '127.0.0.1', () => console.log(`[gpd-forge mock] http://127.0.0.1:${PORT}`))

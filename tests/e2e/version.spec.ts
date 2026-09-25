@@ -4,7 +4,7 @@
 // nothing alarming may be shown) and disagreement (the case the card exists for). The mismatch is
 // produced by intercepting /version rather than by teaching the mock daemon to lie, so the mock keeps
 // exactly one honest behaviour and the test still exercises the real rendering path.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Version model', () => {

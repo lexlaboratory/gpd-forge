@@ -3,7 +3,7 @@
 // The audit found every interactive target under the 44px accessibility floor: steppers at 34px,
 // chips at 31px, the switch 22px tall — on a touchscreen handheld. Nothing enforced it, so nothing
 // stopped it happening again.
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures'
 
 const setDensity = (page: Page, density: 'pad' | 'mouse') =>
   page.evaluate((d) => { document.documentElement.dataset.density = d }, density)

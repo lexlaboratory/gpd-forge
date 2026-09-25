@@ -11,6 +11,9 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
+  // 60 s, not the default 30: a test that meets a loopback stall waits in fixtures.ts's retry for up
+  // to 40 s (RIDE_OUT_MS, longer than the 35 s worst stall measured) and must still have time to run.
+  timeout: 60_000,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
   expect: {
     toHaveScreenshot: {
@@ -31,13 +34,15 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    // One browser context per worker, reset between tests, instead of a fresh one per test. This is
-    // the fix for the suite's old "one run in three fails a random handful" flake, and it is about
-    // TCP, not about speed: a fresh context opens fresh sockets to the mock and the preview server —
-    // ~1,000 new loopback connections a run — and on the dev handheld Windows stops completing new
-    // connects to 127.0.0.1 for 10–35 s once that many have been opened in a couple of minutes
-    // (measured 2026-09-25 with a bare net.connect loop; see docs/ROADMAP.md). A reused context keeps
-    // its keep-alive sockets, and the run opens ~20. Playwright resets cookies, cache, localStorage,
+    // One browser context per worker, reset between tests, instead of a fresh one per test. On the dev
+    // handheld NEW connects to 127.0.0.1 fail for seconds at a time (Node: `connect ETIMEDOUT` after
+    // ~305 ms; Chromium: a page that never loads) while open sockets keep working — so every new
+    // connection a test needs is a chance to fail at random. A reused context keeps its keep-alive
+    // sockets, and so does the request fixture's agent now that the mock and the preview server keep
+    // idle sockets for the run. The stalls themselves are the host's: first blamed on the suite's own
+    // ~1,000 connects a run, but a connect probe (F1 audit round 3, 2026-09-25) logged them at ~30
+    // suite connects a run and after the suite had exited (tests/e2e/fixtures.ts, docs/ROADMAP.md).
+    // fixtures.ts retries the connects that remain. Playwright resets cookies, cache, localStorage,
     // routes and init scripts between tests; what it does NOT reset (granted permissions, offline
     // mode, extra headers, window.name) no spec here touches. connection-churn.spec.ts guards it.
     reuseContext: true,

@@ -1,5 +1,5 @@
 // GPD Forge — dashboard smoke E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Dashboard', () => {

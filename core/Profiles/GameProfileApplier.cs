@@ -270,14 +270,23 @@ public sealed class GameProfileApplier(
         return FrameRateGovernance.Conflict(autoFps.Enabled, autoFps.TargetFps, cap);
     }
 
-    /// <summary>The cap to go back to: the last one requested, else what the driver reported before the
-    /// game (the user's own Adrenalin setting). Unknown when neither exists yet — Observe then reads it
-    /// from the agent's first report.</summary>
+    /// <summary>The cap to go back to: what the driver reported before the game (the user's own
+    /// Adrenalin setting), unless a request is newer than that reading — then the request, which the
+    /// agent is about to carry out. Unknown when neither exists yet — Observe then reads it from the
+    /// agent's first report.
+    ///
+    /// F1 audit round 3 (2026-09-25): this used to take any request over the driver. But the agent
+    /// applies a request only when its value changes, so a cap the user set in Adrenalin after it is
+    /// never corrected back; the device held 45 under a day-old request for 60, and leaving a game
+    /// wrote the 60 over the user's 45 (GpuDesiredState.SupersededBy).</summary>
     private (int? Cap, bool Unknown) PreviousCap(DateTimeOffset now)
     {
-        if (gpu.Requested) return (gpu.FrameCapFps, false);
         var (report, usable, _) = agent.Current(now);
-        return usable && report is not null ? (DriverCap(report), false) : (null, true);
+        bool driverIsNewer = usable && report is not null
+            && (!gpu.Requested || GpuDesiredState.SupersededBy(gpu.RequestedAtUtc, report.AtUtc));
+        if (driverIsNewer) return (DriverCap(report!), false);
+        // A request the agent has not reported back on yet, or a silent agent: the request stands.
+        return gpu.Requested ? (gpu.FrameCapFps, false) : (null, true);
     }
 
     private static int? DriverCap(GpuAgentReport report) =>

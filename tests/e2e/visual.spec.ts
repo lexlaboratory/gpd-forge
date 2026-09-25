@@ -29,7 +29,7 @@
 // that ships.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures'
 
 // Must match the VITE_FORGE_API baked into the preview build by playwright.config.ts — that is the
 // origin the UI fetches from, and therefore the one to intercept.

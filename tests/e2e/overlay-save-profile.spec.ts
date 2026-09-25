@@ -4,7 +4,7 @@
 // force: this captures them (TDP, frame cap, fan) into the game's rule in one press. The game is the
 // app presenting frames, else the app a rule decided on (`lastMatch.process` with a `ruleId`) — which
 // the mock fixes as `steam`, a seeded rule. That rule's overrides are cleared after every test.
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures'
 
 const API = 'http://127.0.0.1:8799'
 

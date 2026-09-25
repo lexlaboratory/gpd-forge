@@ -2,7 +2,7 @@
 //
 // Deliberately does NOT use DashboardPage.goto() (which pre-sets localStorage['forge-setup-done']
 // for every other spec) — these tests need the flag genuinely unset/set to exercise the wizard itself.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('First-run setup wizard', () => {
   test('appears on a clean install, walks through, and hides after finishing', async ({ page }) => {

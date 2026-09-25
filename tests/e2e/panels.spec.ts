@@ -1,5 +1,5 @@
 // GPD Forge — E2E for the mode panels (Jobs / Standby). GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Mode panels', () => {

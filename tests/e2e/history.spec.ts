@@ -1,5 +1,5 @@
 // GPD Forge — telemetry history + CSV export E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 // Mock daemon's fixed E2E port (see playwright.config.ts webServer) — the same origin the built UI

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('Alert center', () => {
   test('opens from navigation and shows an honest empty state', async ({ page }) => {

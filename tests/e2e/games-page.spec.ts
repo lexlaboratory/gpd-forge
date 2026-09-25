@@ -3,7 +3,7 @@
 // F1 (2026-09-25). Built against the mock daemon's play history (cyberpunk2077: two sessions, hades2:
 // one with no FPS reading) and its seeded rules, none of which claims either game. Every test that
 // writes a rule removes it again: the suite shares one mock, and visual.spec reads the same list.
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from './fixtures'
 
 const API = 'http://127.0.0.1:8799'
 type Rule = { id: string; match: string; mode: string; enabled: boolean; overrides: Record<string, unknown> | null }
@@ -25,6 +25,24 @@ async function openGames(page: Page, density: 'pad' | 'mouse' = 'mouse') {
   await page.goto('/#games')
   await expect(page.getByTestId('page-games')).toBeVisible()
   await expect(page.getByTestId('games-card-cyberpunk2077')).toBeVisible()
+}
+
+/** Open a game's sheet and wait for its LAST async part, the Recent sessions list: it renders
+ *  "Loading sessions..." first and grows ~34 px when GET /sessions answers. A layout read before that
+ *  measured the list above a sheet that then pushed it down — the 720x600 test failed in full runs with
+ *  785 > 751 and passed alone (F1 audit round 3, 2026-09-25). */
+async function openSheet(page: Page, game: string) {
+  await page.getByTestId(`games-card-${game}`).click()
+  await expect(page.getByTestId('game-recent')
+    .locator('.game-recent-list, [data-testid=game-recent-empty], [data-testid=game-recent-error]')).toBeVisible()
+}
+
+/** Both boxes from ONE layout: two separate boundingBox() awaits can straddle a reflow. */
+async function boxes(page: Page, ...testIds: string[]) {
+  return page.evaluate((ids) => ids.map((id) => {
+    const r = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect()
+    return { x: r.x, y: r.y, width: r.width, height: r.height }
+  }), testIds)
 }
 
 test.describe('Games page', () => {
@@ -203,9 +221,8 @@ test.describe('Games page layout', () => {
   test('side sheet beside the list at 1280x800', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await openGames(page)
-    await page.getByTestId('games-card-cyberpunk2077').click()
-    const list = (await page.getByTestId('games-list').boundingBox())!
-    const sheet = (await page.getByTestId('game-sheet').boundingBox())!
+    await openSheet(page, 'cyberpunk2077')
+    const [list, sheet] = await boxes(page, 'games-list', 'game-sheet')
     expect(sheet.x).toBeGreaterThanOrEqual(list.x + list.width - 1)
     expect(sheet.x + sheet.width).toBeLessThanOrEqual(1281)
 
@@ -221,9 +238,8 @@ test.describe('Games page layout', () => {
   test('full width, stacked above the list, at 720x600', async ({ page }) => {
     await page.setViewportSize({ width: 720, height: 600 })
     await openGames(page)
-    await page.getByTestId('games-card-cyberpunk2077').click()
-    const list = (await page.getByTestId('games-list').boundingBox())!
-    const sheet = (await page.getByTestId('game-sheet').boundingBox())!
+    await openSheet(page, 'cyberpunk2077')
+    const [list, sheet] = await boxes(page, 'games-list', 'game-sheet')
     expect(Math.abs(sheet.width - list.width)).toBeLessThanOrEqual(2)
     expect(sheet.y + sheet.height).toBeLessThanOrEqual(list.y + 1)
 

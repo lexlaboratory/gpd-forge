@@ -1,19 +1,18 @@
 // GPD Forge — the suite must not churn loopback TCP connections. GPL-3.0-or-later.
 //
-// Why this is a test and not a comment: on the dev handheld, Windows stops completing NEW connections
-// to 127.0.0.1 — every listener at once, for 10–35 s — once a process has opened roughly a thousand
-// of them in a couple of minutes. Established sockets keep working; only the SYN of a new one goes
-// unanswered, which Node reports as `connect ETIMEDOUT` after ~310 ms and Chromium as a page that
-// never finishes loading. Reproduced 2026-09-25 with a bare `net.connect` loop against a trivial
-// listener, no Playwright and no mock involved: bursts of 10 connects every 700 ms stalled at 130 s,
-// 5 connects/s for 5 min never did (docs/ROADMAP.md has the numbers).
+// Why this is a test and not a comment: on the dev handheld NEW connections to 127.0.0.1 fail for
+// seconds at a time — every listener at once — while established sockets keep working. Node reports
+// `connect ETIMEDOUT` after ~305 ms, Chromium a page that never finishes loading. Every new socket a
+// test needs is therefore a chance to fail at random, and the failure does not look like churn: it
+// looks like random tests timing out.
 //
-// With a fresh browser context per test, the suite opened ~600 sockets to the mock and ~400 to the
-// preview server per run — right on that threshold, which is why roughly one run in three failed a
-// different handful of tests. playwright.config.ts now reuses one context per worker, and the whole
-// run opens ~20. This spec reads the mock's own socket log and fails if that regresses, because the
-// failure it prevents does not look like churn: it looks like random tests timing out.
-import { test, expect } from '@playwright/test'
+// First diagnosed (2026-09-25) as the suite TRIGGERING the stall by opening ~1,000 connections a run.
+// F1 audit round 3 (same day) disproved that: a connect probe beside four full runs logged stalls at
+// ~30 suite connections a run, and after the suite had exited (tests/e2e/fixtures.ts has the numbers).
+// The stall is the host's. What still holds is the exposure: fewer new sockets, fewer chances. So the
+// context is reused (playwright.config.ts), the mock and the preview server keep idle sockets for the
+// run, and this spec reads the mock's own socket log and fails if the count regresses.
+import { test, expect } from './fixtures'
 import { existsSync, readFileSync } from 'node:fs'
 import { MOCK_LOG } from './mock-log'
 

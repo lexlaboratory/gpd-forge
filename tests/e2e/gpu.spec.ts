@@ -4,7 +4,7 @@
 // the panel renders nothing rather than a disabled row, so the test that protects that is the one
 // running against the mock's default. A greyed-out control that says "nearly working" is exactly
 // what this project spent a release deleting.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('AMD GPU profiles', () => {

@@ -8,7 +8,7 @@
 //
 // They need the mock's blind seam: the mock otherwise always produces numbers, so no other
 // spec in this suite ever renders the placeholder. A guard nobody can exercise is not a guard.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 // The blind mode is asked for PER REQUEST, via a query parameter the UI appends. It was a server

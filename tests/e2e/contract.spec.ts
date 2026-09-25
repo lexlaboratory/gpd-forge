@@ -10,7 +10,7 @@
 // contract, and THIS one catches the mock drifting from it. The second is what keeps the rest of the
 // E2E suite meaningful — every other spec in this directory talks to the mock, so if the mock is
 // wrong, all of them are confidently testing fiction.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 

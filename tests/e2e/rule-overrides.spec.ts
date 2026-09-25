@@ -4,7 +4,7 @@
 // real daemon; this pins the mock, so a Games page built against the mock cannot learn a contract the
 // daemon does not keep: absent `overrides` keeps them, null clears them, and a refusal answers
 // 400 { error: <sentence>, code } with the field's code.
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext } from './fixtures'
 
 const API = 'http://127.0.0.1:8799'
 

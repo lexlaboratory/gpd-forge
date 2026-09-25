@@ -1,5 +1,5 @@
 // GPD Forge — quality/onboarding E2E: system health check, panic cool, large-text a11y. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('System health & panic cool', () => {

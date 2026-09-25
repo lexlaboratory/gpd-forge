@@ -1,5 +1,5 @@
 // GPD Forge — new-feature E2E (auto-FPS, freezer, live charts). GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Features', () => {

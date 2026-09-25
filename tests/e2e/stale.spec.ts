@@ -7,7 +7,7 @@
 //
 // The mock's `_test_stale_ms` seam is asked for PER REQUEST, like unmeasured.spec's blind mode, so no
 // state outlives the test that wanted it.
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 const staleRoute = async (page: Page, ms: number) => {

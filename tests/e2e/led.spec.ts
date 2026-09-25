@@ -1,5 +1,5 @@
 // GPD Forge — advanced hardware-gated controls: LED/RGB E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 test.describe('Advanced hardware — LED', () => {

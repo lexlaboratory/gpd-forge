@@ -2,7 +2,7 @@
 //
 // On the handheld the sidebar is 12 entries tall (11 before the Games page); reaching Alerts from the Dashboard took ten
 // D-pad presses and a confirm. The shoulder buttons now step through the sections, wrapping.
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures'
 
 /** A fake standard-mapping gamepad whose buttons the test can hold and release. */
 async function installFakePad(page: Page) {

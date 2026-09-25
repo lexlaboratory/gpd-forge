@@ -60,7 +60,8 @@ function closeOverlay() {
   window.close()
 }
 
-/** The driver cap in force now (capInForce): the daemon's request, else the driver's own. A failed read
+/** The driver cap in force now (capInForce): the daemon's request while the agent has not carried it
+ *  out yet, else the driver's own (a later Adrenalin change included). A failed read
  *  is an unknown, not a refusal — the caller decides what unknown means for it. */
 const readCap = () =>
   Promise.all([getGpu().catch(() => null), getGpuDesired().catch(() => null)]).then(([g, d]) => capInForce(g, d))

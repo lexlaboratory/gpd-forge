@@ -176,18 +176,39 @@ export function gameUnderOverlay(
  * `fps` null = it cannot be known right now: the agent has not reported, went stale, or the read
  * failed. Callers keep what they had rather than inventing "off".
  *
- * The daemon's request comes first (F1 audit round 2): a game profile or a pick in any window asks
- * GpuDesiredState, and the agent carries it out a tick (3 s) later — reading only the driver would
- * capture the cap from before. With nothing requested the driver's own (Adrenalin) cap is what holds.
+ * The daemon's request comes first while it is PENDING (F1 audit round 2): a game profile or a pick in
+ * any window asks GpuDesiredState, and the agent carries it out a tick (3 s) later — reading only the
+ * driver would capture the cap from before. With nothing requested the driver's own (Adrenalin) cap is
+ * what holds.
+ *
+ * Only while pending (F1 audit round 3, 2026-09-25): `requested` stays true for good once anything
+ * asked, and the agent applies a request only when its value changes, so a cap the user sets in
+ * Adrenalin afterwards is never corrected back. The device held 45 under a day-old request for 60, and
+ * the overlay showed — and saved — 60. A driver reading taken CAP_SETTLE_MS after the request
+ * supersedes it; the same rule as core/Gpu/GpuDesiredState.SupersededBy.
  */
 export function capInForce(
-  gpu: Pick<GpuInfo, 'available' | 'settings'> | null | undefined,
-  desired: Pick<GpuDesired, 'requested' | 'frameCapFps'> | null | undefined,
+  gpu: Pick<GpuInfo, 'available' | 'settings' | 'lastReportUtc'> | null | undefined,
+  desired: Pick<GpuDesired, 'requested' | 'frameCapFps'> & Partial<Pick<GpuDesired, 'requestedAtUtc'>> | null | undefined,
 ): { supported: boolean; fps: number | null } {
   const frtc = gpu?.available ? gpu.settings?.frameRateCap ?? null : null
   if (!frtc?.supported) return { supported: false, fps: null }
-  if (desired?.requested) return { supported: true, fps: desired.frameCapFps ?? 0 }
+  if (desired?.requested && !requestSuperseded(desired.requestedAtUtc, gpu?.lastReportUtc)) {
+    return { supported: true, fps: desired.frameCapFps ?? 0 }
+  }
   return { supported: true, fps: frtc.enabled ? frtc.value : 0 }
+}
+
+/** Two agent ticks (3 s each): the agent posts its reading BEFORE it reconciles in the same tick, so a
+ *  report up to one tick after a request can still show the cap that request replaces. */
+export const CAP_SETTLE_MS = 6_000
+
+/** Whether a driver reading at `reportAt` is newer than what a request at `requestedAt` could have
+ *  changed. Either timestamp missing or unparseable: not superseded — the request stands, as before. */
+function requestSuperseded(requestedAt: string | null | undefined, reportAt: string | null | undefined): boolean {
+  const req = requestedAt ? Date.parse(requestedAt) : NaN
+  const rep = reportAt ? Date.parse(reportAt) : NaN
+  return Number.isFinite(req) && Number.isFinite(rep) && rep - req >= CAP_SETTLE_MS
 }
 
 /** A fan mode a rule can hold. The live fan can be `Manual`; a profile cannot (RuleOverridesPolicy). */

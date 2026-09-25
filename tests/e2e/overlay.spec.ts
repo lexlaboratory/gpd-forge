@@ -1,5 +1,5 @@
 // GPD Forge — Quick Access Menu (overlay) E2E. GPL-3.0-or-later.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('Overlay (QAM)', () => {
   test.beforeEach(async ({ page }) => {

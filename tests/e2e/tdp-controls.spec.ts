@@ -5,7 +5,7 @@
 // while 12 W was in force. Errors were swallowed (`.catch(() => {})`), so a refused value left the
 // control on a number that was never applied. And the badge defaulted a null `tdpVerified` — nothing
 // written, nothing verified — to "verified". These pin all three (audit, 2026-09-24).
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
 const API = 'http://127.0.0.1:8799'
