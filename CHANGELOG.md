@@ -51,6 +51,14 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Processor power policy per mode (plan F4, roadmap H4).** Each mode now sets the CPU's energy
+  preference (EPP), boost mode and maximum state on the active Windows power scheme: gaming uses
+  efficient boost with EPP 33, so the 22-25 W budget is not spent on clock spikes the thermal limit
+  takes straight back; windows EPP 50; battery EPP 80 with boost off on battery; AI sustained. Values
+  are read back with `powercfg /q` and logged in `GET /audit`; `GET /power-policy` shows the plan and
+  what Windows holds. The values in place before the first change are saved and put back by
+  `install-gpd-forge.ps1 -Restore` / `-Uninstall`. Other power schemes are never touched. Writes only
+  with `GPDFORGE_ENABLE_HARDWARE=1`.
 - **Radeon Super Resolution and Image Sharpening (plan F4).** RSR (on/off and sharpness) is read
   and applied through ADLX, and Image Sharpening, until now read-only, can be applied too. Both can
   be set per game in the Games profile editor, and from a new "Radeon image" card on the Display

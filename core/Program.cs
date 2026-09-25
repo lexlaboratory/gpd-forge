@@ -12,6 +12,7 @@ using GpdForge.Fan;
 using GpdForge.Telemetry;
 using GpdForge.Broker;
 using GpdForge.Profiles;
+using GpdForge.Power;
 using GpdForge.Standby;
 using GpdForge.Hid;
 using GpdForge.Display;
@@ -196,6 +197,27 @@ if (args.Contains("--probe-gpu"))
 // not loaded" (2026-09-24). The 30 s reassert decides whether to write from this parse, so the real
 // table is worth having byte for byte. Run from an ELEVATED shell and paste the output into the fixture:
 //   dotnet GpdForge.Service.dll --probe-tdp
+// Processor power policy (plan F4 / roadmap H4). `--probe-power-policy` is read-only; the installer runs
+// `--restore-power-policy` on -Restore and -Uninstall to put back the EPP / boost / max-state values
+// captured before GPD Forge first wrote them. A CLI rather than a PowerShell copy of the logic so the
+// restore that ships is the one core.tests exercises.
+if (args.Contains("--probe-power-policy") || args.Contains("--restore-power-policy"))
+{
+    var policy = new PowerPolicyService(new SystemProcessRunner(), PowerPolicyPaths.Originals(DataRoot.Current));
+    if (args.Contains("--restore-power-policy"))
+    {
+        var (restored, detail) = await policy.RestoreAsync(CancellationToken.None);
+        Console.WriteLine(detail);
+        Environment.ExitCode = restored || !policy.OriginalsCaptured ? 0 : 1;
+        return;
+    }
+    var read = await policy.ReadAsync(CancellationToken.None);
+    Console.WriteLine($"GPD Forge processor power policy probe (read-only). Active scheme: {read.Scheme ?? "(unreadable)"}");
+    Console.WriteLine(read.Current is null ? $"  {read.Detail}" : $"  current: {PowerPolicyService.Describe(read.Current)}");
+    Console.WriteLine($"  originals recorded: {policy.OriginalsCaptured}");
+    return;
+}
+
 if (args.Contains("--probe-tdp"))
 {
     string ryzenPath = Environment.GetEnvironmentVariable("GPDFORGE_RYZENADJ")
@@ -661,6 +683,15 @@ builder.Services.AddSingleton<GpuAgentState>();
 // failure rather than a build one — this endpoint returned 500 until the host was actually started.
 builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
 builder.Services.AddSingleton<HibernateService>();
+// Processor power policy per mode (plan F4 / roadmap H4). The service is always there so GET
+// /power-policy can report what Windows holds; the worker that WRITES it sits behind the hardware gate
+// like every other write — a dev run or the contract suite must never re-tune the machine's scheme.
+builder.Services.AddSingleton(sp => new PowerPolicyService(
+    sp.GetRequiredService<IProcessRunner>(),
+    PowerPolicyPaths.Originals(DataRoot.Current),
+    sp.GetRequiredService<HardwareAuditLog>(),
+    sp.GetService<ILogger<PowerPolicyService>>()));
+if (enableHardware) builder.Services.AddHostedService<PowerPolicyWorker>();
 builder.Services.AddSingleton<GpuDesiredState>();
 
 // Battery health — how much of the pack's factory capacity survives. Not behind the hardware gate:
@@ -924,6 +955,32 @@ app.MapGet("/update/check", async (UpdateService updates, CancellationToken ct) 
 // Hibernate policy. The roadmap called this an "S0<->S3 toggle"; the firmware on this board reports
 // S1/S2/S3 unsupported, so the only real choice is how long the machine idles in Modern Standby
 // before hibernating instead. That is the control that decides what a closed lid costs overnight.
+// Processor power policy (plan F4). `desired` is the current mode's plan (null for standby); `current`
+// is read fresh from `powercfg /q` on the active scheme, so a value another tool changed shows up here
+// rather than whatever GPD Forge last wrote.
+app.MapGet("/power-policy", async (PowerPolicyService svc, ModeState mode, CancellationToken ct) =>
+{
+    var read = await svc.ReadAsync(ct);
+    var desired = ProcessorPowerPolicy.Plan(mode.Active);
+    var last = svc.LastApply;
+    return Results.Json(new
+    {
+        enabled = enableHardware,
+        mode = mode.Active,
+        scheme = read.Scheme,
+        desired = PolicyJson(desired),
+        current = PolicyJson(read.Current),
+        // Null when there is nothing to compare: no plan for this mode, or the readback failed.
+        matches = desired is null || read.Current is null ? (bool?)null : desired == read.Current,
+        originalsCaptured = svc.OriginalsCaptured,
+        lastApply = last is null ? null : new { atUtc = last.AtUtc, mode = last.Mode, verified = last.Verified, detail = last.Detail },
+        detail = read.Detail,
+    });
+
+    static object? PolicyJson(ProcessorPolicy? p) => p is null ? null : new { ac = SettingsJson(p.Ac), dc = SettingsJson(p.Dc) };
+    static object SettingsJson(ProcessorSettings s) => new { epp = s.Epp, boostMode = s.BoostMode, maxProcessorState = s.MaxProcessorState };
+});
+
 app.MapGet("/standby/hibernate", async (HibernateService svc, CancellationToken ct) =>
 {
     var s = await svc.ReadAsync(ct);

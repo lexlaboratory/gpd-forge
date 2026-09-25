@@ -550,3 +550,30 @@ export interface AdvisorView {
   /** This game's accepted suggestions, newest first. */
   applied: AppliedSuggestion[]
 }
+
+// GET /power-policy (plan F4): the processor policy GPD Forge holds on the ACTIVE power scheme.
+// boostMode is Windows' PERFBOOSTMODE index (0 off, 1 on, 2 aggressive, 3 efficient enabled, ...).
+export interface ProcessorSettings {
+  epp: number
+  boostMode: number
+  maxProcessorState: number
+}
+
+export interface ProcessorPolicy {
+  ac: ProcessorSettings
+  dc: ProcessorSettings
+}
+
+export interface PowerPolicy {
+  /** False unless GPDFORGE_ENABLE_HARDWARE=1 — then the daemon only reads. */
+  enabled: boolean
+  mode: string
+  scheme: string | null
+  /** Null for a mode that leaves Windows alone (standby). */
+  desired: ProcessorPolicy | null
+  current: ProcessorPolicy | null
+  matches: boolean | null
+  originalsCaptured: boolean
+  lastApply: { atUtc: string; mode: string; verified: boolean; detail: string } | null
+  detail: string | null
+}

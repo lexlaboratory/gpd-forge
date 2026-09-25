@@ -15,6 +15,7 @@ import type {
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
   DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, GpuImageRequest, StandbyRestoreOutcome,
   AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, FramesResponse, TdpInfo, RuleOverrides, AdvisorView,
+  PowerPolicy,
 } from './types'
 
 const LOCAL_API = 'http://127.0.0.1:8787'
@@ -138,6 +139,10 @@ export async function setGpuImage(image: GpuImageRequest): Promise<{ applied: bo
   if (!body || typeof body.reason !== 'string') throw new Error(`POST /gpu/image → ${res.status}`)
   return body as { applied: boolean; pending: boolean; requested?: GpuImageRequest; reason: string }
 }
+
+// --- Processor power policy (EPP / boost / max state per mode, plan F4) ---
+// Read-only: the daemon applies it when the mode changes. `current` is read fresh from powercfg.
+export const getPowerPolicy = () => json<PowerPolicy>('/power-policy')
 
 // --- AMD GPU profiles (ADLX) ---
 // Read live on every call: Adrenalin is a second writer to these settings, so reporting our last

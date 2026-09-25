@@ -1063,6 +1063,34 @@ reporting** (not running, or an install older than audit round 2, 2026-09-24, wh
 with `-EnableGpuProfiles`) — the FPS target falls back to the busiest presenter that could be a game
 (see `GET /telemetry`, `fps`), and `GET /health/check` reports `foreground_unreported`.
 
+### `GET /power-policy`  (processor power policy per mode)
+`GET → { enabled, mode, scheme: string | null, desired: Policy | null, current: Policy | null, matches: boolean | null, originalsCaptured, lastApply: { atUtc, mode, verified, detail } | null, detail: string | null }`
+where `Policy = { ac: Settings, dc: Settings }` and `Settings = { epp, boostMode, maxProcessorState }`.
+
+With a fixed 22-25 W budget, how the CPU spends the watts matters as much as how many it gets. On
+each mode change the daemon writes three processor settings into the **active** power scheme with
+`powercfg /setacvalueindex|/setdcvalueindex` (by GUID), re-activates that same scheme, and reads them
+back with `powercfg /q` to verify. Every write lands in `GET /audit` under `power-policy`.
+
+| mode | EPP | boost mode (`PERFBOOSTMODE`) | max state |
+|---|---|---|---|
+| `gaming` | 33 | 3 efficient enabled | 100 % |
+| `gaming-battery` | 50 | 3 efficient enabled | 100 % |
+| `ai` | 25 | 3 efficient enabled | 100 % |
+| `windows` | 50 | 3 efficient enabled | 100 % |
+| `battery` | 80 | AC 3 efficient · DC 0 disabled | 100 % |
+| `standby` | — not touched — | | |
+
+- **Only the active scheme**, resolved to its GUID once per apply. Other schemes are never read or written.
+- **Originals first.** Before the first write to a scheme, its values are saved to
+  `%ProgramData%\GPD Forge\power-policy-originals.json`, once; later applies never overwrite them. With
+  no record (or an unreadable one) nothing is written. `install-gpd-forge.ps1 -Restore` and `-Uninstall`
+  put them back (`GpdForge.Service.dll --restore-power-policy`) without switching the user's plan.
+- **Writes only with `GPDFORGE_ENABLE_HARDWARE=1`** (`enabled`). Otherwise the endpoint still reports
+  what Windows holds. `current` is read fresh, so a value another tool changed shows up here.
+- `matches` is null when there is nothing to compare (standby, or the readback failed).
+- Read-only check from a shell: `GpdForge.Service.dll --probe-power-policy`.
+
 ### `GET /standby/hibernate`  ·  `POST /standby/hibernate`  (hibernate instead of draining)
 `GET → { hibernateAvailable, unavailable: string | null, onAc: {...}, onBattery: {...} }`
 `POST { onBatterySeconds?: number, onAcSeconds?: number } → { applied, reason, onAc, onBattery }`

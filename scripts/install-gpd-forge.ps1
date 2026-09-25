@@ -193,13 +193,50 @@ function Restore-Incumbents {
     Write-Host "  but if you keep both, expect them to fight over TDP." -ForegroundColor Yellow
 }
 
-if ($Restore -or ($DryRun -and -not $Uninstall)) { Restore-Incumbents -Rehearse:$DryRun; return }
+# Processor power policy (plan F4). The daemon saves the active scheme's EPP / boost / max-state values
+# before its first change, under ProgramData so -Uninstall's delete of Program Files cannot take the
+# record with it. The restore runs through the service DLL (`--restore-power-policy`) rather than a
+# PowerShell copy of the logic, so what ships is the restore core.tests exercises. It never switches the
+# user's power plan; it only writes back the values it recorded.
+$PowerPolicyRecord = Join-Path $env:ProgramData 'GPD Forge\power-policy-originals.json'
+
+function Restore-PowerPolicy {
+    param([switch]$Rehearse)
+
+    if (-not (Test-Path $PowerPolicyRecord)) {
+        Write-Host "  Processor power policy: nothing recorded, nothing to restore." -ForegroundColor DarkGray
+        return
+    }
+    if ($Rehearse) {
+        Write-Host "    would restore the processor power policy recorded in $PowerPolicyRecord" -ForegroundColor Yellow
+        Get-Content $PowerPolicyRecord -Raw | Write-Host -ForegroundColor DarkGray
+        return
+    }
+    $serviceDll = "$InstallDir\service\GpdForge.Service.dll"
+    if (-not (Test-Path $serviceDll)) {
+        Write-Host "  Processor power policy NOT restored: $serviceDll is missing. The original values are" -ForegroundColor Yellow
+        Write-Host "  kept in $PowerPolicyRecord; reinstall and run -Restore to put them back." -ForegroundColor Yellow
+        return
+    }
+    try {
+        $out = & dotnet $serviceDll --restore-power-policy
+        $color = if ($LASTEXITCODE -eq 0) { 'Green' } else { 'Red' }
+        foreach ($line in @($out)) { Write-Host "  Processor power policy: $line" -ForegroundColor $color }
+    } catch {
+        Write-Host "  could not restore the processor power policy: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+if ($Restore -or ($DryRun -and -not $Uninstall)) { Restore-Incumbents -Rehearse:$DryRun; Restore-PowerPolicy -Rehearse:$DryRun; return }
 
 if ($Uninstall) {
     # Undo the takeover FIRST. Removing GPD Forge while its takeover stands is what would leave the
     # machine with no power controller at all.
     Restore-Incumbents
     Remove-ForgeService
+    # After the service is gone (so it cannot re-apply a mode's policy over the restore) and before
+    # Program Files is deleted (the restore runs from the service DLL).
+    Restore-PowerPolicy
     if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir }
     if (Test-Path "$StartMenu\GPD Forge.url") { Remove-Item -Force "$StartMenu\GPD Forge.url" }
     foreach ($p in @("$StartMenu\GPD Forge.lnk", "$StartupDir\GPD Forge Tray.lnk", "$StartupDir\GPD Forge GPU Agent.lnk",

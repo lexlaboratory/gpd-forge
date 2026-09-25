@@ -279,6 +279,22 @@
     },
     {
       "method": "GET",
+      "path": "/power-policy",
+      "shape": {
+        "enabled": "boolean",
+        "mode": "string",
+        "scheme": "string|null",
+        "desired": "object|null",
+        "current": "object|null",
+        "matches": "boolean|null",
+        "originalsCaptured": "boolean",
+        "lastApply": "object|null",
+        "detail": "string|null"
+      },
+      "$comment": "F4 (2026-09-25): processor EPP / boost mode / max state per mode on the ACTIVE scheme. desired and current are { ac, dc } each { epp, boostMode, maxProcessorState }; desired is null for standby. enabled is false unless GPDFORGE_ENABLE_HARDWARE=1, and then nothing is written."
+    },
+    {
+      "method": "GET",
       "path": "/firmware",
       "shape": {
         "biosVersion": "string|null",

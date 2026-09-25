@@ -1570,6 +1570,33 @@ async function handle(req, res) {
 
   // Hibernate policy. The real board reports S1/S2/S3 unsupported, so `hibernateAvailable` is true
   // and `unavailable` is null; the interesting control is the idle timeout, not a sleep-state toggle.
+  // Processor power policy — mirrors core/Power/ProcessorPowerPolicy.cs. The mock stands for a
+  // hardware-enabled device that followed the mode, so `current` equals `desired` and `matches` is
+  // true; standby has no plan and reports nulls, exactly like the daemon.
+  if (method === 'GET' && path === '/power-policy') {
+    const s = (epp, boostMode) => ({ epp, boostMode, maxProcessorState: 100 })
+    const plans = {
+      gaming: { ac: s(33, 3), dc: s(33, 3) },
+      'gaming-battery': { ac: s(50, 3), dc: s(50, 3) },
+      ai: { ac: s(25, 3), dc: s(25, 3) },
+      windows: { ac: s(50, 3), dc: s(50, 3) },
+      battery: { ac: s(80, 3), dc: s(80, 0) },
+    }
+    const desired = plans[state.activeMode] ?? null
+    return send(res, 200, {
+      enabled: true,
+      mode: state.activeMode,
+      scheme: '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c',
+      desired,
+      current: desired ?? { ac: s(0, 2), dc: s(0, 2) },
+      matches: desired ? true : null,
+      originalsCaptured: true,
+      lastApply: desired
+        ? { atUtc: new Date().toISOString(), mode: state.activeMode, verified: true, detail: 'Applied.' }
+        : null,
+      detail: null,
+    })
+  }
   if (method === 'GET' && path === '/standby/hibernate') return send(res, 200, state.hibernate)
   if (method === 'POST' && path === '/standby/hibernate') {
     const body = await readBody(req)
