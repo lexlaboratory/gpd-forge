@@ -224,8 +224,15 @@ public sealed class ScriptedTelemetrySource : ITelemetrySource
         Interlocked.Exchange(ref _published, new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
     }
 
+    private long _lastWaitAfter = -1;
+
+    /// <summary>The sequence the consumer last asked to wait past. A loop that paces itself on new
+    /// samples (ForgeWorker) has finished the tick for sample N once it asks to wait past N.</summary>
+    public long LastWaitAfter => Interlocked.Read(ref _lastWaitAfter);
+
     public async Task<TelemetryReading> WaitForNewerAsync(long afterSequence, TimeSpan timeout, CancellationToken ct)
     {
+        Interlocked.Exchange(ref _lastWaitAfter, afterSequence);
         var signal = Volatile.Read(ref _published);
         if (Latest.Sequence > afterSequence) return Latest;
         try { await signal.Task.WaitAsync(timeout, ct); }

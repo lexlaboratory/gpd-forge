@@ -43,12 +43,34 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   timer over the cached temperature; the curve, smoothing, ramp and 3 s sensor grace are unchanged.
   A telemetry sampler that stops publishing now counts as a missing reading: after the same 3 s grace
   the fan goes back to firmware control instead of running its curve off the last cached value.
+- **Auto-FPS only writes when its answer changes.** Inside the ±2 FPS deadband it used to re-apply
+  the same limit every second — a `ryzenadj` apply and readback per tick for nothing. It also steers
+  from the limit actually in force (after a mode switch, the mode's preset) instead of a counter that
+  started at 25 W in every mode and was never synced.
+- **A manual TDP keeps the mode's thermal limit.** `POST /tdp` used Tctl 90 °C whatever the mode, so
+  asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **The active mode's TDP is applied when the daemon starts.** It used to wait for the first mode
+  change, so after a reboot the machine ran on whatever the last writer or the firmware had left
+  while the app named a mode that was not in force. It yields to MotionAssistant / GPD Tool exactly
+  as a mode switch does.
+- **TDP is kept in force by reading it back, not by re-applying it blind.** Every 30 s the daemon
+  reads `ryzenadj --info` and re-applies its last write only if the limits moved — never on a
+  failed read and never while another power controller runs. A re-apply shows as owner `reassert`
+  in `GET /tdp` and the audit log.
 - **LB / RB switch sections** from a gamepad, wrapping at either end. Alerts was ten D-pad presses
   from the Dashboard; it is now one.
 
 ### Fixed
+- **A hand-set TDP survives a hot spell.** When the thermal guardian stopped throttling it restored
+  the mode's preset, so a manual 20 W came back as 15/20/17 W with nothing saying why; and the
+  throttle ceiling was built on the preset, so a manual 10 W could be raised to the 12 W throttle
+  floor. The manual value is now an override until the mode changes: the guardian and charge-guard
+  restores, the resume restore and the 30 s reassert put it back, and a throttle never exceeds it.
+- **`POST /tdp` refuses values outside 5–40 W** with `400 bad_tdp`, as `docs/api.md` always said it
+  did. The daemon passed any number straight to `ryzenadj`; only the mock refused (and at 35 W,
+  below the overlay's 40 W stepper — both now use 5–40).
 - **No more console flashes over a fullscreen game.** Every logon shortcut the installer creates
   (tray, hotkeys, GPU agent) and the overlay hotkey's launch are now hosted by `conhost.exe
   --headless` instead of launching `powershell.exe`/`dotnet.exe` directly. A console program draws

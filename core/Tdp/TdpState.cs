@@ -9,6 +9,9 @@
 //                  the tuner sweep, and the auto-FPS governor
 //   Program.cs   — POST /mode, POST /tdp, POST /panic
 //
+// (Since 2026-09-24 also ForgeWorker's startup apply, through ProfileApplier as `mode`, and the 30 s
+// readback reassert, TdpReasserter, as `reassert`.)
+//
 // So "the machine is at 12 W" was visible and "the thermal guardian put it there, and it verified"
 // was not — which is the difference between a number and a fact. Someone looking at a handheld stuck
 // at 12 W had no way to tell a guardian throttle from a charge-guard ceiling from a mode preset.
@@ -32,6 +35,7 @@ public static class TdpOwner
     public const string Tuner = "tuner";                      // auto-tuner sweep
     public const string Restore = "restore";                  // clearing a throttle back to the mode preset
     public const string ResumeRestore = "resume-restore";     // the post-suspend re-apply
+    public const string Reassert = "reassert";                // the 30 s readback found the limit moved (TdpReasserter)
 }
 
 /// <summary>

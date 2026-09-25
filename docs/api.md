@@ -154,7 +154,10 @@ kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
 ### `GET /mode`  ·  `POST /mode`
 - `GET  → { active: ModeId }`
 - `POST { name: ModeId } → { active: ModeId, tdp: string, frameCap: string | null }` — switches the
-  active mode (applies its TDP + fan curve). `400` on unknown mode.
+  active mode (applies its TDP + fan curve). `400` on unknown mode. Selecting a mode — the same one
+  included — ends a manual `POST /tdp` override.
+- The daemon applies the active mode's TDP once when it **starts** (it used to wait for the first
+  mode change), yielding like any mode switch when MotionAssistant or GPD Tool is running.
 
 `ModeId` is one of `gaming`, `gaming-battery`, `ai`, `windows`, `battery`, `standby`. The catalogue
 lives in `core/Profiles/Modes.cs`, and `ModeCatalogueTests` fails the build if the TypeScript union,
@@ -185,10 +188,28 @@ extra frames. Raise the cap, lower the target, or turn one of them off."
 ```
 
 ### `POST /tdp`
-`POST { stapmW: number } → { requested: number, observed: number, verified: boolean }`
+`POST { stapmW: number } → { requested: number, observed: number | null, verified: boolean }`
 Applies a sustained TDP through the **closed loop**: the daemon re-reads the PM table. If the firmware
 reverted the limit, `verified:false` and `observed` reflects what actually held (this is the honest
-behavior that replaces MotionAssistant's blind 30s re-apply). `400` if `stapmW` is out of the safe band.
+behavior that replaces MotionAssistant's blind 30s re-apply).
+
+- `400 { error: { code: "bad_tdp" } }` if `stapmW` is outside **5–40 W** (the preset table's STAPM
+  band). Enforced by the daemon since 2026-09-24; before that only the mock refused, and the real
+  handler passed any number to ryzenadj. Nothing is written or remembered on a 400.
+- The profile is flat (`stapmW = fastW = slowW`) at the **active mode's Tctl** — it was a fixed
+  90 °C, which lowered the thermal limit in `windows` (92) and `gaming` (95).
+- The value is **remembered as an override until the mode changes** (`core/Profiles/TdpIntent.cs`).
+  The guardian's throttle-clear restore, the charge guard's clear, the resume restore
+  (`POST /standby/restore` and the automatic one) and the 30 s reassert put the override back, not
+  the preset; a guardian throttle is a ceiling under the override, never above it. Any `POST /mode`
+  ends it. It is held in memory: after a restart the mode's preset applies.
+
+### The 30 s reassert
+Every 30 s the worker reads the limits back (`ryzenadj --info`) and compares them with the last TDP
+GPD Forge wrote, by the closed loop's own tolerance (±1 W on STAPM and the fast limit). It writes only
+when they differ — never on a failed or partial read, never while MotionAssistant or GPD Tool runs,
+and not when another write landed during the read. A re-apply appears in `GET /tdp` and `GET /audit`
+as owner `reassert`. Not during a guardian throttle, which re-asserts its own ceiling.
 
 ### `GET /audit`  (every hardware write the daemon has made)
 `200 → { capacity: 500, total: number, failed: number, unconfirmed: number,
@@ -217,7 +238,8 @@ written a limit since the service started — a fresh daemon has no last write, 
 or `verified: false` for that would be inventing an event.
 
 - `owner` — which subsystem made the write, one of `mode`, `manual`, `panic`, `thermal-guardian`,
-  `charge-guard`, `auto-fps`, `tuner`, `restore`, `resume-restore` (`GpdForge.Tdp.TdpOwner`). Ten
+  `charge-guard`, `auto-fps`, `tuner`, `restore`, `resume-restore`, `reassert`
+  (`GpdForge.Tdp.TdpOwner`). Ten
   call sites write TDP; before 2026-09-02 none of them recorded which, so "why did my wattage
   change" had no answer. `ITdpController.ApplyAsync` now requires the owner, which is what keeps
   this list complete — a new writer does not compile without one.
@@ -532,6 +554,9 @@ Suspend/resume background processes to free CPU/RAM during a game or a heavy inf
 - `GET → { enabled: boolean, targetFps: number }`
 - `POST { targetFps: number, enable: boolean } → { enabled, targetFps }` — a PID loop then steers sustained
   TDP to hold `targetFps` at the least power, active in gaming mode once FPS telemetry is available.
+  It writes only when its STAPM changes what is in force: inside the ±2 FPS deadband (or pinned at
+  8/30 W) nothing is written, and firmware reverts are left to the 30 s reassert. It steers from the
+  last TDP actually written — after a mode switch, the mode's preset — not from a stale counter.
 
 ### `GET /tuner`  ·  `POST /tuner/start`  (auto-tuner TDP sweep)
 - `GET → { running: boolean, goal: 'MaxFps'|'BestEfficiency'|'HoldTarget', targetFps: number|null,

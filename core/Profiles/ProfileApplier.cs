@@ -9,17 +9,25 @@ public enum ApplyOutcome { UnknownMode, SkippedConflict, AppliedVerified, Applie
 public sealed class ProfileApplier(
     ITdpController tdp,
     IPowerControllerDetector detector,
-    ILogger<ProfileApplier>? logger = null)
+    ILogger<ProfileApplier>? logger = null,
+    TdpIntent? intent = null)
 {
     /// <summary>
     /// Apply the mode's TDP preset — but only if GPD Forge is the sole power controller. If
     /// MotionAssistant / GPD Tool are running we yield (return SkippedConflict) so two controllers
     /// never fight. With hardware disabled the underlying backend is a no-op stub.
+    /// <para>
+    /// Every call ends a manual override (<see cref="TdpIntent"/>), before the yield check: the mode
+    /// changed — or was deliberately re-picked — whether or not GPD Forge got to write it, and an
+    /// override left behind would resurface through the next restore once the rival exits.
+    /// </para>
     /// </summary>
     public async Task<ApplyOutcome> ApplyAsync(string mode, CancellationToken ct)
     {
         var profile = ModeProfiles.For(mode);
         if (profile is null) return ApplyOutcome.UnknownMode;
+
+        intent?.ClearManual();
 
         if (detector.OthersRunning(out var names))
         {

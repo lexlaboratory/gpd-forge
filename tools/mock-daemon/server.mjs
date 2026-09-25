@@ -35,8 +35,11 @@ const PROFILES = [
   { id: 'standby', label: 'Standby Doctor', stapmW: 15, fastW: 20, slowW: 17, tctlC: 92 },
 ]
 
+// The manual band, as the daemon enforces it (core/Profiles/TdpIntent.cs: 5..40 W, the preset
+// table's STAPM clamp). Was 35 here while the real POST /tdp checked nothing at all; the overlay's
+// stepper goes to 40, so the two now agree on the same band the UI offers.
 const TDP_MIN = 5
-const TDP_MAX = 35
+const TDP_MAX = 40
 const TDP_FIRMWARE_CAP = 30 // above this the "firmware" reverts → verified:false
 
 // --- per-app profile rules (mirrors core/Profiles/) ----------------------------------------------

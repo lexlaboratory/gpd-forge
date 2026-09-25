@@ -20,7 +20,9 @@ namespace GpdForge;
 /// Orchestrates the hardware subsystems: consumes the sampler's telemetry (it never reads hardware
 /// sensors itself — see TelemetrySampler), and (in gaming mode, once FPS telemetry is
 /// available) steers TDP toward a target FPS via the tested PID — or, while an auto-tuner sweep is
-/// running, steps TDP through the sweep instead (the two never run the same tick; see below). Thaws
+/// running, steps TDP through the sweep instead (the two never run the same tick; see below). Applies
+/// the active mode once at start, and every 30 s reads the limits back and re-applies the last write
+/// only if it moved (TdpReasserter). Thaws
 /// any frozen processes on stop. The fan is not driven from here: it has its own 1 s loop
 /// (core/Fan/FanWorker.cs), so a slow ryzenadj apply in this tick can never delay it.
 /// </summary>
@@ -40,7 +42,10 @@ public sealed class ForgeWorker(
     TunerState tuner,
     AlertService alerts,
     ChargeGuardService chargeGuard,
-    SessionRecorder sessions) : BackgroundService
+    SessionRecorder sessions,
+    TdpIntent intent,
+    TdpState tdpState,
+    TdpReasserter reasserter) : BackgroundService
 {
     // Last observed AC state, so the per-power-source switch (below) fires only ON THE FLIP rather
     // than re-applying every tick. Null until the first snapshot arrives.
@@ -66,6 +71,8 @@ public sealed class ForgeWorker(
 
         try
         {
+            await ApplyStartupTdpAsync(stoppingToken);
+
             long lastSequence = 0;
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -132,10 +139,11 @@ public sealed class ForgeWorker(
 
                 if (g.ThrottleToW is int throttleW)
                 {
-                    // Hard cool-down: a ceiling that never raises any limit of the active mode (see
-                    // GuardianThrottle.cs — it used to lift `windows` from 15 W to 25 W). Skips
-                    // auto-FPS this tick.
-                    var throttle = GuardianThrottle.Profile(throttleW, ModeProfiles.For(mode.Active),
+                    // Hard cool-down: a ceiling that never raises any limit of what the user has in
+                    // force (see GuardianThrottle.cs — it used to lift `windows` from 15 W to 25 W).
+                    // Under the intent, not the preset: built on the preset, a 10 W manual override
+                    // met the 12 W throttle floor and went UP. Skips auto-FPS this tick.
+                    var throttle = GuardianThrottle.Profile(throttleW, intent.Resolve(mode.Active),
                         (int)guardian.Config.TempCriticalC);
                     // An unchanged ceiling is re-asserted every ThrottleReassertSeconds, not every
                     // tick: each apply runs ryzenadj twice, and under a sustained throttle that
@@ -169,18 +177,30 @@ public sealed class ForgeWorker(
                     }
 
                     var coolTo = ChargeGuardPolicy.EffectiveCeiling(
-                        cg.CoolToW, ModeProfiles.For(mode.Active)?.StapmW ?? int.MaxValue);
+                        cg.CoolToW, intent.Resolve(mode.Active)?.StapmW ?? int.MaxValue);
+
+                    // Whether anything below wrote TDP this tick; the 30 s readback waits for a tick
+                    // that did not (it would only be reading back a write the closed loop just verified).
+                    bool wrote = false;
 
                     if (coolTo is int coolW)
                     {
                         // A ceiling, held flat. EffectiveCeiling has already refused to raise power,
                         // so reaching here means this is genuinely lower than the mode would run.
                         await tdp.ApplyAsync(new TdpProfile(coolW, coolW, coolW, 90), TdpOwner.ChargeGuard, stoppingToken);
+                        wrote = true;
                     }
                     else if (g.ClearThrottle || cg.ClearCool)
                     {
-                        var restore = ModeProfiles.For(mode.Active);
-                        if (restore is not null) await tdp.ApplyAsync(restore.Value, TdpOwner.Restore, stoppingToken);
+                        // Back to what the user had: a manual override if one is set in this mode,
+                        // else the preset. Restoring the preset unconditionally is how a hand-set
+                        // 20 W came out of a hot spell as 15/20/17 W with nothing saying why.
+                        var restore = intent.Resolve(mode.Active);
+                        if (restore is not null)
+                        {
+                            await tdp.ApplyAsync(restore.Value, TdpOwner.Restore, stoppingToken);
+                            wrote = true;
+                        }
                     }
 
                     // Auto-tuner sweep takes priority over auto-FPS while it's running (both steer
@@ -194,6 +214,7 @@ public sealed class ForgeWorker(
                     {
                         await tdp.ApplyAsync(tuner.CurrentProfile(), TdpOwner.Tuner, stoppingToken);
                         tuner.Tick(snapshot.Fps, snapshot.CpuTempC);
+                        wrote = true;
                     }
                     // Auto-TDP to target FPS — only when we actually have an FPS reading (PresentMon).
                     // `is double fps && fps > 0` rather than a lifted comparison: since telemetry went
@@ -211,11 +232,25 @@ public sealed class ForgeWorker(
                     else if (autoFps.Enabled && ModeCatalogue.AutoFpsEligible(mode.Active)
                              && snapshot.Fps is double measuredFps && measuredFps > 0)
                     {
+                        // Written only when the answer changes what is in force (AutoFpsStep): inside
+                        // the deadband this used to re-write the same limit every second. The
+                        // integrator starts from the last write, so after a mode switch or a manual
+                        // value it steers from what is actually applied, not from a stale 25 W.
                         var gaming = ModeProfiles.For(mode.Active) ?? new TdpProfile(25, 33, 28, 95);
-                        int next = fpsController.NextStapm(autoFps.TargetFps, measuredFps, autoFps.CurrentStapm, minW: 8, maxW: 30);
-                        autoFps.CurrentStapm = next;
-                        await tdp.ApplyAsync(gaming with { StapmW = next }, TdpOwner.AutoFps, stoppingToken);
+                        var step = AutoFpsStep.Decide(fpsController, autoFps.TargetFps, measuredFps,
+                            gaming, tdpState.Last?.Requested, minW: 8, maxW: 30);
+                        autoFps.CurrentStapm = step.NextStapm;
+                        if (step.Write is TdpProfile write)
+                        {
+                            await tdp.ApplyAsync(write, TdpOwner.AutoFps, stoppingToken);
+                            wrote = true;
+                        }
                     }
+
+                    // Every 30 s, read the limits back and re-apply the last write only if they
+                    // moved (TdpReasserter) — never blind, never over a rival controller. Not during
+                    // a throttle: the guardian re-asserts its own ceiling above.
+                    if (!wrote) await reasserter.ReassertIfDueAsync(stoppingToken);
                 }
             }
         }
@@ -228,6 +263,27 @@ public sealed class ForgeWorker(
             // The fan's shutdown restore to AUTOMATIC lives in FanWorker, next to the loop that
             // could have left it in manual.
             logger.LogInformation("GPD Forge service stopping.");
+        }
+    }
+
+    /// <summary>
+    /// Applies the active mode once, when the daemon starts. Until 2026-09-24 nothing did: a mode's
+    /// TDP was written only when the mode CHANGED, so after a reboot or a service restart the machine
+    /// ran on whatever the last writer — or the firmware default — had left, while `GET /mode` named a
+    /// mode whose limits were not in force. Through ProfileApplier, so it yields exactly as a mode
+    /// switch does when MotionAssistant or GPD Tool is running. A failure is logged and the loop starts
+    /// anyway: the rest of this worker (guardian, history, sessions) must not depend on one ryzenadj run.
+    /// </summary>
+    private async Task ApplyStartupTdpAsync(CancellationToken ct)
+    {
+        try
+        {
+            var outcome = await profileApplier.ApplyAsync(mode.Active, ct);
+            logger.LogInformation("Startup TDP for mode '{Mode}': {Outcome}", mode.Active, outcome);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Startup TDP for mode '{Mode}' failed; continuing without it.", mode.Active);
         }
     }
 }

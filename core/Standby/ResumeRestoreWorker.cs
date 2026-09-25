@@ -23,7 +23,8 @@ public sealed class ResumeRestoreWorker(
     IUnbiasedClock? clock = null,
     ILogger<ResumeRestoreWorker>? logger = null,
     TimeSpan? interval = null,
-    Func<DateTimeOffset>? now = null) : BackgroundService
+    Func<DateTimeOffset>? now = null,
+    TdpIntent? intent = null) : BackgroundService
 {
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(5);
 
@@ -72,7 +73,10 @@ public sealed class ResumeRestoreWorker(
 
         // RestoreAsync never throws and reports per step whether the write actually reached
         // hardware, so the log below is the outcome, not the intention.
-        var outcome = await standby.RestoreAsync(ModeProfiles.For(mode.Active), ct);
+        // What the user had before the suspend: a manual override set in this mode, else the preset.
+        // Optional only so a test can leave it out; the daemon always registers one.
+        var profile = intent is not null ? intent.Resolve(mode.Active) : ModeProfiles.For(mode.Active);
+        var outcome = await standby.RestoreAsync(profile, ct);
 
         foreach (var step in outcome.Steps)
         {

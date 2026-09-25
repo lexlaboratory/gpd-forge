@@ -65,6 +65,84 @@ public class RyzenAdjBackendTests
         Assert.Null(readout.PptW);
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Strix Point (HX 370). The fixture is rebuilt from ryzenadj's printf format, NOT captured: the
+    // read-only run on the device needs elevation and was refused — see RyzenAdjFixtures.cs.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_reads_the_strix_point_table_with_crlf_line_endings()
+    {
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.StrixPointInfo);
+
+        Assert.Equal(15, readout.StapmW);
+        Assert.Equal(20, readout.PptW);
+    }
+
+    [Fact]
+    public void Parse_takes_the_limit_row_not_the_value_row_beneath_it()
+    {
+        // "STAPM VALUE 6.482" sits one line under "STAPM LIMIT 15.000". Reading the live value as the
+        // limit would make every readback "moved", and the 30 s reassert would rewrite forever.
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.StrixPointInfo);
+        Assert.NotEqual(6, readout.StapmW);
+        Assert.NotEqual(9, readout.PptW);
+    }
+
+    [Fact]
+    public void Parse_of_a_non_elevated_run_is_no_reading_not_zero()
+    {
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.NotElevated);
+        Assert.Null(readout.StapmW);
+        Assert.Null(readout.PptW);
+    }
+
+    [Fact]
+    public void Parse_of_a_table_ryzenadj_cannot_decode_is_no_reading()
+    {
+        // The error line carries a number (-1). It must not be mistaken for a limit.
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.StrixPointNoTable);
+        Assert.Null(readout.StapmW);
+        Assert.Null(readout.PptW);
+    }
+
+    [Fact]
+    public void Parse_of_nan_limits_is_no_reading()
+    {
+        // `nan` is ryzenadj saying "not in this table". The parameter column ("stapm-limit") has no
+        // digits, so nothing else on the row can be picked up in its place.
+        var readout = RyzenAdjOutput.Parse(RyzenAdjFixtures.StrixPointNanLimits);
+        Assert.Null(readout.StapmW);
+        Assert.Null(readout.PptW);
+    }
+
+    [Fact]
+    public void Parse_rounds_a_fractional_limit_to_whole_watts()
+    {
+        // The SMU reports what it stored, which is not always the round number that was sent.
+        var info = RyzenAdjFixtures.StrixPointInfo
+            .Replace("|    15.000 | stapm-limit", "|    14.998 | stapm-limit")
+            .Replace("|    20.000 | fast-limit ", "|    20.4   | fast-limit ");
+        var readout = RyzenAdjOutput.Parse(info);
+        Assert.Equal(15, readout.StapmW);
+        Assert.Equal(20, readout.PptW);
+    }
+
+    [Fact]
+    public async Task A_strix_point_readback_verifies_the_profile_that_produced_it()
+    {
+        // End to end through the closed loop: `windows` (15/20/17, Tctl 92) applied, this table read
+        // back, verified on the first attempt.
+        var runner = new FakeRunner { Output = RyzenAdjFixtures.StrixPointInfo };
+        var controller = new ClosedLoopTdpController(new RyzenAdjBackend(runner, "ryzenadj.exe"), new NoWait());
+
+        var r = await controller.ApplyAsync(new TdpProfile(15, 20, 17, 92), TdpOwner.Mode, CancellationToken.None);
+
+        Assert.True(r.Verified);
+        Assert.Equal(1, r.Attempts);
+        Assert.Equal(new TdpReadout(15, 20), r.Observed);
+    }
+
     [Fact]
     public async Task ReadAsync_parses_runner_output()
     {

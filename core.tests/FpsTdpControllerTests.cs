@@ -233,6 +233,21 @@ public class AutoFpsLoopTests
         int next = await loop.TickAsync(60, Gaming, CancellationToken.None);
 
         Assert.Equal(Gaming.StapmW, next);   // inside the deadband -> unchanged
+        // ...and NOT written. Each apply is two ryzenadj launches; re-issuing an unchanged limit
+        // every tick bought nothing the 30 s readback reassert (TdpReasserter) does not already cover.
+        Assert.Equal(0, tdp.Calls);
+    }
+
+    [Fact]
+    public async Task Tick_at_the_ceiling_with_nothing_to_gain_does_not_write()
+    {
+        var tdp = new FakeTdp();
+        var loop = new AutoFpsLoop(new TelemetryFpsSource(() => 10.0), new FpsTdpController(), tdp,
+            new AutoFpsLoop.Options(MinW: 8, MaxW: 28));
+
+        await loop.TickAsync(120, Gaming with { StapmW = 28 }, CancellationToken.None);
+
+        Assert.Equal(0, tdp.Calls);   // clamped to where it already is
     }
 
     [Fact]
@@ -246,6 +261,86 @@ public class AutoFpsLoopTests
         int next = await loop.TickAsync(120, atCeiling, CancellationToken.None);
 
         Assert.Equal(28, next);
-        Assert.True(tdp.Last.StapmW <= 28);
+        Assert.True(tdp.Calls == 0 || tdp.Last.StapmW <= 28);
+    }
+}
+
+/// <summary>
+/// The worker's per-tick auto-FPS decision (<see cref="AutoFpsStep"/>): the controller's next STAPM,
+/// and a write only when that changes what is in force.
+/// </summary>
+public class AutoFpsStepTests
+{
+    private static readonly TdpProfile Gaming = new(StapmW: 25, FastW: 33, SlowW: 28, TctlC: 95);
+    private static readonly FpsTdpController Controller = new();
+
+    [Fact]
+    public void Inside_the_deadband_nothing_is_written()
+    {
+        // Before 2026-09-24 ForgeWorker applied the result every tick, changed or not: at a steady
+        // 60 FPS on a 60 FPS target that was the same 25 W re-written each second — one ryzenadj apply
+        // plus one --info readback per tick, for nothing.
+        var d = AutoFpsStep.Decide(Controller, targetFps: 60, measuredFps: 61, basis: Gaming, inForce: Gaming, minW: 8, maxW: 30);
+
+        Assert.Equal(25, d.NextStapm);
+        Assert.Null(d.Write);
+    }
+
+    [Fact]
+    public void Outside_the_deadband_the_new_stapm_is_written_on_the_modes_profile()
+    {
+        var d = AutoFpsStep.Decide(Controller, 60, 40, Gaming, Gaming, 8, 30);
+
+        Assert.True(d.NextStapm > 25);
+        Assert.Equal(Gaming with { StapmW = d.NextStapm }, d.Write);
+    }
+
+    [Fact]
+    public void The_integrator_starts_from_what_is_in_force_not_from_a_stale_counter()
+    {
+        // `AutoFpsState.CurrentStapm` used to start at 25 whatever the mode and was never synced, so
+        // the first governor tick after `POST /mode` could jump STAPM by the difference in one step.
+        // In force here is a 15 W limit set by something else; inside the deadband it is kept.
+        var inForce = Gaming with { StapmW = 15 };
+
+        var d = AutoFpsStep.Decide(Controller, 60, 60, Gaming, inForce, 8, 30);
+
+        Assert.Equal(15, d.NextStapm);
+        Assert.Null(d.Write);
+    }
+
+    [Fact]
+    public void With_nothing_in_force_it_starts_from_the_modes_preset_and_writes_it()
+    {
+        var d = AutoFpsStep.Decide(Controller, 60, 60, Gaming, inForce: null, 8, 30);
+
+        Assert.Equal(25, d.NextStapm);
+        Assert.Equal(Gaming, d.Write);   // nothing verified is there yet, so the steady value is applied once
+    }
+
+    [Fact]
+    public void A_steady_stapm_on_a_different_profile_is_written_once_to_take_the_modes_boost()
+    {
+        // A manual override is flat (12/12/12). Auto-FPS steers STAPM on the MODE's profile, so the
+        // first tick moves fast/slow back to the mode's headroom even when STAPM stays put.
+        var manual = new TdpProfile(12, 12, 12, 95);
+
+        var d = AutoFpsStep.Decide(Controller, 60, 60, Gaming, manual, 8, 30);
+
+        Assert.Equal(12, d.NextStapm);
+        Assert.Equal(Gaming with { StapmW = 12 }, d.Write);
+    }
+
+    [Fact]
+    public void A_preset_above_the_governors_ceiling_is_clamped_once_and_then_held()
+    {
+        var hot = Gaming with { StapmW = 35 };
+
+        var first = AutoFpsStep.Decide(Controller, 60, 60, hot, hot, 8, 30);
+        Assert.Equal(30, first.NextStapm);
+        Assert.NotNull(first.Write);
+
+        var second = AutoFpsStep.Decide(Controller, 60, 60, hot, first.Write, 8, 30);
+        Assert.Null(second.Write);
     }
 }

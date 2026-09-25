@@ -137,12 +137,18 @@ public sealed class AutoFpsLoop
     /// Run one control tick against <paramref name="current"/> (the profile in force) and return the
     /// STAPM that was requested. Only <c>StapmW</c> is steered; fast/slow/tctl are carried through so
     /// the caller keeps ownership of the rest of the profile. The apply is verified by the underlying
-    /// closed-loop controller, and is re-issued every tick so firmware reverts are corrected.
+    /// closed-loop controller.
+    /// <para>
+    /// Nothing is written when STAPM does not change (inside the deadband, or pinned at a rail). It
+    /// used to be re-issued every tick "so firmware reverts are corrected"; that is now the 30 s
+    /// readback in <see cref="TdpReasserter"/>, which writes only when the limit actually moved.
+    /// </para>
     /// </summary>
     public async Task<int> TickAsync(double targetFps, TdpProfile current, CancellationToken ct)
     {
         double measured = _fps.CurrentFps();
         int nextStapm = _controller.NextStapm(targetFps, measured, current.StapmW, _opt.MinW, _opt.MaxW);
+        if (nextStapm == current.StapmW) return nextStapm;
 
         TdpProfile applied = current with { StapmW = nextStapm };
         TdpApplyResult result = await _tdp.ApplyAsync(applied, TdpOwner.AutoFps, ct);

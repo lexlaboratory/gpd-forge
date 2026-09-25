@@ -655,7 +655,14 @@ builder.Services.AddHostedService<InferenceHoldWorker>();
 
 builder.Services.AddSingleton<JobsState>();   // holds an anti-standby lock while a job is "running"
 builder.Services.AddSingleton<IPowerControllerDetector, ProcessPowerControllerDetector>();
+// What should be in force when no transient owner holds TDP: the mode's preset, or the value POST /tdp
+// set by hand, which lives until the mode changes (ProfileApplier ends it). The guardian's restore,
+// the resume restore and the throttle ceiling all resolve through it — see core/Profiles/TdpIntent.cs.
+builder.Services.AddSingleton<TdpIntent>();
 builder.Services.AddSingleton<ProfileApplier>();
+// The 30 s readback that keeps the last write in force, and writes only when the limits moved
+// (core/Tdp/TdpReasserter.cs). ForgeWorker calls it from its tick; it yields to rival controllers.
+builder.Services.AddSingleton<TdpReasserter>();
 builder.Services.AddSingleton<DisplayService>();
 
 // Display domain extensions: refresh-rate switching + night mode (gamma ramp) are REAL, unprivileged
@@ -1038,10 +1045,25 @@ app.MapGet("/tdp", (TdpState state) =>
     });
 });
 
-// Safe today: the wired backend is a stub (no hardware write). Becomes real in #3 behind approval.
-app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, CancellationToken ct) =>
+// A manual sustained limit. Writes to the SMU only with the hardware gate open (otherwise the stub).
+//
+// Since 2026-09-24 it is REMEMBERED: the value is the override for the active mode until the mode
+// changes, so the guardian's throttle-clear restore, the resume restore and the 30 s reassert put it
+// back instead of the preset (core/Profiles/TdpIntent.cs). Its thermal limit is the active mode's —
+// it was a hardcoded 90 °C, which in `windows` (92) or `gaming` (95) lowered Tctl as a side effect of
+// asking for fewer watts. And the band is enforced: docs/api.md always promised a 400 outside it and
+// the mock daemon gave one, while this handed any number straight to ryzenadj. Validated before the
+// override is recorded, because a remembered bad value would be re-asserted every 30 s.
+app.MapPost("/tdp", async (TdpRequest req, ITdpController tdp, ModeState m, TdpIntent intent, CancellationToken ct) =>
 {
-    var r = await tdp.ApplyAsync(new TdpProfile(req.StapmW, req.StapmW, req.StapmW, 90), TdpOwner.Manual, ct);
+    if (!TdpIntent.IsManualInRange(req.StapmW))
+        return Results.BadRequest(new { error = new { code = "bad_tdp",
+            message = $"stapmW must be {TdpIntent.ManualMinW}..{TdpIntent.ManualMaxW}" } });
+
+    string mode = m.Active;
+    var profile = TdpIntent.ManualProfile(req.StapmW, mode);
+    intent.SetManual(mode, profile);
+    var r = await tdp.ApplyAsync(profile, TdpOwner.Manual, ct);
     return Results.Json(new { requested = r.Requested.StapmW, observed = r.Observed.StapmW, verified = r.Verified });
 });
 
@@ -1303,8 +1325,9 @@ app.MapPost("/ai/vram", (VramRequest _, IVramReader vram) =>
 app.MapGet("/standby", async (IStandbyService standby, CancellationToken ct) =>
     Results.Json(await standby.GetStatusAsync(ct)));
 
-app.MapPost("/standby/restore", async (IStandbyService standby, ModeState mode, CancellationToken ct) =>
-    Results.Json(await standby.RestoreAsync(ModeProfiles.For(mode.Active), ct)));
+// Restores what the user had — a manual override set in this mode, else the preset (TdpIntent).
+app.MapPost("/standby/restore", async (IStandbyService standby, ModeState mode, TdpIntent intent, CancellationToken ct) =>
+    Results.Json(await standby.RestoreAsync(intent.Resolve(mode.Active), ct)));
 
 // Editable per-mode TDP presets (like MotionAssistant profiles).
 app.MapGet("/profiles", () => Results.Json(

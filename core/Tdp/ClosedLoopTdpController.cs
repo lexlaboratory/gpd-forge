@@ -48,8 +48,12 @@ public sealed class ClosedLoopTdpController(
     /// would have kept compiling and quietly returned false. That happens to be the safe direction,
     /// but "we could not read it" and "the firmware refused" are different facts and only one of them
     /// should ever be reported as a reverted write.
+    ///
+    /// Public because the 30 s reassert (<see cref="TdpReasserter"/>) must judge "still holding" by
+    /// exactly the rule a write was verified by; a second copy of the comparison could drift until a
+    /// limit the closed loop calls verified is one the reassert calls moved, and it rewrites forever.
     /// </summary>
-    private static bool Holds(TdpReadout observed, TdpProfile want, int tol) =>
+    public static bool Holds(TdpReadout observed, TdpProfile want, int tol) =>
         observed.StapmW is int stapm && observed.PptW is int ppt
         && Math.Abs(stapm - want.StapmW) <= tol
         && Math.Abs(ppt - want.FastW) <= tol;

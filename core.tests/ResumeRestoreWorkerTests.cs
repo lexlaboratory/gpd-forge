@@ -70,6 +70,35 @@ public class ResumeRestoreWorkerTests
     }
 
     [Fact]
+    public async Task Waking_up_re_applies_a_manual_override_rather_than_the_preset()
+    {
+        // A hand-set limit is what was in force before the suspend; restoring the preset over it
+        // would be the resume quietly undoing the user.
+        var standby = new SpyStandbyService();
+        var mode = new ModeState { Active = "gaming" };
+        var intent = new GpdForge.Profiles.TdpIntent();
+        var manual = GpdForge.Profiles.TdpIntent.ManualProfile(18, "gaming");
+        intent.SetManual("gaming", manual);
+
+        var clock = new ScriptedClock(TimeSpan.FromHours(1), TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
+        var wall = new Queue<DateTimeOffset>(new[] { T0, T0 + TimeSpan.FromHours(8) });
+
+        var worker = new ResumeRestoreWorker(
+            standby, mode, clock, logger: null,
+            interval: TimeSpan.FromMilliseconds(1),
+            now: () => wall.Count > 0 ? wall.Dequeue() : T0 + TimeSpan.FromHours(8),
+            intent: intent);
+
+        using var cts = new CancellationTokenSource();
+        await worker.StartAsync(cts.Token);
+        await standby.Restored.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+        await worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(manual, standby.Restores[0]);
+    }
+
+    [Fact]
     public async Task Ordinary_awake_polling_restores_nothing()
     {
         var standby = new SpyStandbyService();
