@@ -48,6 +48,16 @@ export const staleSeconds = (t: Telemetry | null | undefined): number | null =>
   t?.sampleAgeMs != null && t.sampleAgeMs > STALE_AFTER_MS ? Math.round(t.sampleAgeMs / 1000) : null
 
 /**
+ * Whole seconds since the last successful poll when the daemon has stopped answering for longer than
+ * STALE_AFTER_MS, else null. For a client that keeps its last good reading on a failed poll (the
+ * overlay): that reading's `sampleAgeMs` was fresh when served and never ages on the client, so
+ * `staleSeconds` alone would call a dead daemon's last numbers live (audit round 1, 2026-09-25).
+ * Null before the first success — there is no reading on screen to mislabel.
+ */
+export const offlineSeconds = (lastOkMs: number | null, nowMs: number): number | null =>
+  lastOkMs != null && nowMs - lastOkMs > STALE_AFTER_MS ? Math.round((nowMs - lastOkMs) / 1000) : null
+
+/**
  * True when the daemon answered but has never read the hardware: `sampledAtMs` is PRESENT and null.
  * GET /telemetry serves that when the sampler's first read hangs, and `staleSeconds` reads its null
  * `sampleAgeMs` as "not stale" — so until audit round 3 (2026-09-24) the panel, the overlay and the

@@ -91,6 +91,35 @@ test.describe('Stalled telemetry', () => {
     await expect(page.getByTestId('qam-stale')).toHaveCount(0)
   })
 
+  // Audit round 1 (2026-09-25): the overlay swallowed a failed poll and kept the last good response,
+  // whose `sampleAgeMs` was fresh when served and never aged on the client. A daemon that crashed —
+  // taking the guardian, the fan loop and TDP control with it — left a green "live" dot over frozen
+  // numbers for as long as the overlay stayed open. The main window has its Offline pill; this is
+  // the overlay's.
+  test('the overlay says Offline when the daemon stops answering after a good reading', async ({ page }) => {
+    let served = 0
+    await page.route('**/telemetry', (route) => (served++ === 0 ? route.continue() : route.abort()))
+    await page.goto('/overlay.html')
+
+    const offline = page.getByTestId('qam-offline')
+    await expect(offline).toBeVisible({ timeout: 8000 })
+    await expect(offline).toContainText('Offline')
+    await expect(page.locator('.qam-dot')).not.toHaveClass(/\bon\b/)
+    await expect(page.locator('.qam-dot')).toHaveAttribute('title', 'offline')
+    await expect(page.locator('.qam-live')).toHaveAttribute('data-stale', 'true')
+    // Offline, not "stalled": the frozen age the daemon last reported is not what is wrong.
+    await expect(page.getByTestId('qam-stale')).toHaveCount(0)
+  })
+
+  test('the overlay is not Offline while the daemon answers', async ({ page }) => {
+    // The guard for the guard: an overlay that always said Offline would pass the test above.
+    await page.goto('/overlay.html')
+    await expect(page.locator('.qam-dot')).toHaveClass(/\bon\b/)
+    await page.waitForTimeout(4500)   // past STALE_AFTER_MS of polling
+    await expect(page.getByTestId('qam-offline')).toHaveCount(0)
+    await expect(page.locator('.qam-dot')).toHaveClass(/\bon\b/)
+  })
+
   test('a live reading is never "no reading yet"', async ({ page }) => {
     await new DashboardPage(page).goto()
     await expect(page.getByTestId('stat-cpu')).toContainText(/\d/)

@@ -19,7 +19,7 @@ import { useSpatialNav } from './hooks/useSpatialNav'
 // Same placeholder rule as the main window: null renders as '--', never as 0. Telemetry went
 // nullable on 2026-09-01 because an unreadable sensor used to arrive as a confident zero.
 import {
-  reading, staleSeconds, unsampled, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type TdpWrite,
+  reading, staleSeconds, unsampled, offlineSeconds, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type TdpWrite,
 } from './pages/shared'
 import { Icon } from './components/Icon'
 
@@ -67,6 +67,12 @@ export function OverlayApp() {
   // density detection as the main window rather than a hardcoded size.
   useDensity()
   const [tele, setTele] = useState<Telemetry | null>(null)
+  // When the last poll succeeded, and when the last poll finished either way (browser clock, Unix ms).
+  // A failed poll keeps the previous reading, whose `sampleAgeMs` was fresh when served and never ages
+  // here — so without these a dead daemon left a green "live" dot over frozen numbers (audit round 1,
+  // 2026-09-25). The main window has its Offline pill for this; the overlay had nothing.
+  const [lastOkMs, setLastOkMs] = useState<number | null>(null)
+  const [nowMs, setNowMs] = useState(0)
   const [mode, setModeS] = useState<ModeId>('windows')
   const [presets, setPresets] = useState<Record<string, { stapmW: number }>>({})
   // Null until the daemon says what is in force, shown as '--' with the stepper disabled — as on the
@@ -95,7 +101,12 @@ export function OverlayApp() {
 
   useEffect(() => {
     let alive = true
-    const tick = () => getTelemetry().then((t) => alive && setTele(t)).catch(() => {})
+    // The clock moves on every tick, not when a poll settles: /telemetry has no client timeout, so a
+    // daemon that hangs rather than refuses never reaches the catch — and must still age on screen.
+    const tick = () => {
+      setNowMs(Date.now())
+      getTelemetry().then((t) => { if (alive) { setTele(t); setLastOkMs(Date.now()) } }).catch(() => {})
+    }
     tick(); const id = setInterval(tick, 1000)
     getFan().then((f) => alive && setFanS(f)).catch(() => {})
     getBrightness().then((b) => alive && b != null && setBright(b)).catch(() => {})
@@ -198,9 +209,12 @@ export function OverlayApp() {
   const openFull = useCallback(() => { window.location.assign('/') }, [])
   // The daemon answers GET /telemetry from its sampler's cache, so a sampler whose hardware read hangs
   // keeps serving the same numbers with a normal 200. Its age is what says so.
-  const staleS = staleSeconds(tele)
+  // Not answering at all outranks both below: the age the daemon last reported is not what is wrong.
+  const offlineS = offlineSeconds(lastOkMs, nowMs)
+  const offline = offlineS != null
+  const staleS = offline ? null : staleSeconds(tele)
   // Answering, but the hardware has never been read (audit round 3): not stale, and not live either.
-  const noReading = unsampled(tele)
+  const noReading = !offline && unsampled(tele)
   const verified = tele ? tdpVerifiedNow(tele, tdpWrite) : (tdpWrite?.verified ?? seedVerified)
 
   return (
@@ -209,6 +223,12 @@ export function OverlayApp() {
         <div className="qam-brand">
           <img className="qam-logo" src="/logo.svg" alt="" aria-hidden width={20} height={20} />
           <span>GPD Forge</span>
+          {offline && (
+            <span className="qam-stale" data-testid="qam-offline" role="status"
+                  aria-label={`Daemon not answering — last reading ${offlineS} s ago`}>
+              Offline · {offlineS} s ago
+            </span>
+          )}
           {staleS != null && (
             <span className="qam-stale" data-testid="qam-stale" role="status"
                   aria-label={`Telemetry stalled — last reading ${staleS} s ago`}>
@@ -221,12 +241,12 @@ export function OverlayApp() {
               No reading yet
             </span>
           )}
-          <span className={`qam-dot ${tele && staleS == null && !noReading ? 'on' : ''}`}
-                title={noReading ? 'no reading yet' : staleS == null ? 'live' : 'stalled'} />
+          <span className={`qam-dot ${tele && !offline && staleS == null && !noReading ? 'on' : ''}`}
+                title={offline ? 'offline' : noReading ? 'no reading yet' : staleS == null ? 'live' : 'stalled'} />
         </div>
         {/* The live triple is the first thing a player looks at, so it gets the largest type in the
             panel and its own bracketed frame. Dimmed when stale: a frozen reading must not look live. */}
-        <div className="qam-live" data-stale={staleS != null || noReading || undefined}>
+        <div className="qam-live" data-stale={offline || staleS != null || noReading || undefined}>
           <div className="qam-stat">
             <span className="qam-stat-v">{reading(tele?.cpuTempC)}<i>°C</i></span>
             <span className="qam-stat-k">CPU</span>

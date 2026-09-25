@@ -467,6 +467,11 @@ if ($EnableGpuProfiles) {
     $env:GPDFORGE_ENABLE_GPU_PROFILES = '1'   # so the agent started below inherits it immediately
 } else {
     [Environment]::SetEnvironmentVariable('GPDFORGE_ENABLE_GPU_PROFILES', $null, 'Machine')
+    # And from THIS process: the agent started at the end inherits our environment, and an elevated
+    # shell opened after an earlier opt-in install still carries the 1 it read from the Machine scope.
+    # Clearing only the Machine value left that agent driving Radeon settings until logoff (audit
+    # round 1, 2026-09-25) — an opt-out that did not opt out.
+    Remove-Item Env:GPDFORGE_ENABLE_GPU_PROFILES -ErrorAction SilentlyContinue
 }
 # NOT added to the service's own environment: the daemon must never hold an ADLX handle. It did once,
 # and a second handle's ADLXTerminate invalidated the first one's pointers, crashing the service with

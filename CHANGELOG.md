@@ -81,6 +81,15 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   from the Dashboard; it is now one.
 
 ### Fixed
+- **The overlay says Offline when the daemon stops answering.** A failed poll kept the last good
+  reading, whose age was fresh when the daemon served it and never aged afterwards, so a crashed
+  daemon — and with it the guardian, the fan loop and TDP control — left a green "live" dot over
+  frozen numbers for as long as the overlay stayed open. After 3 s without an answer the overlay now
+  shows "Offline · N s ago", turns the dot off and dims the numbers.
+- **Reinstalling without `-EnableGpuProfiles` really opts out.** The installer now always starts the
+  session agent, and that agent inherits the installer's environment. An elevated shell opened after
+  an earlier opt-in install still carried the gate, so the agent went on applying Radeon profiles
+  until logoff; the installer now clears the gate from its own process too, not only machine-wide.
 - **A PM-table row that ignores writes no longer fails every TDP write.** The slow limit and Tctl
   are judged since the reassert learned to read them, but neither row has ever been seen on the
   HX 370. A firmware that printed a fixed Tctl would have made every write — manual ones included —
