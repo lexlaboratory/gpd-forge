@@ -14,6 +14,11 @@ test.describe('Overlay (QAM)', () => {
     await expect(page.getByTestId('qam-close')).toBeVisible()
   })
 
+  // Plan F6: on battery, the charge left at the game's own recorded drain (27.5 Wh/h for 40.2 Wh).
+  test('battery line counts the time left in the game in front', async ({ page }) => {
+    await expect(page.getByTestId('qam-budget')).toContainText('~1 h 28 m in this game')
+  })
+
   test('mode select marks the active mode', async ({ page }) => {
     const g = page.getByTestId('qam-mode-gaming')
     await g.click()

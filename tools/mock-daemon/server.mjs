@@ -219,7 +219,9 @@ const SAMPLE_SESSIONS = [
     onBattery: true, batteryStartPct: 96, batteryEndPct: 31, batteryUsedPct: 65,
     fpsTrend: trend(52.4, 120),
     fps01PctLow: 33.5, stuttersPerMin: 0.6, energyWh: 41.3, energySource: 'battery',
-    mode: 'battery', frameCapFps: 45,
+    // gaming-battery against the plugged-in gaming run above: the Games page's A/B (plan F6) and the
+    // overlay's per-game budget (27.5 Wh/h) both come from this pair.
+    mode: 'gaming-battery', frameCapFps: 45,
   },
   {
     // The compositor and a browser present frames too, and the daemon records their sessions (on the
@@ -674,7 +676,10 @@ function lastRuleMatch() {
 // --- Forge Advisor (plan F3) -------------------------------------------------------------------
 // A port of core/Advisor/AdvisorRules.cs over the mock's own state. The mock learns no ceiling (it has
 // no guardian loop), so it starts with none and specs seed one through /advisor/_test-seed.
-const advisorState = { ceilings: {}, dismissed: [], applied: [] }
+// batteryHistory (plan F6): games whose gaming / gaming-battery record the battery_mode rule may read. Seeded
+// like the ceilings, because the mock's AC state is fixed on battery and many specs leave the mode in gaming:
+// read unconditionally, the advice would surface in specs and baselines that never asked for it.
+const advisorState = { ceilings: {}, dismissed: [], applied: [], batteryHistory: [] }
 const MOCK_FRAME_GAME = 'cyberpunk2077'
 const clampW = (w) => Math.max(5, Math.min(40, Math.round(w)))
 function adviseMock(input) {
@@ -710,6 +715,13 @@ function adviseMock(input) {
       detail: `In this game the thermal guardian settles at about ${ceiling} W. Holding the sustained limit there avoids swinging between boost and throttle.`,
       stapmW: w, frameCapFps: null })
   }
+  // (5) Plan F6: unplugged in gaming, and gaming-battery held 30+ FPS over 5+ min of this game. Advice only.
+  const gb = input.onBattery && input.mode === 'gaming' ? (input.modes ?? []).find((m) => m.mode === 'gaming-battery') : null
+  if (gb && gb.totalSeconds >= MIN_BATTERY_EVIDENCE_S && gb.fpsAvg >= 30 && !(gb.fps1PctLow != null && gb.fps1PctLow < gb.fpsAvg * 0.5)) {
+    out.push({ id: `battery_mode:${game}`, game, kind: 'battery_mode', title: 'Switch to Gaming (battery)',
+      detail: `On battery now. In Gaming (battery) this game held ${Math.round(gb.fpsAvg)} FPS${gb.whPerHour != null ? ` at ${gb.whPerHour} W` : ''}. Switching stretches the charge without dropping below a playable frame rate.`,
+      stapmW: null, frameCapFps: null })
+  }
   return out.map((x) => ({ ...x, applicable: x.stapmW != null || x.frameCapFps != null }))
 }
 function governingRule(game) {
@@ -726,6 +738,7 @@ function advisorView(gameQuery) {
     game, live, last, hz: state.refresh.current, profile, ceiling, throttling: false,
     cap: live ? state.gpu.frameCapFps : null,
     stapmW: profile?.stapmW ?? (live ? state.lastTdp.stapmW : null),
+    onBattery: !state.acConnected, mode: state.activeMode, modes: advisorState.batteryHistory.includes(game) ? compareModes(gameSessions(game)) : [],
   }).filter((x) => !advisorState.dismissed.includes(x.id))
   return {
     game, live: live != null, refreshHz: state.refresh.current, learnedCeilingW: ceiling, suggestions,
@@ -865,9 +878,60 @@ function perGame(sessions) {
       fps1PctLow: weighted(rows, (s) => s.fps1PctLow),
       cpuTempMaxC: maxOrNull(rows, (s) => s.cpuTempMaxC),
       packageAvgW: weighted(rows, (s) => s.packageAvgW),
+      ...energyRate(rows),
+      modes: compareModes(rows),
     }))
     .sort((a, b) => b.totalSeconds - a.totalSeconds || (a.lastPlayedUtc < b.lastPlayedUtc ? 1 : -1))
 }
+
+// Plan F6 — mirrors SessionMath.EnergyRate / CompareModes / BatteryRate.
+const COMPARED_MODES = ['gaming', 'gaming-battery']
+const MIN_BATTERY_EVIDENCE_S = 300
+const measured = (rows, source) => rows.filter((s) => s.energySource === source && s.energyWh > 0 && s.durationSeconds > 0)
+const rate = (rows) => {
+  const hours = rows.reduce((n, s) => n + s.durationSeconds, 0) / 3600
+  return hours > 0 ? round1(rows.reduce((n, s) => n + s.energyWh, 0) / hours) : null
+}
+const weightedBy = (rows, pick) => {
+  let weight = 0, total = 0
+  for (const s of rows) {
+    const v = pick(s)
+    if (v === null || v === undefined) continue
+    const w = s.durationSeconds > 0 ? s.durationSeconds : 1
+    weight += w; total += v * w
+  }
+  return weight > 0 ? round1(total / weight) : null
+}
+function energyRate(rows) {
+  const battery = measured(rows, 'battery')
+  const basis = battery.length > 0 ? battery : measured(rows, 'package')
+  return basis.length === 0 ? { whPerHour: null, energySource: null } : { whPerHour: rate(basis), energySource: basis[0].energySource }
+}
+function compareModes(rows) {
+  const byMode = COMPARED_MODES
+    .map((mode) => ({ mode, rows: rows.filter((s) => (s.mode ?? '').toLowerCase() === mode) }))
+    .filter((x) => x.rows.length > 0)
+  const onBattery = byMode.length > 0 && byMode.every((x) => measured(x.rows, 'battery').length > 0)
+  return byMode.map((x) => {
+    const watts = onBattery ? rate(measured(x.rows, 'battery')) : weightedBy(x.rows, (s) => s.packageAvgW)
+    const fps = weightedBy(x.rows, (s) => s.fpsAvg)
+    return {
+      mode: x.mode, sessions: x.rows.length, totalSeconds: round1(x.rows.reduce((n, s) => n + s.durationSeconds, 0)),
+      fpsAvg: fps, fps1PctLow: weightedBy(x.rows, (s) => s.fps1PctLow), whPerHour: watts,
+      energySource: watts == null ? null : onBattery ? 'battery' : 'package',
+      fpsPerWatt: fps != null && watts > 0 ? Math.round((fps / watts) * 100) / 100 : null,
+    }
+  })
+}
+function batteryRate(rows, mode) {
+  const battery = measured(rows, 'battery')
+  const inMode = mode ? battery.filter((s) => (s.mode ?? '').toLowerCase() === mode) : []
+  const enough = (r) => r.reduce((n, s) => n + s.durationSeconds, 0) >= MIN_BATTERY_EVIDENCE_S
+  if (enough(inMode)) return { whPerHour: rate(inMode), mode: inMode[0].mode }
+  if (enough(battery)) return { whPerHour: rate(battery), mode: null }
+  return null
+}
+const gameSessions = (game) => state.sessions.filter((s) => normalizeMatch(s.app) === game)
 
 // The inference keep-awake, as the daemon reports it. Mirrors core/Ai/InferenceHoldStatus.
 //
@@ -1198,7 +1262,8 @@ async function handle(req, res) {
   // Test seam: seed learned ceilings ({ ceilings: { game: W } }) or clear everything ({ reset: true }).
   if (method === 'POST' && path === '/advisor/_test-seed') {
     const body = await readBody(req)
-    if (body?.reset) { advisorState.ceilings = {}; advisorState.dismissed = []; advisorState.applied = [] }
+    if (body?.reset) { advisorState.ceilings = {}; advisorState.dismissed = []; advisorState.applied = []; advisorState.batteryHistory = [] }
+    if (Array.isArray(body?.batteryHistory)) advisorState.batteryHistory.push(...body.batteryHistory.map(normalizeMatch))
     Object.assign(advisorState.ceilings, body?.ceilings ?? {})
     return send(res, 200, { ok: true })
   }
@@ -1251,10 +1316,17 @@ async function handle(req, res) {
       state.fanManualDuty = Math.max(0, Math.min(255, Number(body.manualDuty)))
     return send(res, 200, fanInfo())
   }
-  if (method === 'GET' && path === '/battery/budget') return send(res, 200, {
-    minutesRemaining: 78, remainingWh: 40.2, dischargeW: 18.4,
-    projections: [{ watts: 8, minutes: 301 }, { watts: 12, minutes: 201 }, { watts: 15, minutes: 160 }, { watts: 20, minutes: 120 }, { watts: 25, minutes: 96 }],
-  })
+  if (method === 'GET' && path === '/battery/budget') {
+    const remainingWh = 40.2
+    // The game in front is the mock's presenting game unless ?game= names another (plan F6).
+    const game = normalizeMatch(url.searchParams.get('game') || MOCK_FRAME_GAME)
+    const r = game && !NON_GAME_PRESENTERS.has(game) ? batteryRate(gameSessions(game), state.activeMode) : null
+    return send(res, 200, {
+      minutesRemaining: 78, remainingWh, dischargeW: 18.4,
+      projections: [{ watts: 8, minutes: 301 }, { watts: 12, minutes: 201 }, { watts: 15, minutes: 160 }, { watts: 20, minutes: 120 }, { watts: 25, minutes: 96 }],
+      game: r ? { app: game, whPerHour: r.whPerHour, minutes: Math.round((remainingWh / r.whPerHour) * 60), mode: r.mode } : null,
+    })
+  }
 
   if (method === 'GET' && path === '/freezer') return send(res, 200, { frozen: state.frozen })
   if (method === 'GET' && path === '/freezer/candidates') {

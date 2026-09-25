@@ -77,10 +77,99 @@ public static class SessionMath
                 FpsBest: MaxOrNull(g, s => s.FpsMax ?? s.FpsAvg),
                 Fps1PctLow: Weighted(g, s => s.Fps1PctLow),
                 CpuTempMaxC: MaxOrNull(g, s => s.CpuTempMaxC),
-                PackageAvgW: Weighted(g, s => s.PackageAvgW)))
+                PackageAvgW: Weighted(g, s => s.PackageAvgW),
+                WhPerHour: EnergyRate(g).WhPerHour,
+                EnergySource: EnergyRate(g).Source,
+                Modes: CompareModes(g)))
             .OrderByDescending(x => x.TotalSeconds)
             .ThenByDescending(x => x.LastPlayedUtc)
             .ToArray();
+    }
+
+    /// <summary>The modes the plan F6 A/B compares: the full-power preset and its battery twin.</summary>
+    public static IReadOnlyList<string> ComparedModes { get; } =
+        [GpdForge.Profiles.ModeCatalogue.Gaming, GpdForge.Profiles.ModeCatalogue.GamingBattery];
+
+    /// <summary>Battery play the per-game figures need before they speak: a few minutes average out the
+    /// menus and loading screens whose draw is nothing like the game's.</summary>
+    public const double MinBatteryEvidenceSeconds = 300;
+
+    private const string BatterySource = "battery";
+    private const string PackageSource = "package";
+
+    /// <summary>
+    /// Energy per hour of play (= average watts) across <paramref name="sessions"/>: total Wh over total
+    /// hours, so a long session counts for what it is. Sessions that ran on battery are used when there
+    /// are any, because the whole-system drain is what empties the battery and the package alone leaves
+    /// out the screen, RAM and board; else the package energy. Null when no session measured either.
+    /// </summary>
+    public static (double? WhPerHour, string? Source) EnergyRate(IEnumerable<GameSession> sessions)
+    {
+        ArgumentNullException.ThrowIfNull(sessions);
+        var battery = Measured(sessions, BatterySource);
+        var basis = battery.Length > 0 ? battery : Measured(sessions, PackageSource);
+        return basis.Length == 0 ? (null, null) : (Rate(basis), basis[0].EnergySource);
+    }
+
+    /// <summary>
+    /// The gaming vs gaming-battery A/B for one game's sessions (plan F6): FPS, 1 % low, watts and FPS
+    /// per watt for each compared mode it was played in. The watts are the battery drain only when every
+    /// side has battery sessions; otherwise every side uses its package power (which every session reads,
+    /// plugged in or not), so the comparison is never drain against package.
+    /// </summary>
+    public static IReadOnlyList<ModeStats> CompareModes(IEnumerable<GameSession> sessions)
+    {
+        ArgumentNullException.ThrowIfNull(sessions);
+        var all = sessions.ToArray();
+        var byMode = ComparedModes
+            .Select(m => (Mode: m, Sessions: all.Where(s => string.Equals(s.Mode, m, StringComparison.OrdinalIgnoreCase)).ToArray()))
+            .Where(x => x.Sessions.Length > 0)
+            .ToArray();
+        bool onBattery = byMode.Length > 0 && byMode.All(x => Measured(x.Sessions, BatterySource).Length > 0);
+
+        return byMode.Select(x =>
+        {
+            var watts = onBattery ? Rate(Measured(x.Sessions, BatterySource)) : Weighted(x.Sessions, s => s.PackageAvgW);
+            var fps = Weighted(x.Sessions, s => s.FpsAvg);
+            return new ModeStats(
+                Mode: x.Mode,
+                Sessions: x.Sessions.Length,
+                TotalSeconds: Round(x.Sessions.Sum(s => s.DurationSeconds)),
+                FpsAvg: fps,
+                Fps1PctLow: Weighted(x.Sessions, s => s.Fps1PctLow),
+                WhPerHour: watts,
+                EnergySource: watts is null ? null : onBattery ? BatterySource : PackageSource,
+                // Two decimals: a tenth of a frame per watt can be the whole difference between two presets.
+                FpsPerWatt: fps is double f && watts is > 0 ? Math.Round(f / watts.Value, 2, MidpointRounding.AwayFromZero) : null);
+        }).ToArray();
+    }
+
+    /// <summary>
+    /// What one game drains from the battery per hour (plan F6), for the overlay's "~1 h 20 m in this
+    /// game". Only sessions that ran on battery count, since a plugged-in session's package power is not
+    /// the drain. Those in <paramref name="mode"/> are used when there are enough of them, because a game
+    /// costs different watts in gaming and gaming-battery; else all of the game's battery play, and the
+    /// result's Mode is null. Null below <see cref="MinBatteryEvidenceSeconds"/>.
+    /// </summary>
+    public static (double WhPerHour, string? Mode)? BatteryRate(IEnumerable<GameSession> sessionsOfGame, string? mode)
+    {
+        ArgumentNullException.ThrowIfNull(sessionsOfGame);
+        var battery = Measured(sessionsOfGame, BatterySource);
+        var inMode = mode is null ? [] : battery.Where(s => string.Equals(s.Mode, mode, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (Enough(inMode) && Rate(inMode) is double m) return (m, inMode[0].Mode);
+        if (Enough(battery) && Rate(battery) is double any) return (any, null);
+        return null;
+
+        static bool Enough(GameSession[] s) => s.Sum(x => x.DurationSeconds) >= MinBatteryEvidenceSeconds;
+    }
+
+    private static GameSession[] Measured(IEnumerable<GameSession> sessions, string source) =>
+        sessions.Where(s => s.EnergySource == source && s.EnergyWh is > 0 && s.DurationSeconds > 0).ToArray();
+
+    private static double? Rate(GameSession[] basis)
+    {
+        double hours = basis.Sum(s => s.DurationSeconds) / 3600.0;
+        return hours > 0 ? Round(basis.Sum(s => s.EnergyWh ?? 0) / hours) : null;
     }
 
     /// <summary>The rollups that could be games: drops the known non-game presenters the FPS target

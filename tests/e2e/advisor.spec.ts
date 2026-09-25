@@ -27,6 +27,23 @@ test.describe('Forge Advisor', () => {
     }
   })
 
+  // Plan F6: the mock runs on battery; in gaming, cyberpunk2077's 1.5 h of gaming-battery at 52 FPS is
+  // the evidence. Advice only: the game's rule would carry gaming-battery onto AC too, so no Apply.
+  test('on battery in gaming, suggests gaming-battery when the game held up in it', async ({ page, request }) => {
+    const before = (await (await request.get(`${API}/mode`)).json()).active as string
+    await request.post(`${API}/advisor/_test-seed`, { data: { reset: true, batteryHistory: ['cyberpunk2077'] } })
+    await request.post(`${API}/mode`, { data: { name: 'gaming' } })
+    try {
+      await page.goto('/')
+      const item = page.getByTestId('advisor').getByTestId('advisor-item-battery_mode')
+      await expect(item).toContainText('Switch to Gaming (battery)')
+      await expect(item).toContainText('52 FPS')
+      await expect(page.getByTestId('advisor-apply-battery_mode')).toHaveCount(0)
+    } finally {
+      await request.post(`${API}/mode`, { data: { name: before } })
+    }
+  })
+
   test('nothing to suggest shows no card', async ({ page, request }) => {
     await seed(request, {})
     await page.goto('/')

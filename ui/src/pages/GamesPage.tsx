@@ -7,7 +7,7 @@
 //   GET /profiles/active  which profile is in force right now (polled once, by the shell).
 // Numbers follow the Sessions page's rule: null is "not measured" and renders as a dash, never as 0.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ActiveGameProfile, AppRulesInfo, GameSummary, GamesResponse, Preset } from '../types'
+import type { ActiveGameProfile, AppRulesInfo, GameSummary, GamesResponse, ModeStats, Preset } from '../types'
 import { getAppRules, getProfiles, getSessionGames } from '../api'
 import { Badge, Frame, Unavailable, type Tone } from '../components'
 import { AUTO_PROFILES_OFF, describeOverrides, displayName, profileState, type ProfileKind } from '../gameProfile'
@@ -166,9 +166,39 @@ function GameCard({ game: g, rules, active, open, disabled, cardRef, onOpen }: {
         <Stat testid={`games-fps-${g.app}`} value={num(g.fpsAvg)} label="FPS avg" />
         <Stat testid={`games-low-${g.app}`} value={num(g.fps1PctLow)} label="1% low" />
         <Stat testid={`games-watts-${g.app}`} value={num(g.packageAvgW)} unit={g.packageAvgW == null ? undefined : 'W'} label="Power avg" />
+        {/* F6: what an hour of this game costs. Labelled by basis: the battery drain is the whole
+            system, the package alone leaves out the screen and board, so the two must not read alike. */}
+        <Stat testid={`games-whh-${g.app}`} value={num(g.whPerHour)} unit={g.whPerHour == null ? undefined : 'Wh/h'}
+              label={g.energySource === 'package' ? 'Energy (chip)' : 'Energy'} />
       </span>
+      <ModeComparison app={g.app} modes={g.modes} />
       <span className="game-summary" data-testid={`games-summary-${g.app}`}>{summary}</span>
     </button>
+  )
+}
+
+/** The gaming vs gaming-battery A/B (F6): shown only when the game was played in both, since one side
+ *  alone compares nothing. Spans, not a table: it sits inside the card's button. */
+function ModeComparison({ app, modes }: { app: string; modes?: ModeStats[] }) {
+  if (!modes || modes.length < 2) return null
+  const basis = modes[0].energySource === 'package' ? 'chip power' : 'battery drain'
+  return (
+    <span className="game-ab" data-testid={`games-ab-${app}`}>
+      <span className="game-ab-k">Gaming vs battery · {basis}</span>
+      {/* Units once in a header row: repeated on every cell they did not fit a 720 px card. */}
+      <span className="game-ab-row game-ab-head">
+        <span /><span>FPS</span><span>Low</span><span>W</span><span>FPS/W</span>
+      </span>
+      {modes.map((m) => (
+        <span key={m.mode} className="game-ab-row" data-testid={`games-ab-${app}-${m.mode}`}>
+          <span className="game-ab-mode">{PRESET_LABEL[m.mode] ?? m.mode}</span>
+          <span>{num(m.fpsAvg, 0)}</span>
+          <span>{num(m.fps1PctLow, 0)}</span>
+          <span>{num(m.whPerHour)}</span>
+          <span>{num(m.fpsPerWatt, 2)}</span>
+        </span>
+      ))}
+    </span>
   )
 }
 

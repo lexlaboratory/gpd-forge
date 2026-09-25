@@ -23,6 +23,9 @@ namespace GpdForge.Advisor;
 /// <param name="LearnedCeilingW">Where the guardian settles for this game (ThermalCeilingLearner).</param>
 /// <param name="StapmW">The sustained limit in force now; null when unknown.</param>
 /// <param name="Profile">The game's stored overrides, so advice already taken is not repeated.</param>
+/// <param name="OnBattery">Running on battery now (plan F6): the charger was unplugged.</param>
+/// <param name="Mode">The active mode now; null when unknown.</param>
+/// <param name="ModeHistory">How the game ran in gaming and gaming-battery (SessionMath.CompareModes).</param>
 public sealed record AdvisorInput(
     string Game,
     FramePacingMetrics? Live,
@@ -32,7 +35,10 @@ public sealed record AdvisorInput(
     bool GuardianThrottling,
     double? LearnedCeilingW,
     int? StapmW,
-    RuleOverrides? Profile);
+    RuleOverrides? Profile,
+    bool OnBattery = false,
+    string? Mode = null,
+    IReadOnlyList<ModeStats>? ModeHistory = null);
 
 /// <summary>One proposed change. <see cref="Id"/> is "kind:game[:value]" — stable while the advice is
 /// the same, so a dismissal holds across polls and restarts, and a changed value is new advice.</summary>
@@ -73,6 +79,10 @@ public static class AdvisorRules
     /// <summary>The cap for a throttled game: 30 divides 60 Hz evenly, so every frame is on screen for
     /// exactly two refreshes and the pacing stays even at the watts the guardian allows.</summary>
     public const int ThrottledCapFps = 30;
+
+    /// <summary>The average gaming-battery must have held before it is suggested on battery: the same
+    /// 30 that paces evenly on the 60 Hz panel. Below it the saved watts cost the game.</summary>
+    public const double AcceptableBatteryFps = 30;
 
     public static IReadOnlyList<AdvisorSuggestion> Advise(AdvisorInput input)
     {
@@ -152,6 +162,22 @@ public static class AdvisorRules
                     w, null));
         }
 
+        // (5) Unplugged in gaming, and this game's own history says gaming-battery holds up (plan F6).
+        // Advice only: the game's rule decides its mode on AC as well, so writing gaming-battery into it
+        // would cost the plugged-in sessions; switching the mode now is one tap in the mode menu.
+        if (BatteryModeHolds(input) is ModeStats battery)
+        {
+            var full = input.ModeHistory!.FirstOrDefault(m => m.Mode == ModeCatalogue.Gaming);
+            var cost = battery.WhPerHour is double bw ? $" at {bw:0.#} W" : "";
+            var versus = full?.FpsAvg is double ff && full.WhPerHour is double fw && battery.WhPerHour is not null
+                ? $", against {ff:0} FPS at {fw:0.#} W in Gaming" : "";
+            var lowText = battery.Fps1PctLow is double bl ? $" (1 % low {bl:0})" : "";
+            result.Add(new($"battery_mode:{game}", game, "battery_mode",
+                "Switch to Gaming (battery)",
+                $"On battery now. In Gaming (battery) this game held {battery.FpsAvg:0} FPS{lowText}{cost}{versus}. Switching stretches the charge without dropping below a playable frame rate.",
+                null, null));
+        }
+
         return result;
     }
 
@@ -160,6 +186,19 @@ public static class AdvisorRules
     {
         var parts = id?.Split(':');
         return parts is { Length: 2 or 3 } && parts[1].Length > 0 ? parts[1] : null;
+    }
+
+    /// <summary>The game's gaming-battery record when it justifies the switch: on battery, in gaming
+    /// (another mode is a choice the user made for another reason), with enough gaming-battery play to
+    /// trust, an average at or over <see cref="AcceptableBatteryFps"/> and a 1 % low that is not the
+    /// stutter <see cref="PoorLowShare"/> describes.</summary>
+    private static ModeStats? BatteryModeHolds(AdvisorInput input)
+    {
+        if (!input.OnBattery || !string.Equals(input.Mode, ModeCatalogue.Gaming, StringComparison.OrdinalIgnoreCase)) return null;
+        var b = input.ModeHistory?.FirstOrDefault(m => m.Mode == ModeCatalogue.GamingBattery);
+        if (b is null || b.TotalSeconds < SessionMath.MinBatteryEvidenceSeconds || b.FpsAvg is not double avg || avg < AcceptableBatteryFps)
+            return null;
+        return b.Fps1PctLow is double low && low < avg * PoorLowShare ? null : b;
     }
 
     private static int Clamp(double w) =>

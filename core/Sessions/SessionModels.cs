@@ -115,6 +115,9 @@ public sealed record GameSession(
 /// <summary>Per-app rollup across sessions — the "by game" view and the Games page.</summary>
 /// <param name="PackageAvgW">Duration-weighted package power (F1, 2026-09-25): what the game costs
 /// next to what it delivers, so a per-game TDP can be judged against it. Null when no session read it.</param>
+/// <param name="WhPerHour">Plan F6: energy per hour of play (SessionMath.EnergyRate), on the basis
+/// <paramref name="EnergySource"/> names: "battery" (whole-system drain) or "package".</param>
+/// <param name="Modes">Plan F6: the gaming / gaming-battery A/B for this game, the modes it was played in.</param>
 public sealed record GameSummary(
     string App,
     int Sessions,
@@ -124,7 +127,28 @@ public sealed record GameSummary(
     double? FpsBest,
     double? Fps1PctLow,
     double? CpuTempMaxC,
-    double? PackageAvgW);
+    double? PackageAvgW,
+    double? WhPerHour = null,
+    string? EnergySource = null,
+    IReadOnlyList<ModeStats>? Modes = null);
+
+/// <summary>
+/// How one game ran in one mode (plan F6): one side of the gaming vs gaming-battery comparison. Every
+/// side of one comparison shares an <see cref="EnergySource"/>: watts from the whole-system drain and
+/// watts from the package alone are different quantities, and setting one against the other would make
+/// whichever mode was played plugged in look cheaper than it is.
+/// </summary>
+/// <param name="WhPerHour">Average draw in watts (Wh per hour of play); null when nothing was measured.</param>
+/// <param name="FpsPerWatt">Frames per second per watt of that draw: the efficiency the A/B is about.</param>
+public sealed record ModeStats(
+    string Mode,
+    int Sessions,
+    double TotalSeconds,
+    double? FpsAvg,
+    double? Fps1PctLow,
+    double? WhPerHour,
+    string? EnergySource,
+    double? FpsPerWatt);
 
 /// <summary>
 /// The thresholds that decide where one session ends and the next begins. Defaults are tuned for a

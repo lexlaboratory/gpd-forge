@@ -1886,7 +1886,19 @@ app.MapPost("/undervolt", (UndervoltRequest req, CurveOptimizerService uv) =>
 });
 
 // Battery budget (minutes left + projections at other TDPs).
-app.MapGet("/battery/budget", (BatteryService b) => Results.Json(b.GetBudget()));
+// Plan F6: plus `game`, the same charge spent on the game in front (`?game=` asks about another one)
+// at what its own recorded battery play drained per hour; null when there is no game or not enough
+// battery play of it, and the overlay then keeps the live-rate figure.
+app.MapGet("/battery/budget", (string? game, BatteryService b, SessionRecorder recorder, SessionStore sessions, ModeState mode) =>
+{
+    var budget = b.GetBudget();
+    var app = AppRulePolicy.Normalize(!string.IsNullOrWhiteSpace(game) ? game : recorder.CurrentApp);
+    if (app.Length == 0 || FrameTarget.IsNonGame(app)) return Results.Json(budget);
+    var played = sessions.List(null, 500).Where(s => AppRulePolicy.Normalize(s.App) == app);
+    return SessionMath.BatteryRate(played, mode.Active) is var (whPerHour, rateMode)
+        ? Results.Json(budget with { Game = BatteryEstimator.ForGame(app, budget.RemainingWh, whPerHour, rateMode) })
+        : Results.Json(budget);
+});
 
 // The charge guard. It does NOT stop charging and cannot: see the advisory below and
 // GET /battery/charge-limit. What it does is count the hours the pack spends plugged in and full —
@@ -2213,8 +2225,11 @@ static AdvisorView AdvisorPayload(IServiceProvider sp, string? gameQuery)
     catch (Exception) { /* no refresh reading: the cap rules stay quiet rather than guess */ }
     var rules = sp.GetRequiredService<IAppRuleStore>();
     var profile = rules.RuleFor(game)?.Overrides;
-    var last = sp.GetRequiredService<SessionStore>().List(null, 500)
-        .FirstOrDefault(x => AppRulePolicy.Normalize(x.App) == game && x.FpsAvg is not null);
+    var played = sp.GetRequiredService<SessionStore>().List(null, 500)
+        .Where(x => AppRulePolicy.Normalize(x.App) == game).ToArray();
+    var last = played.FirstOrDefault(x => x.FpsAvg is not null);
+    // Plan F6: unplugged is judged from the sampler's last reading; an unsampled daemon is not "on battery".
+    var reading = sp.GetRequiredService<TelemetrySampler>().Latest;
     var ceiling = sp.GetRequiredService<ThermalCeilingLearner>().CeilingFor(game);
     var input = new AdvisorInput(
         Game: game,
@@ -2225,7 +2240,10 @@ static AdvisorView AdvisorPayload(IServiceProvider sp, string? gameQuery)
         GuardianThrottling: live && sp.GetRequiredService<GuardianService>().Throttling,
         LearnedCeilingW: ceiling,
         StapmW: profile?.StapmW ?? (live ? sp.GetRequiredService<TdpState>().Last?.Requested.StapmW : null),
-        Profile: profile);
+        Profile: profile,
+        OnBattery: reading.IsSampled && !reading.Snapshot.AcConnected,
+        Mode: sp.GetRequiredService<ModeState>().Active,
+        ModeHistory: SessionMath.CompareModes(played));
     return new AdvisorView(game, live, hz, ceiling is double c ? Math.Round(c, 1) : null,
         advisor.Visible(AdvisorRules.Advise(input)),
         advisor.Applied.Where(a => a.Game == game).Take(10).ToArray());

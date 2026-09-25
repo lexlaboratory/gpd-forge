@@ -374,8 +374,10 @@
         "minutesRemaining": "number|null",
         "remainingWh": "number|null",
         "dischargeW": "number|null",
-        "projections": { "type": "array", "items": { "watts": "number", "minutes": "number|null" } }
-      }
+        "projections": { "type": "array", "items": { "watts": "number", "minutes": "number|null" } },
+        "game": { "type": "object|null", "fields": { "app": "string", "whPerHour": "number", "minutes": "number|null", "mode": "string|null" } }
+      },
+      "$comment": "`game` added in F6 (2026-09-25): the remaining charge spent on the game in front (`?game=` names another) at what its own recorded battery play drained per hour; in the active mode when it has 5+ min of battery play in it (`mode` names it), else across modes (`mode` null). Null with no game, or under 5 min of battery play."
     },
     {
       "method": "GET",
@@ -498,7 +500,7 @@
         "suggestions": "array",
         "applied": "array"
       },
-      "$comment": "F3 Forge Advisor (2026-09-25). `?game=` asks about one game; without it, the game presenting frames (else the session recorder's current app), and game:null with empty lists when there is none. Each suggestion: { id ('kind:game[:value]'), game, kind (cap_refresh | cap_30 | lower_resolution | stapm_ceiling | fewer_watts), title, detail, stapmW|null, frameCapFps|null, applicable }. `applied`: { id, game, kind, stapmW, frameCapFps, atUtc }, newest first. Dismissed suggestions are left out."
+      "$comment": "F3 Forge Advisor (2026-09-25). `?game=` asks about one game; without it, the game presenting frames (else the session recorder's current app), and game:null with empty lists when there is none. Each suggestion: { id ('kind:game[:value]'), game, kind (cap_refresh | cap_30 | lower_resolution | stapm_ceiling | fewer_watts | battery_mode, F6: advice only, on battery in gaming when 5+ min of gaming-battery held 30+ FPS), title, detail, stapmW|null, frameCapFps|null, applicable }. `applied`: { id, game, kind, stapmW, frameCapFps, atUtc }, newest first. Dismissed suggestions are left out."
     },
     {
       "method": "GET",
@@ -538,11 +540,14 @@
             "fpsAvg": "number|null",
             "fpsBest": "number|null",
             "fps1PctLow": "number|null",
-            "packageAvgW": "number|null"
+            "packageAvgW": "number|null",
+            "whPerHour": "number|null",
+            "energySource": "string|null",
+            "modes": { "type": "array", "items": { "mode": "string", "sessions": "number", "totalSeconds": "number", "fpsAvg": "number|null", "fps1PctLow": "number|null", "whPerHour": "number|null", "energySource": "string|null", "fpsPerWatt": "number|null" } }
           }
         }
       },
-      "$comment": "`packageAvgW` added in F1 (2026-09-25) for the Games page: duration-weighted like the FPS averages, null when no session read the package power."
+      "$comment": "`packageAvgW` added in F1 (2026-09-25) for the Games page: duration-weighted like the FPS averages, null when no session read the package power. F6 adds `whPerHour` (energy per hour of play, from battery sessions when there are any; `energySource` battery|package) and `modes`, the gaming vs gaming-battery A/B: only the compared modes the game was played in, every entry on one energySource (battery only when every side has battery play)."
     },
     {
       "method": "GET",

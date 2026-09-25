@@ -23,8 +23,16 @@ public class AdvisorRulesTests
 
     private static AdvisorInput Input(
         FramePacingMetrics? live = null, GameSession? last = null, int? hz = 60, int? cap = null,
-        bool throttling = false, double? ceiling = null, int? stapm = 28, RuleOverrides? profile = null) =>
-        new("eldenring.exe", live, last, hz, cap, throttling, ceiling, stapm, profile);
+        bool throttling = false, double? ceiling = null, int? stapm = 28, RuleOverrides? profile = null,
+        bool onBattery = false, string? mode = null, IReadOnlyList<ModeStats>? modes = null) =>
+        new("eldenring.exe", live, last, hz, cap, throttling, ceiling, stapm, profile, onBattery, mode, modes);
+
+    // How the game ran in each mode (plan F6); 10 min of gaming-battery play unless said otherwise.
+    private static ModeStats Mode(string mode, double? avg, double? low, double minutes = 10, double? whPerHour = 12) =>
+        new(mode, 1, minutes * 60, avg, low, whPerHour, whPerHour is null ? null : "battery",
+            avg is double a && whPerHour is double w ? Math.Round(a / w, 2) : null);
+
+    private static readonly ModeStats[] HoldsOnBattery = [Mode("gaming", 60, 45, whPerHour: 20), Mode("gaming-battery", 45, 35)];
 
     public static TheoryData<string, AdvisorInput, string[]> Scenarios => new()
     {
@@ -51,6 +59,14 @@ public class AdvisorRulesTests
         { "light game, sustained limit unknown", Input(live: Live(140, 100), stapm: null), ["cap_refresh"] },
         { "light game, profile already lower", Input(live: Live(140, 100), profile: new(StapmW: 18)), ["cap_refresh"] },
         { "a 2 s loading burst is not evidence", Input(live: Live(300, 200, span: 2)), [] },
+        { "unplugged in gaming, gaming-battery held up", Input(onBattery: true, mode: "gaming", modes: HoldsOnBattery), ["battery_mode"] },
+        { "plugged in: no battery advice", Input(mode: "gaming", modes: HoldsOnBattery), [] },
+        { "already in gaming-battery", Input(onBattery: true, mode: "gaming-battery", modes: HoldsOnBattery), [] },
+        { "another mode the user chose", Input(onBattery: true, mode: "windows", modes: HoldsOnBattery), [] },
+        { "gaming-battery never played", Input(onBattery: true, mode: "gaming", modes: [Mode("gaming", 60, 45)]), [] },
+        { "gaming-battery ran under 30 FPS", Input(onBattery: true, mode: "gaming", modes: [Mode("gaming-battery", 25, 20)]), [] },
+        { "gaming-battery stuttered", Input(onBattery: true, mode: "gaming", modes: [Mode("gaming-battery", 45, 15)]), [] },
+        { "too little gaming-battery play", Input(onBattery: true, mode: "gaming", modes: [Mode("gaming-battery", 45, 35, minutes: 3)]), [] },
     };
 
     [Theory]
@@ -94,6 +110,19 @@ public class AdvisorRulesTests
         var s = AdvisorRules.Advise(Input(live: Live(140, 100), stapm: 28)).Single(x => x.Kind == "fewer_watts");
         Assert.Equal(21, s.StapmW);
         Assert.Null(s.FrameCapFps);
+    }
+
+    [Fact]
+    public void Battery_mode_is_advice_with_the_evidence_in_it()
+    {
+        var s = AdvisorRules.Advise(Input(onBattery: true, mode: "gaming", modes: HoldsOnBattery)).Single();
+        Assert.Equal("battery_mode:eldenring", s.Id);
+        Assert.False(s.Applicable);
+        Assert.Contains("45 FPS", s.Detail);
+        Assert.Contains("12 W", s.Detail);
+        Assert.Contains("20 W", s.Detail);
+        Assert.Equal("battery_mode:eldenring", AdvisorRules.Advise(Input(onBattery: true, mode: "gaming",
+            modes: [Mode("gaming-battery", 45, null, whPerHour: null)])).Single().Id);
     }
 
     [Fact]

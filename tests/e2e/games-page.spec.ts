@@ -72,6 +72,25 @@ test.describe('Games page', () => {
     await expect(page.getByTestId('games-fps-hades2')).not.toContainText('0')
   })
 
+  // Plan F6: what an hour of each game costs, and the gaming vs gaming-battery A/B.
+  test('shows each game\'s energy per hour and the gaming vs battery comparison', async ({ page }) => {
+    await openGames(page)
+    // The battery session is the drain that counts: 41.3 Wh over 1.5 h.
+    await expect(page.getByTestId('games-whh-cyberpunk2077')).toContainText('27.5')
+    await expect(page.getByTestId('games-whh-cyberpunk2077')).toContainText('Energy')
+    await expect(page.getByTestId('games-whh-hades2')).toContainText('19.2')
+
+    // gaming ran plugged in, so both sides are compared on chip power, never drain against package.
+    const ab = page.getByTestId('games-ab-cyberpunk2077')
+    await expect(ab).toContainText('chip power')
+    // Cells in order: mode, FPS, 1% low, W, FPS/W (the units are the header row's).
+    const cells = async (mode: string) => ab.getByTestId(`games-ab-cyberpunk2077-${mode}`).locator('span').allTextContents()
+    expect(await cells('gaming')).toEqual(['Gaming', '62', '44', '31.4', '1.97'])
+    expect(await cells('gaming-battery')).toEqual(['Gaming (batt)', '52', '38', '24.6', '2.13'])
+    // hades2 was never played in the compared modes: no comparison at all, rather than half of one.
+    await expect(page.getByTestId('games-ab-hades2')).toHaveCount(0)
+  })
+
   // F1 audit round 1 (2026-09-25): on the device dwm.exe headed this page, profileable, with chrome.exe
   // further down. The mock's history carries both, as the device's does.
   test('known non-game windows are not listed as games', async ({ page, request }) => {
@@ -95,7 +114,7 @@ test.describe('Games page', () => {
     await expect(rows.nth(1)).toContainText('1 h 30 min · 52.4 FPS · 1% low 38.1')
     // F2: per-session pacing, energy, mode and cap — the battery run integrates the drain.
     await expect(rows.nth(0)).toContainText('0.1% low 21.7 · 4.2 stutters/min · 31.4 Wh (package) · Gaming · no cap')
-    await expect(rows.nth(1)).toContainText('0.1% low 33.5 · 0.6 stutters/min · 41.3 Wh (battery) · Battery · cap 45')
+    await expect(rows.nth(1)).toContainText('0.1% low 33.5 · 0.6 stutters/min · 41.3 Wh (battery) · Gaming-battery · cap 45')
 
     // A session without an FPS reading shows dashes, never zeros.
     await page.getByTestId('game-sheet-close').click()

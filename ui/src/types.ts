@@ -71,7 +71,14 @@ export interface HistorySample { unixMs: number; snap: Telemetry }
 export interface HistoryResponse { samples: HistorySample[] }
 
 export interface Preset { stapmW: number; fastW: number; slowW: number; tctlC: number }
-export interface BatteryBudget { minutesRemaining: number | null; remainingWh: number; dischargeW: number; projections: { watts: number; minutes: number }[] }
+export interface BatteryBudget {
+  minutesRemaining: number | null; remainingWh: number; dischargeW: number; projections: { watts: number; minutes: number }[]
+  /** F6: the charge left spent on the game in front at its own recorded battery drain. Null (or absent
+   *  from an older daemon) with no game or too little battery play of it. */
+  game?: GameBudget | null
+}
+/** `mode` names the mode the rate was measured in; null when it is the game's battery play across modes. */
+export interface GameBudget { app: string; whPerHour: number; minutes: number | null; mode: string | null }
 
 /**
  * The charge guard. `canStopCharging` is always false and is part of the contract rather than an
@@ -450,6 +457,26 @@ export interface GameSummary {
   cpuTempMaxC: number | null
   /** Duration-weighted package power (F1). Optional because a daemon older than F1 omits it. */
   packageAvgW?: number | null
+  /** F6: energy per hour of play (= average watts), from battery sessions when there are any. */
+  whPerHour?: number | null
+  /** What whPerHour integrated: the whole-system battery drain, or the package alone. */
+  energySource?: EnergySource | null
+  /** F6: the gaming vs gaming-battery A/B, only the compared modes this game was played in. */
+  modes?: ModeStats[]
+}
+
+export type EnergySource = 'battery' | 'package'
+
+/** One side of the gaming vs gaming-battery A/B (F6). Every side of one game shares an energySource. */
+export interface ModeStats {
+  mode: string
+  sessions: number
+  totalSeconds: number
+  fpsAvg: number | null
+  fps1PctLow: number | null
+  whPerHour: number | null
+  energySource: EnergySource | null
+  fpsPerWatt: number | null
 }
 
 export interface SessionsResponse {
@@ -523,7 +550,8 @@ export interface GpuInfo {
 }
 
 // --- Forge Advisor (plan F3): GET /advisor/suggestions, POST /advisor/apply | /advisor/dismiss ---
-export type AdvisorKind = 'cap_refresh' | 'cap_30' | 'lower_resolution' | 'stapm_ceiling' | 'fewer_watts'
+/** `battery_mode` (F6) is advice only: on battery in gaming, when this game held up in gaming-battery. */
+export type AdvisorKind = 'cap_refresh' | 'cap_30' | 'lower_resolution' | 'stapm_ceiling' | 'fewer_watts' | 'battery_mode'
 export interface AdvisorSuggestion {
   /** `kind:game[:value]` — stable while the advice is the same. */
   id: string

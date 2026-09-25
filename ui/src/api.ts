@@ -91,7 +91,9 @@ export const getFanInfo = () => json<FanInfo>('/fan')
 export const setFanManualDuty = (manualDuty: number) => json<FanInfo>('/fan', post({ manualDuty }))
 
 // --- battery budget ---
-export const getBudget = () => json<BatteryBudget>('/battery/budget')
+// `game` (F6) asks for another game's budget; without it the daemon uses the game presenting frames.
+export const getBudget = (game?: string) =>
+  json<BatteryBudget>(game ? `/battery/budget?game=${encodeURIComponent(game)}` : '/battery/budget')
 // Health changes over months, so this is fetched once per mount rather than polled.
 export const getBatteryHealth = () => json<BatteryHealth>('/battery/health')
 export const getChargeGuard = () => json<ChargeGuard>('/battery/charge-guard')

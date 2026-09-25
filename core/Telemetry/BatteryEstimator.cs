@@ -20,7 +20,15 @@ public sealed record BatteryBudget(
     int? MinutesRemaining,
     double RemainingWh,
     double DischargeW,
-    IReadOnlyList<Projection> Projections);
+    IReadOnlyList<Projection> Projections,
+    GameBudget? Game = null);
+
+/// <summary>Plan F6: the battery left, spent on the game in front, at what that game has drained per
+/// hour in its recorded battery play ("~1 h 20 m in this game"). The live discharge rate swings with
+/// every menu and loading screen; the game's own history is the steadier answer to "how long can I
+/// keep playing this". <see cref="Mode"/> names the mode the rate was measured in, null when it is the
+/// game's battery play across modes.</summary>
+public sealed record GameBudget(string App, double WhPerHour, int? Minutes, string? Mode);
 
 /// <summary>Pure battery-budget math. No I/O, no WMI — safe to unit test directly.</summary>
 public static class BatteryEstimator
@@ -56,6 +64,10 @@ public static class BatteryEstimator
         }
         return projections;
     }
+
+    /// <summary>The per-game budget (plan F6): the remaining energy at the game's own Wh per hour.</summary>
+    public static GameBudget ForGame(string app, double remainingWh, double whPerHour, string? mode) =>
+        new(app, whPerHour, Estimate(remainingWh, whPerHour), mode);
 
     /// <summary>Convenience overload projecting at <see cref="DefaultTdpWatts"/>.</summary>
     public static IReadOnlyList<Projection> Project(double remainingWh) => Project(remainingWh, DefaultTdpWatts);

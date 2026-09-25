@@ -212,10 +212,17 @@ const FIXTURES: Record<string, unknown> = {
       {
         app: 'cyberpunk2077', sessions: 2, totalSeconds: 9000, fpsAvg: 56.1, fpsBest: 78.9, fps1PctLow: 40.5,
         cpuTempMaxC: 94.2, packageAvgW: 27.3, lastPlayedUtc: '2026-08-27T20:00:00.000Z',
+        // F6: energy per hour and the gaming vs gaming-battery A/B, pinned on chip power.
+        whPerHour: 27.5, energySource: 'battery',
+        modes: [
+          { mode: 'gaming', sessions: 1, totalSeconds: 3600, fpsAvg: 61.8, fps1PctLow: 44.2, whPerHour: 31.4, energySource: 'package', fpsPerWatt: 1.97 },
+          { mode: 'gaming-battery', sessions: 1, totalSeconds: 5400, fpsAvg: 52.4, fps1PctLow: 38.1, whPerHour: 24.6, energySource: 'package', fpsPerWatt: 2.13 },
+        ],
       },
       {
         app: 'hades2', sessions: 1, totalSeconds: 1800, fpsAvg: null, fpsBest: null, fps1PctLow: null,
         cpuTempMaxC: 72.8, packageAvgW: 15.1, lastPlayedUtc: '2026-08-26T09:00:00.000Z',
+        whPerHour: 19.2, energySource: 'battery', modes: [],
       },
       // A real process name as the daemon records it (2026-09-25, GET /sessions/games on the device):
       // mixed case, spaces and the .exe tail — the shape the card's name and wrapping have to survive.

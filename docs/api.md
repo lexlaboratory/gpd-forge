@@ -493,6 +493,7 @@ there is none. Kinds:
 | `lower_resolution` | as `cap_30`, but already capped at ≤ 30 | nothing (`applicable: false`; RSR arrives in F4) |
 | `fewer_watts` | 1 % low ≥ 1.5× refresh, not throttling, limit known | `stapmW` = 75 % of the limit |
 | `stapm_ceiling` | a ceiling is learned (and `fewer_watts` did not fire) | `stapmW` = the ceiling |
+| `battery_mode` (F6) | on battery, mode `gaming`, and the game's gaming-battery play (5+ min) averaged ≥ 30 FPS with a 1 % low ≥ half of it | nothing (`applicable: false`): the rule's mode also governs AC, so the user switches the mode |
 
 `cap_refresh` takes precedence over `cap_30` (the smaller step: capping at 60 alone lifted the 1 % low
 from 2–17 to ~30 here). Advice the profile already carries is not repeated. Ids are
@@ -547,8 +548,21 @@ GameSession = { id: guid, app: string, startedUtc, endedUtc, durationSeconds: nu
                 energySource: "battery" | "package" | null, mode: string | null,
                 frameCapFps: number | null }
 GameSummary = { app: string, sessions: number, totalSeconds: number, lastPlayedUtc,
-                fpsAvg, fpsBest, fps1PctLow, cpuTempMaxC, packageAvgW: number | null }
+                fpsAvg, fpsBest, fps1PctLow, cpuTempMaxC, packageAvgW: number | null,
+                // F6 (2026-09-25)
+                whPerHour: number | null, energySource: "battery" | "package" | null,
+                modes: ModeStats[] }
+ModeStats   = { mode: "gaming" | "gaming-battery", sessions: number, totalSeconds: number,
+                fpsAvg, fps1PctLow, whPerHour, fpsPerWatt: number | null,
+                energySource: "battery" | "package" | null }
 ```
+
+F6: `whPerHour` is total Wh over total hours of play: from the game's battery sessions when it has any
+(the whole-system drain), else from its package energy, and `energySource` says which. `modes` is the
+gaming vs gaming-battery A/B, listing only the compared modes the game was played in. All its entries
+share one basis: the battery drain when every side has battery play, otherwise each side's package
+power. Setting one mode's drain against another's package would flatter whichever ran plugged in.
+`fpsPerWatt` = `fpsAvg / whPerHour`, two decimals.
 
 Every metric is nullable because every sensor behind it is optional on this hardware: `null` means
 *not measured* and is never written as a `0`. `samplesWithoutFps` counts the ticks where the app was
@@ -697,6 +711,14 @@ success.
   projections: Array<{ watts: number, minutes: number }> }`
 Runtime estimate from the current discharge rate, plus what-if runtimes at a spread of power levels.
 `minutesRemaining` is `null` on AC (nothing to project).
+
+`game` (F6, 2026-09-25): `{ app, whPerHour, minutes: number | null, mode: string | null } | null`, the
+charge left spent on the game in front (the session recorder's current app; `?game=` names another)
+at what that game drained per hour in its recorded **battery** sessions. A plugged-in session's
+package power is not the battery drain, so it never counts. The rate comes from the active mode's
+sessions when they total 5+ minutes (`mode` names it), else from all the game's battery play (`mode`
+null). `null` with no game, a non-game presenter, or under 5 minutes of battery play. The overlay
+shows "~1 h 20 m in this game" from it on battery, else the live-rate line.
 
 ### `GET /battery/charge-guard`  ·  `POST /battery/charge-guard`
 

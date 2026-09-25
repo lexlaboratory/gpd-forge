@@ -71,6 +71,10 @@ const readCap = () =>
 function fmtBudget(b: BatteryBudget | null): string {
   if (!b) return '—'
   if (b.minutesRemaining == null) return `On AC · ${b.remainingWh.toFixed(0)} Wh`
+  // On battery, the game's own recorded drain (F6) beats the live rate, which swings with every menu
+  // and loading screen; without enough battery play of this game, the live rate is all there is.
+  const g = b.game?.minutes
+  if (g != null) return `~${Math.floor(g / 60)} h ${g % 60} m in this game`
   const h = Math.floor(b.minutesRemaining / 60), m = b.minutesRemaining % 60
   return `~${h}h ${String(m).padStart(2, '0')}m @ ${b.dischargeW.toFixed(0)} W`
 }

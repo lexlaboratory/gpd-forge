@@ -51,6 +51,17 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Battery time per game, and gaming vs gaming-battery side by side (plan F6).** On battery the
+  overlay's Battery line now reads "~1 h 28 m in this game": the charge left at what this game has
+  drained per hour in its recorded battery play (in the current mode when it has 5+ minutes there),
+  which holds steadier than the live rate that swings with every menu. Without enough battery play of
+  the game it keeps the live-rate figure. Each game card on the Games page shows its energy per hour
+  (Wh/h, "chip" when only the package was measured) and, for a game played in both, a Gaming vs
+  Gaming (batt) table of FPS, 1 % low, watts and FPS per watt, on one energy basis so a plugged-in
+  run is never set against a battery one. The Advisor suggests switching to Gaming (battery) when you
+  are on battery in Gaming and the game held 30+ FPS without stutter over 5+ minutes in it; this is
+  advice only, since writing the mode into the game's rule would also apply it on AC.
+  `GET /battery/budget` gains `game`; `GET /sessions/games` gains `whPerHour`, `energySource`, `modes`.
 - **Freeze background apps while playing (plan F5).** A game's profile editor on the Games page has
   a "Freeze background apps while playing" checklist of the heavy apps running now
   (`GET /freezer/candidates`): Ollama, LM Studio, OneDrive and Google Drive are suggested, and
