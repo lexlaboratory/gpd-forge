@@ -38,7 +38,8 @@ public sealed record GpuSettingsSnapshot(
     GpuFeatureState? Chill,
     GpuFeatureState? Boost,
     GpuFeatureState? ImageSharpening,
-    GpuFeatureState? FrameRateTargetControl);
+    GpuFeatureState? FrameRateTargetControl,
+    GpuFeatureState? RadeonSuperResolution = null);
 
 /// <summary>
 /// The 3D settings, driven through ADLX's C interface. Not thread-safe by design: it is called from
@@ -67,12 +68,20 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
 
     // IADLX3DSettingsServicesVtbl: 0 Acquire, 1 Release, 2 QueryInterface,
     //   3 GetAntiLag, 4 GetChill, 5 GetBoost, 6 GetImageSharpening, 7 GetEnhancedSync,
-    //   8 GetWaitForVerticalRefresh, 9 GetFrameRateTargetControl, 10 GetAntiAliasing, ...
+    //   8 GetWaitForVerticalRefresh, 9 GetFrameRateTargetControl, 10 GetAntiAliasing,
+    //   11 GetMorphologicalAntiAliasing, 12 GetAnisotropicFiltering, 13 GetTessellation,
+    //   14 GetRadeonSuperResolution, 15 GetResetShaderCache, 16 GetGPUsChangedHandling
+    //
+    // GetRadeonSuperResolution is the one getter here WITHOUT a GPU argument: RSR is a system-wide
+    // setting in Adrenalin (it scales whatever runs fullscreen), so the header declares it as
+    // GetRadeonSuperResolution(IADLX3DRadeonSuperResolution**). Calling it with the GPU-taking
+    // delegate would pass the GPU pointer where the out-pointer belongs.
     private const int SlotGetAntiLag = 3;
     private const int SlotGetChill = 4;
     private const int SlotGetBoost = 5;
     private const int SlotGetImageSharpening = 6;
     private const int SlotGetFrameRateTargetControl = 9;
+    private const int SlotGetRadeonSuperResolution = 14;
 
     // Every feature interface shares this prefix: 0 Acquire, 1 Release, 2 QueryInterface,
     // 3 IsSupported, 4 IsEnabled. What follows differs per feature, hence the per-feature constants.
@@ -88,8 +97,16 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
     private const int SlotBoostGetResolution = 6;
     private const int SlotBoostSetEnabled = 7;
     // IADLX3DImageSharpeningVtbl 5 GetSharpnessRange, 6 GetSharpness, 7 SetEnabled, 8 SetSharpness
+    private const int SlotSharpGetSharpnessRange = 5;
     private const int SlotSharpGetSharpness = 6;
     private const int SlotSharpSetEnabled = 7;
+    private const int SlotSharpSetSharpness = 8;
+    // IADLX3DRadeonSuperResolutionVtbl 5 SetEnabled, 6 GetSharpnessRange, 7 GetSharpness, 8 SetSharpness
+    // — SetEnabled comes BEFORE the range here, unlike Image Sharpening. Not a typo to "fix".
+    private const int SlotRsrSetEnabled = 5;
+    private const int SlotRsrGetSharpnessRange = 6;
+    private const int SlotRsrGetSharpness = 7;
+    private const int SlotRsrSetSharpness = 8;
     // IADLX3DFrameRateTargetControlVtbl 5 GetFPSRange, 6 GetFPS, 7 SetEnabled, 8 SetFPS
     private const int SlotFrtcGetFpsRange = 5;
     private const int SlotFrtcGetFps = 6;
@@ -155,6 +172,8 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
     /// </summary>
     private T? WithFeature<T>(int servicesSlot, Func<IntPtr, T> use)
     {
+        // RSR is obtained without a GPU (see the services table above); everything else per GPU.
+        bool systemWide = servicesSlot == SlotGetRadeonSuperResolution;
         IntPtr services = IntPtr.Zero, gpu = IntPtr.Zero, feature = IntPtr.Zero;
         try
         {
@@ -162,12 +181,16 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
                 || services == IntPtr.Zero)
                 return default;
 
-            gpu = AcquireFirstGpu();
-            if (gpu == IntPtr.Zero) return default;
-
-            if (Fn<GpuArgOutPtrFn>(services, servicesSlot)(services, gpu, out feature) != ADLX_OK
-                || feature == IntPtr.Zero)
-                return default;
+            int rc;
+            if (systemWide)
+                rc = Fn<OutPtrFn>(services, servicesSlot)(services, out feature);
+            else
+            {
+                gpu = AcquireFirstGpu();
+                if (gpu == IntPtr.Zero) return default;
+                rc = Fn<GpuArgOutPtrFn>(services, servicesSlot)(services, gpu, out feature);
+            }
+            if (rc != ADLX_OK || feature == IntPtr.Zero) return default;
 
             return use(feature);
         }
@@ -214,8 +237,13 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
         AntiLag: ReadFeature(SlotGetAntiLag, null),
         Chill: ReadFeature(SlotGetChill, SlotChillGetMinFps),
         Boost: ReadFeature(SlotGetBoost, SlotBoostGetResolution),
-        ImageSharpening: ReadFeature(SlotGetImageSharpening, SlotSharpGetSharpness),
-        FrameRateTargetControl: ReadFeature(SlotGetFrameRateTargetControl, SlotFrtcGetFps, SlotFrtcGetFpsRange));
+        // The sharpness ranges are read now (F4) so a Display-page or profile value outside them is
+        // explained before it is sent, as the frame cap's is.
+        ImageSharpening: ReadFeature(SlotGetImageSharpening, SlotSharpGetSharpness, SlotSharpGetSharpnessRange),
+        FrameRateTargetControl: ReadFeature(SlotGetFrameRateTargetControl, SlotFrtcGetFps, SlotFrtcGetFpsRange),
+        // Null here on a driver without the interface (an older ADLX): reported as "not readable",
+        // which the daemon shows as unsupported rather than inventing an answer.
+        RadeonSuperResolution: ReadFeature(SlotGetRadeonSuperResolution, SlotRsrGetSharpness, SlotRsrGetSharpnessRange));
 
     /// <summary>Sets one feature's enabled flag. False when unsupported or the write did not succeed —
     /// never optimistic, because "we asked" is not "it applied".</summary>
@@ -252,6 +280,45 @@ public sealed class AdlxSettings(IntPtr system, ILogger? logger = null)
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Carries out an RSR / RIS request (F4) step by step, in GpuImagePlan's order, and reports per
+    /// field whether the driver took it and with what ADLX_RESULT when it did not. A step that fails
+    /// does not stop the ones after it: RIS does not depend on RSR, and half a request applied and
+    /// reported beats none applied and a guess.
+    /// </summary>
+    public IReadOnlyDictionary<string, (bool Ok, string Detail)> ApplyImage(GpuImageRequest request)
+    {
+        var result = new Dictionary<string, (bool, string)>();
+        foreach (var step in GpuImagePlan.Steps(request))
+            result[step.Field] = step.Kind switch
+            {
+                GpuImageStepKind.BoostOff => (SetEnabled(SlotGetBoost, SlotBoostSetEnabled, false), "Boost off (RSR needs it off)."),
+                GpuImageStepKind.RsrEnabled => Write(SlotGetRadeonSuperResolution, SlotRsrSetEnabled, step.Value, isFlag: true),
+                GpuImageStepKind.RsrSharpness => Write(SlotGetRadeonSuperResolution, SlotRsrSetSharpness, step.Value, isFlag: false),
+                GpuImageStepKind.RisEnabled => Write(SlotGetImageSharpening, SlotSharpSetEnabled, step.Value, isFlag: true),
+                _ => Write(SlotGetImageSharpening, SlotSharpSetSharpness, step.Value, isFlag: false),
+            };
+        return result;
+    }
+
+    /// <summary>One flag or value write, refused up front when the driver says the feature is not
+    /// supported — writing to an unsupported interface is not a question worth asking the driver.</summary>
+    private (bool Ok, string Detail) Write(int servicesSlot, int setSlot, int value, bool isFlag)
+    {
+        var r = WithFeature<(bool Ok, string Detail)>(servicesSlot, p =>
+        {
+            if (Fn<OutByteFn>(p, SlotIsSupported)(p, out var supported) != ADLX_OK || supported == 0)
+                return (false, "unsupported on this GPU/driver.");
+            var rc = isFlag
+                ? Fn<SetByteFn>(p, setSlot)(p, value != 0 ? (byte)1 : (byte)0)
+                : Fn<SetIntFn>(p, setSlot)(p, value);
+            return (rc == ADLX_OK, rc == ADLX_OK ? "ok" : $"rc={rc}");
+        });
+        // default((bool, string)) — the interface could not be obtained at all (an older driver
+        // without it, or the acquire chain failed). Said as such, not as a refusal of the value.
+        return r.Detail is null ? (false, "interface not obtainable from this driver.") : r;
     }
 
     /// <summary>

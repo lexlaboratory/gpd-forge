@@ -147,6 +147,23 @@ test.describe('Games page', () => {
     await expect(page.getByTestId('game-antilag')).toHaveAttribute('aria-pressed', 'false')
   })
 
+  test('RSR and Image Sharpening are saved with their sharpness and summarised (F4)', async ({ page, request }) => {
+    await removeRules(request, 'cyberpunk2077')
+    await openGames(page)
+    await page.getByTestId('games-card-cyberpunk2077').click()
+    // Off by default, and no sharpness is offered for a feature that is off.
+    await expect(page.getByTestId('game-rsr-sharpness')).toHaveCount(0)
+    await page.getByTestId('game-rsr').click()
+    await page.getByTestId('game-rsr-sharpness-inc').click()   // 75 -> 80
+    await page.getByTestId('game-ris').click()
+    await page.getByTestId('game-save').click()
+
+    await expect(page.getByTestId('games-summary-cyberpunk2077')).toHaveText('RSR 80 % · RIS 75 %')
+    const rule = (await rulesNow(request)).find((r) => r.match === 'cyberpunk2077')!
+    expect(rule.overrides).toMatchObject({ gpu: { rsr: true, rsrSharpness: 80, ris: true, risSharpness: 75, antiLag: null } })
+    await removeRules(request, 'cyberpunk2077')
+  })
+
   test('removing a profile clears its settings and keeps the rule that picks the mode', async ({ page, request }) => {
     await request.post(`${API}/app-rules`, {
       data: { match: 'hades2', mode: 'gaming', overrides: { stapmW: 18, frameCapFps: 45, fanMode: 'Quiet' } },

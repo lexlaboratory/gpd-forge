@@ -11,10 +11,14 @@
 // beside controls showing otherwise. So what the profile still holds is derived when it is READ
 // (ActiveGameProfileView), from the owners themselves; this record keeps only what that needs: the
 // cap request it made (CapVersion) and the TDP apply's outcome (TdpHold).
+using GpdForge.Gpu;
+
 namespace GpdForge.Profiles;
 
 /// <summary>The overrides that were layered. Null = left to the mode. FrameCapFps 0 = cap turned off.</summary>
-public sealed record AppliedOverrides(int? StapmW, int? FrameCapFps, string? FanMode, bool? AntiLag, bool? Chill);
+/// <remarks><paramref name="Image"/>: the RSR / RIS fields requested (F4), null when none was.</remarks>
+public sealed record AppliedOverrides(int? StapmW, int? FrameCapFps, string? FanMode, bool? AntiLag, bool? Chill,
+    GpuImageRequest? Image = null);
 
 public sealed record SkippedOverride(string Field, string Reason);
 
@@ -37,6 +41,10 @@ public sealed record ActiveGameProfile(
     /// <summary>GpuDesiredState.CapVersion right after this profile's cap request; null when it made none.
     /// Anything else there later means someone asked for another cap since.</summary>
     public long? CapVersion { get; init; }
+
+    /// <summary>GpuDesiredState.ImageVersion right after this profile's RSR / RIS request; null when it
+    /// made none. Anything else there later means the Display page asked for something since.</summary>
+    public long? ImageVersion { get; init; }
 
     /// <summary>Set when the TDP write that should have carried the game's watts did not happen.</summary>
     public TdpHold? TdpHold { get; init; }

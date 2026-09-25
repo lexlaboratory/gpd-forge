@@ -317,8 +317,19 @@ export interface RuleOverrides {
   stapmW: number | null
   frameCapFps: number | null
   fanMode: RuleFanMode | null
-  gpu: { antiLag: boolean | null; chill: boolean | null } | null
+  gpu: GpuOverrides | null
   freeze: string[] | null
+}
+/** A game's Radeon settings over its mode's. RSR / RIS (F4) are optional on the type so F1-era code
+ *  that builds `{ antiLag, chill }` still type-checks; absent = null = as the driver has it.
+ *  Sharpness is 0–100 %. */
+export interface GpuOverrides {
+  antiLag: boolean | null
+  chill: boolean | null
+  rsr?: boolean | null
+  rsrSharpness?: number | null
+  ris?: boolean | null
+  risSharpness?: number | null
 }
 /** A rule claims a process for a mode. Precedence is list order: first ENABLED match wins.
  *  `overrides` is optional on the type so a PUT that only toggles `enabled` can omit it — the daemon
@@ -335,7 +346,7 @@ export interface ActiveGameProfile {
     stapmW: number | null
     frameCapFps: number | null
     fanMode: RuleFanMode | null
-    gpu: { antiLag: boolean | null; chill: boolean | null }
+    gpu: GpuOverrides
   } | null
   /** What the rule asked for and was refused, with why (e.g. a cap below the auto-FPS target). */
   skipped: { field: string; reason: string }[]
@@ -448,7 +459,8 @@ export interface GamesResponse { fpsAvailable: boolean; games: GameSummary[] }
 // One Radeon feature as the driver reports it. A feature that could not be QUERIED comes back as
 // null in GpuSettings — which is not the same fact as `supported: false` (this GPU cannot do it) or
 // `enabled: false` (it can, and it is off). Render the three differently or do not render at all.
-export interface GpuFeature { supported: boolean; enabled: boolean; value: number | null }
+// min/max: the driver's supported range for `value` when it reported one (FRTC fps, sharpness %).
+export interface GpuFeature { supported: boolean; enabled: boolean; value: number | null; min?: number | null; max?: number | null }
 
 export interface GpuSettings {
   antiLag: GpuFeature | null
@@ -456,6 +468,16 @@ export interface GpuSettings {
   boost: GpuFeature | null
   imageSharpening: GpuFeature | null
   frameRateCap: GpuFeature | null
+  // Radeon Super Resolution (F4); value = its sharpness. Absent on a daemon older than F4.
+  superResolution?: GpuFeature | null
+}
+
+/** RSR / RIS to set (POST /gpu/image, GET /gpu/desired `image`). Null / absent = leave as is. */
+export interface GpuImageRequest {
+  rsr?: boolean | null
+  rsrSharpness?: number | null
+  ris?: boolean | null
+  risSharpness?: number | null
 }
 
 // GET /gpu/desired: what the daemon has asked the agent to put on the driver, which the agent
@@ -469,6 +491,9 @@ export interface GpuDesired {
   capVersion?: number
   antiLag: boolean | null
   chill: boolean | null
+  // RSR / RIS asked of the agent (F4), carried out once per imageVersion.
+  image?: GpuImageRequest | null
+  imageVersion?: number
 }
 
 // What a mode will do to the GPU when it becomes active.

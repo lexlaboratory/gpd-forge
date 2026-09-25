@@ -177,6 +177,7 @@ if (args.Contains("--probe-gpu"))
         Console.WriteLine($"  boost                 : {Describe(snap.Boost)}");
         Console.WriteLine($"  image sharpening      : {Describe(snap.ImageSharpening)}");
         Console.WriteLine($"  frame rate cap (FRTC) : {Describe(snap.FrameRateTargetControl)}");
+        Console.WriteLine($"  super resolution (RSR): {Describe(snap.RadeonSuperResolution)}");
 
         if (snap.AntiLag is null)
         {
@@ -1352,6 +1353,9 @@ app.MapGet("/gpu", (GpuAgentState agent, IVramReader vram) =>
             boost = Feature(s.Boost),
             imageSharpening = Feature(s.ImageSharpening),
             frameRateCap = Feature(s.FrameRateTargetControl),
+            // RSR (F4). value = its sharpness, min/max = the driver's sharpness range. Null when the
+            // agent could not obtain the interface — an older driver — which the UI shows as absent.
+            superResolution = Feature(s.RadeonSuperResolution),
         },
         modeProfiles = GpuModeProfiles.Modes.ToDictionary(m => m, m =>
         {
@@ -1417,7 +1421,52 @@ app.MapGet("/gpu/desired", (GpuDesiredState desired) => Results.Json(new
     // A game profile's Radeon features over the mode's (F1); null = the mode decides.
     antiLag = desired.AntiLag,
     chill = desired.Chill,
+    // RSR / RIS to set (F4); null = nothing asked. Carried out once per imageVersion, like the cap.
+    image = desired.Image is { } img
+        ? new { rsr = img.Rsr, rsrSharpness = img.RsrSharpness, ris = img.Ris, risSharpness = img.RisSharpness }
+        : null,
+    imageVersion = desired.ImageVersion,
 }));
+
+// RSR and Image Sharpening from the Display page (F4). The same contract as /gpu/frame-cap: an
+// INTENT the agent carries out within a few seconds, answered `applied:false, pending:true` — the
+// daemon cannot reach ADLX, and claiming "applied" here would describe work not yet done. Validated
+// against what the agent last reported, so an unsupported feature or an out-of-range sharpness is
+// explained now instead of the user watching nothing happen.
+app.MapPost("/gpu/image", (GpuImageBody r, GpuDesiredState desired, GpuAgentState agent) =>
+{
+    var (report, usable, explanation) = agent.Current(DateTimeOffset.UtcNow);
+    if (!usable)
+        return Results.Json(new { applied = false, pending = false, reason = explanation }, statusCode: 409);
+
+    var request = new GpuImageRequest(r.Rsr, r.RsrSharpness, r.Ris, r.RisSharpness);
+    if (request.IsEmpty)
+        return Results.Json(new { applied = false, pending = false, reason = "Nothing to set: give rsr, rsrSharpness, ris or risSharpness." }, statusCode: 400);
+
+    var rsr = report?.Settings?.RadeonSuperResolution;
+    var ris = report?.Settings?.ImageSharpening;
+    bool wantsRsr = r.Rsr is not null || r.RsrSharpness is not null;
+    bool wantsRis = r.Ris is not null || r.RisSharpness is not null;
+    // Absent (null) as well as supported:false: a driver whose RSR interface could not be obtained
+    // cannot be asked for it either, and the agent would only log the refusal where nobody looks.
+    if (wantsRsr && rsr is not { Supported: true })
+        return Results.Json(new { applied = false, pending = false, reason = "This GPU or driver does not offer Radeon Super Resolution." }, statusCode: 409);
+    if (wantsRis && ris is not { Supported: true })
+        return Results.Json(new { applied = false, pending = false, reason = "This GPU or driver does not offer Radeon Image Sharpening." }, statusCode: 409);
+
+    if ((GpuImageRequest.Reject(r.RsrSharpness, rsr?.Min, rsr?.Max, "RSR")
+         ?? GpuImageRequest.Reject(r.RisSharpness, ris?.Min, ris?.Max, "Image Sharpening")) is string why)
+        return Results.Json(new { applied = false, pending = false, reason = why }, statusCode: 400);
+
+    desired.RequestImage(request);
+    return Results.Json(new
+    {
+        applied = false,
+        pending = true,
+        requested = new { rsr = r.Rsr, rsrSharpness = r.RsrSharpness, ris = r.Ris, risSharpness = r.RisSharpness },
+        reason = "Handed to the GPU agent; GET /gpu will show what the driver applied within a few seconds.",
+    });
+});
 
 // Where the agent checks in. Localhost-only like the rest of this API.
 app.MapPost("/gpu/state", (GpuAgentReportRequest r, GpuAgentState agent) =>
@@ -1547,7 +1596,8 @@ app.MapGet("/profiles/active", (ActiveGameProfileState state, TdpIntent intent, 
         RivalsNow: () => detector.OthersRunning(out var names) ? names : [],
         // The Radeon side is the agent's to carry out; its report is what says whether it did.
         Agent: agent.Last,
-        Now: DateTimeOffset.UtcNow);
+        Now: DateTimeOffset.UtcNow,
+        ImageVersion: gpu.ImageVersion);
     return Results.Json(ActiveGameProfileWire.From(p, live));
 });
 
@@ -2252,6 +2302,7 @@ namespace GpdForge.Api
     /// clock we do not control is not evidence about it.</summary>
     /// <summary>POST /gpu/frame-cap. Null Fps disables the cap, which is an intent, not an omission.</summary>
     public sealed record FrameCapRequest(int? Fps);
+    public sealed record GpuImageBody(bool? Rsr, int? RsrSharpness, bool? Ris, int? RisSharpness);
 
     /// <summary>POST /standby/hibernate. Seconds of idle before hibernating; 0 means never. Null for
     /// a field leaves that power source untouched.</summary>

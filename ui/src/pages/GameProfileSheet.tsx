@@ -27,6 +27,23 @@ const DEFAULT = 'default'
 // the 120 Hz-friendly one). 0 means "cap off" to the daemon, null (DEFAULT here) "the mode decides".
 const CAPS = ['0', '30', '40', '45', '60'] as const
 const FANS: RuleFanMode[] = ['Auto', 'Quiet', 'Balanced', 'Aggressive']
+// RSR / RIS sharpness, % (GpuImageRequest's band). 75 is where Adrenalin puts RSR out of the box; used
+// only when a game turns a feature on without a stored value.
+const DEFAULT_SHARPNESS = 75
+const clampS = (v: number) => Math.min(100, Math.max(0, Math.round(v)))
+
+/** A feature's sharpness while it is on: the same slider-plus-stepper as the TDP row. */
+function SharpnessRow({ name, testid, value, onChange }: { name: string; testid: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="tdp-row">
+      <input type="range" min={0} max={100} step={5} value={value} data-testid={`${testid}-slider`}
+        aria-label={`${name} sharpness in percent`} aria-valuetext={`${value} %`}
+        onChange={(e) => onChange(clampS(Number(e.target.value)))} />
+      <Stepper label={`${name} sharpness`} value={value} unit="%" min={0} max={100} step={5} onChange={onChange}
+        testid={testid} decTestid={`${testid}-dec`} incTestid={`${testid}-inc`} />
+    </div>
+  )
+}
 
 interface Props {
   game: GameSummary
@@ -56,6 +73,10 @@ export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = t
   const [fan, setFan] = useState<string>(stored?.fanMode ?? DEFAULT)
   const [antiLag, setAntiLag] = useState(stored?.gpu?.antiLag === true)
   const [chill, setChill] = useState(stored?.gpu?.chill === true)
+  const [rsr, setRsr] = useState(stored?.gpu?.rsr === true)
+  const [rsrSharp, setRsrSharp] = useState(clampS(stored?.gpu?.rsrSharpness ?? DEFAULT_SHARPNESS))
+  const [ris, setRis] = useState(stored?.gpu?.ris === true)
+  const [risSharp, setRisSharp] = useState(clampS(stored?.gpu?.risSharpness ?? DEFAULT_SHARPNESS))
   const [busy, setBusy] = useState(false)
 
   // Focus moves in on open, so the next d-pad press acts inside the editor rather than on the card
@@ -91,11 +112,16 @@ export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = t
   const draft = (): RuleOverrides => {
     const a = chill ? null : gpuValue(antiLag, stored?.gpu?.antiLag)
     const c = gpuValue(chill, stored?.gpu?.chill)
+    // A sharpness only rides with its feature ON: for "off" or "as the driver has it" it would be a
+    // value nothing applies (the agent writes no sharpness for a feature it turns off).
+    const r = gpuValue(rsr, stored?.gpu?.rsr)
+    const i = gpuValue(ris, stored?.gpu?.ris)
+    const gpu = { antiLag: a, chill: c, rsr: r, rsrSharpness: rsr ? rsrSharp : null, ris: i, risSharpness: ris ? risSharp : null }
     return {
       stapmW: tdpOn ? tdp : null,
       frameCapFps: cap === DEFAULT ? null : Number(cap),
       fanMode: fan === DEFAULT ? null : (fan as RuleFanMode),
-      gpu: a == null && c == null ? null : { antiLag: a, chill: c },
+      gpu: Object.values(gpu).every((v) => v == null) ? null : gpu,
       freeze: stored?.freeze ?? null,   // F5's list: not editable here yet, and never wiped by a save
     }
   }
@@ -191,6 +217,19 @@ export function GameProfileSheet({ game, rules, modes, presets, autoProfiles = t
           <Toggle on={chill} onClick={pickChill} label="Chill" testid="game-chill" />
         </div>
         <p className="muted">Off leaves it to the mode. AMD refuses the two together, so one turns the other off.</p>
+      </div>
+
+      <div className="sheet-field">
+        <span className="sheet-label">Image</span>
+        <Toggle on={rsr} onClick={() => setRsr(!rsr)} label="Radeon Super Resolution" testid="game-rsr" />
+        {rsr && <SharpnessRow name="RSR" testid="game-rsr-sharpness" value={rsrSharp} onChange={setRsrSharp} />}
+        <Toggle on={ris} onClick={() => setRis(!ris)} label="Image Sharpening" testid="game-ris" />
+        {ris && <SharpnessRow name="Image Sharpening" testid="game-ris-sharpness" value={risSharp} onChange={setRisSharp} />}
+        <p className="muted">
+          RSR renders below the screen's resolution and upscales — the most frames inside the 22 W limit; set the
+          game to a lower fullscreen resolution for it to act. Turns Radeon Boost off. Off leaves the driver's own
+          setting; what a game changes is put back when you leave it.
+        </p>
       </div>
 
       {autoProfiles ? (

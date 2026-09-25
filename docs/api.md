@@ -345,7 +345,8 @@ endpoints depend on ASP.NET's literal-vs-parameter precedence rather than on the
   - `AppRule = { id: guid, match: string, mode: ModeId, enabled: boolean, overrides: RuleOverrides | null }`,
     in precedence order. `overrides` is null for a rule that only picks a mode (every seeded rule).
   - `RuleOverrides = { stapmW: number | null, frameCapFps: number | null, fanMode: string | null,
-    gpu: { antiLag: boolean | null, chill: boolean | null } | null, freeze: string[] | null }` — per-game
+    gpu: { antiLag: boolean | null, chill: boolean | null, rsr: boolean | null, rsrSharpness: number | null,
+    ris: boolean | null, risSharpness: number | null } | null, freeze: string[] | null }` — per-game
     settings layered over the mode while that rule's app is settled in front (F1, 2026-09-25). Every
     field null = the mode decides:
     - `stapmW` 5–40 W (the preset band), applied **flat** at the mode's Tctl like a manual value, as
@@ -404,7 +405,7 @@ wrong JSON type (`"stapmW": "22"`) gets the field's code too, not a framework er
 
 ### `GET /profiles/active`  (the game profile in force)
 `→ { active: boolean, game: string | null, ruleId: guid | null, match: string | null,
-mode: ModeId | null, applied: { stapmW, frameCapFps, fanMode, gpu: { antiLag, chill } } | null,
+mode: ModeId | null, applied: { stapmW, frameCapFps, fanMode, gpu: { antiLag, chill, rsr, rsrSharpness, ris, risSharpness } } | null,
 skipped: { field, reason }[], superseded: string[], freeze: string[], sinceUtc: string | null }`
 (F1, 2026-09-25).
 
@@ -430,7 +431,12 @@ Audit round 2 (2026-09-25) checks the Radeon side against the GPU agent, which c
 (3 s) after the daemon asks:
 - at apply, an `antiLag` / `chill` the agent reports the driver does not support is skipped (field
   `antiLag` / `chill`) and not requested; the other one still applies;
-- when read, `frameCapFps`, `gpu.antiLag` and `gpu.chill` stay in `applied` only while the agent's
+- RSR / RIS (F4): one the agent reports unsupported, or a sharpness outside the driver's range, is
+  skipped (field `rsr` / `ris`); the rest still applies. When the game leaves, the values the driver
+  held before are requested back — read from the agent's report at apply, or its first report after
+  — unless `POST /gpu/image` asked for something since (then `superseded` names `rsr` / `ris` and
+  nothing is undone). Never read = nothing is restored and nothing forced off;
+- when read, `frameCapFps`, `gpu.antiLag`, `gpu.chill`, `gpu.rsr` and `gpu.ris` stay in `applied` only while the agent's
   report agrees. A report taken 8 s or more after `sinceUtc` that shows something else moves the field
   to `skipped` ("the driver did not take it: it holds no cap"); a silent or stale agent (no report in
   30 s) or one reporting ADLX unavailable moves it there too, as not confirmed, until it reports again.
@@ -933,7 +939,10 @@ the service. That was removed on 2026-09-02; see the comment on `JobsState.Add`.
 `200 → { available: false, status, detail, adapter, lastReportUtc }`
 `200 → { available: true, status, adlxVersion, adapter, detail, lastReportUtc, settings, modeProfiles }`
 
-Anti-Lag, Chill, Boost, Image Sharpening and the driver's own frame-rate cap (FRTC).
+Anti-Lag, Chill, Boost, Image Sharpening, the driver's own frame-rate cap (FRTC) and, since F4,
+Radeon Super Resolution (`settings.superResolution`: `value` = its sharpness, `min`/`max` = the
+driver's sharpness range; `null` on a driver whose ADLX lacks the RSR interface). `imageSharpening`
+now carries its sharpness range too.
 
 🔴 **The daemon cannot read these itself, and does not pretend to.** Measured 2026-08-29: identical
 code initialises ADLX from an interactive session and fails under the service with *"ADLXInitialize
@@ -997,6 +1006,22 @@ steers TDP toward a target and does not stop the GPU exceeding it. `fps: null` d
   features, which the agent layers over the mode's profile while the game is in front and drops when
   it leaves. A game's Chill turns the mode's Anti-Lag off (and vice versa) instead of sending the pair
   the driver refuses. `null` = the mode decides; independent of `requested`, which is about the cap.
+
+#### `POST /gpu/image`  (Radeon Super Resolution and Image Sharpening, F4)
+`POST { rsr?: boolean | null, rsrSharpness?: number | null, ris?: boolean | null, risSharpness?: number | null }
+→ { applied: false, pending: boolean, requested?, reason }`
+
+Same contract as `POST /gpu/frame-cap`: an intent the agent carries out within a few seconds, never
+`applied: true`. Omitted / `null` fields are left as the driver has them. `400` for an empty body or a
+sharpness outside 0–100 or the driver's reported range; `409` when no agent is reporting or the agent
+reports the feature unsupported (or its interface unobtainable). `GET /gpu/desired` carries it as
+`image` (`{ rsr, rsrSharpness, ris, risSharpness } | null`) and `imageVersion` (`number`, rises on every
+request): the agent writes each request ONCE, so a change made in Adrenalin afterwards is kept.
+
+⚠️ **Order:** Boost is turned OFF before RSR goes on (AMD does not run RSR with Boost; both change the
+render resolution), and each feature is ENABLED before its sharpness is written, as FRTC requires. No
+sharpness is written for a feature being turned off. RSR is a system-wide setting (ADLX obtains it
+without a GPU); RIS is per GPU. Modes never turn either on: they change how the picture looks.
 
 ⚠️ **Order is forced by the driver:** FRTC must be ENABLED before its FPS can be written. The
 intuitive order (value first, so enabling never briefly applies a stale cap) returns `ADLX_FAIL`

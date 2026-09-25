@@ -30,7 +30,7 @@ test.describe('Per-game rule overrides (mock daemon)', () => {
       expect(added.status()).toBe(200)
       const rule = find(await added.json(), match)!
       expect(rule.overrides).toEqual({
-        stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null }, freeze: ['discord'],
+        stapmW: 22, frameCapFps: 60, fanMode: 'Aggressive', gpu: { antiLag: true, chill: null, rsr: null, rsrSharpness: null, ris: null, risSharpness: null }, freeze: ['discord'],
       })
 
       // The Profiles page's enable toggle sends match/mode/enabled only.

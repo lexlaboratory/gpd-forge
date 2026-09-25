@@ -92,9 +92,12 @@ function parseOverrides(body) {
   if (!nothing(o.frameCapFps) && !isInt(o.frameCapFps)) return fail('bad_frame_cap', 'frameCapFps must be a whole number or null.')
   if (!nothing(o.fanMode) && typeof o.fanMode !== 'string') return fail('bad_fan_mode', 'fanMode must be a string or null.')
   const gpu = o.gpu
+  const optBool = (v) => nothing(v) || typeof v === 'boolean'
+  const optInt = (v) => nothing(v) || isInt(v)
   if (!nothing(gpu) && (typeof gpu !== 'object' || Array.isArray(gpu)
-      || (!nothing(gpu.antiLag) && typeof gpu.antiLag !== 'boolean') || (!nothing(gpu.chill) && typeof gpu.chill !== 'boolean')))
-    return fail('bad_gpu', 'gpu must be an object with boolean-or-null antiLag and chill.')
+      || !optBool(gpu.antiLag) || !optBool(gpu.chill) || !optBool(gpu.rsr) || !optBool(gpu.ris)
+      || !optInt(gpu.rsrSharpness) || !optInt(gpu.risSharpness)))
+    return fail('bad_gpu', 'gpu must be an object with boolean-or-null antiLag, chill, rsr and ris, and whole-number-or-null rsrSharpness and risSharpness.')
   if (!nothing(o.freeze) && (!Array.isArray(o.freeze) || o.freeze.some((f) => typeof f !== 'string')))
     return fail('bad_freeze', 'freeze must be an array of process names or null.')
 
@@ -106,6 +109,10 @@ function parseOverrides(body) {
     return fail('bad_fan_mode', `fanMode must be one of ${FAN_OVERRIDE_MODES.join(', ')}.`)
   if (gpu && gpu.antiLag === true && gpu.chill === true)
     return fail('bad_gpu', "Radeon Chill cannot be on together with Anti-Lag; AMD's driver refuses the pair.")
+  // Mirrors GpuImageRequest.Reject with no driver range (F4).
+  for (const [key, name] of [['rsrSharpness', 'RSR'], ['risSharpness', 'Image Sharpening']])
+    if (gpu && isInt(gpu[key]) && (gpu[key] < 0 || gpu[key] > 100))
+      return fail('bad_gpu', `${name} sharpness must be between 0 and 100 %.`)
   if (Array.isArray(o.freeze) && o.freeze.length > MAX_FREEZE) return fail('bad_freeze', `freeze holds at most ${MAX_FREEZE} process names.`)
   if (Array.isArray(o.freeze) && o.freeze.some((f) => !isProcessName(f)))
     return fail('bad_freeze', 'freeze entries must be bare process names (no paths).')
@@ -113,7 +120,8 @@ function parseOverrides(body) {
   // Normalised like RuleOverridesPolicy.Normalize: freeze canonicalised and de-duplicated, an empty
   // gpu block dropped, nothing-at-all collapsed to null.
   const freeze = Array.isArray(o.freeze) ? [...new Set(o.freeze.map(normalizeMatch).filter(Boolean))] : []
-  const g = gpu && (!nothing(gpu.antiLag) || !nothing(gpu.chill)) ? { antiLag: gpu.antiLag ?? null, chill: gpu.chill ?? null } : null
+  const gpuKeys = ['antiLag', 'chill', 'rsr', 'rsrSharpness', 'ris', 'risSharpness']
+  const g = gpu && gpuKeys.some((k) => !nothing(gpu[k])) ? Object.fromEntries(gpuKeys.map((k) => [k, gpu[k] ?? null])) : null
   const value = {
     stapmW: isInt(o.stapmW) ? o.stapmW : null,
     frameCapFps: isInt(o.frameCapFps) ? o.frameCapFps : null,
@@ -304,11 +312,15 @@ const state = {
     capRequested: false,
     capVersion: 0, // rises on every request, as GpuDesiredState.CapVersion does (F1 audit round 4)
     frameCapFps: null,
+    image: null, // RSR / RIS to set (F4), as GpuDesiredState.Image
+    imageVersion: 0,
     settings: {
       antiLag: { supported: true, enabled: false, value: null },
       chill: { supported: true, enabled: true, value: 60 },
       boost: { supported: true, enabled: false, value: 84 },
-      imageSharpening: { supported: true, enabled: false, value: 80 },
+      // min/max for the sharpness ranges (F4) are ADLX's documented 0-100, NOT measured on this device.
+      imageSharpening: { supported: true, enabled: false, value: 80, min: 0, max: 100 },
+      superResolution: { supported: true, enabled: false, value: 75, min: 0, max: 100 },
       // min/max are the real values this device's driver reports (15..1000), so a client exercising
       // the range check meets the same bounds it will meet in production.
       frameRateCap: { supported: true, enabled: false, value: 60, min: 15, max: 1000 },
@@ -757,7 +769,8 @@ const INACTIVE_PROFILE = {
  *  records no profile for it (F1 audit round 1 — it used to announce "mode settings" for steam). */
 function hasOverrides(o) {
   return !!o && (o.stapmW != null || o.frameCapFps != null || o.fanMode != null
-    || o.gpu?.antiLag != null || o.gpu?.chill != null || (o.freeze?.length ?? 0) > 0)
+    || o.gpu?.antiLag != null || o.gpu?.chill != null || o.gpu?.rsr != null || o.gpu?.rsrSharpness != null
+    || o.gpu?.ris != null || o.gpu?.risSharpness != null || (o.freeze?.length ?? 0) > 0)
 }
 /** The game profile in force (F1), as core/Profiles/FocusProfileLoop would settle it: the rule that
  *  claims the mock's fixed foreground, when it carries overrides. The mock has no focus loop, so it
@@ -776,7 +789,11 @@ function activeProfile() {
     active: true, game: MOCK_FOREGROUND, ruleId: rule.id, match: rule.match, mode: rule.mode,
     applied: {
       stapmW: manualOver ? null : o.stapmW, frameCapFps: o.frameCapFps, fanMode: o.fanMode,
-      gpu: { antiLag: o.gpu?.antiLag ?? null, chill: o.gpu?.chill ?? null },
+      gpu: {
+        antiLag: o.gpu?.antiLag ?? null, chill: o.gpu?.chill ?? null,
+        rsr: o.gpu?.rsr ?? null, rsrSharpness: o.gpu?.rsrSharpness ?? null,
+        ris: o.gpu?.ris ?? null, risSharpness: o.gpu?.risSharpness ?? null,
+      },
     },
     skipped: [], superseded: manualOver ? ['stapmW'] : [],
     freeze: o.freeze ?? [], sinceUtc: profileSince.get(rule.id) ?? null,
@@ -1359,7 +1376,32 @@ async function handle(req, res) {
       requested: state.gpu.capRequested, frameCapFps: state.gpu.frameCapFps, requestedAtUtc: null,
       capVersion: state.gpu.capVersion,
       antiLag: null, chill: null, // a game profile's Radeon features (F1); none without a focus loop
+      image: state.gpu.image, imageVersion: state.gpu.imageVersion,
     })
+  }
+  // Mirrors POST /gpu/image (F4): an intent, never applied:true; validated against the reported state.
+  if (method === 'POST' && path === '/gpu/image') {
+    const b = (await readBody(req)) ?? {}
+    if (!state.gpu.available) return send(res, 409, { applied: false, pending: false, reason: 'The GPU agent has not reported yet.' })
+    const req4 = { rsr: b.rsr ?? null, rsrSharpness: b.rsrSharpness ?? null, ris: b.ris ?? null, risSharpness: b.risSharpness ?? null }
+    if (Object.values(req4).every((v) => v === null))
+      return send(res, 400, { applied: false, pending: false, reason: 'Nothing to set: give rsr, rsrSharpness, ris or risSharpness.' })
+    const { superResolution: rsr, imageSharpening: ris } = state.gpu.settings
+    if ((req4.rsr !== null || req4.rsrSharpness !== null) && !rsr?.supported)
+      return send(res, 409, { applied: false, pending: false, reason: 'This GPU or driver does not offer Radeon Super Resolution.' })
+    if ((req4.ris !== null || req4.risSharpness !== null) && !ris?.supported)
+      return send(res, 409, { applied: false, pending: false, reason: 'This GPU or driver does not offer Radeon Image Sharpening.' })
+    for (const [v, f, name] of [[req4.rsrSharpness, rsr, 'RSR'], [req4.risSharpness, ris, 'Image Sharpening']])
+      if (v !== null && (!isInt(v) || v < Math.max(0, f.min ?? 0) || v > Math.min(100, f.max ?? 100)))
+        return send(res, 400, { applied: false, pending: false, reason: `${name} sharpness must be between ${Math.max(0, f.min ?? 0)} and ${Math.min(100, f.max ?? 100)} %.` })
+    state.gpu.image = req4
+    state.gpu.imageVersion++
+    // The mock's "agent" takes it at once, so GET /gpu reflects it on the next poll.
+    if (req4.rsr !== null) rsr.enabled = req4.rsr
+    if (req4.rsrSharpness !== null) rsr.value = req4.rsrSharpness
+    if (req4.ris !== null) ris.enabled = req4.ris
+    if (req4.risSharpness !== null) ris.value = req4.risSharpness
+    return send(res, 200, { applied: false, pending: true, requested: req4, reason: 'Handed to the GPU agent.' })
   }
   // Mirrors the daemon: never claims applied:true, because the daemon cannot apply it either — the
   // user-session agent does, seconds later. A mock that answered "applied" would train the UI to

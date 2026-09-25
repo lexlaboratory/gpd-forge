@@ -13,7 +13,7 @@ import type {
   TuneGoal, TunerInfo, UpdateCheck,
   LedMode, LedInfo, ChargeLimitInfo, UndervoltInfo,
   HealthReport, PanicResult, IncumbentsInfo, FanInfo, AlertEvent, AlertSummary,
-  DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, StandbyRestoreOutcome,
+  DaemonHealth, DaemonVersion, GpuInfo, GpuDesired, GpuImageRequest, StandbyRestoreOutcome,
   AppRulesInfo, AppRule, ActiveGameProfile, GameSession, SessionsResponse, GamesResponse, FramesResponse, TdpInfo, RuleOverrides, AdvisorView,
 } from './types'
 
@@ -127,6 +127,17 @@ export const getInferenceHold = () => json<InferenceHold>('/ai/inference-hold')
 export const setFrameCap = (fps: number | null) =>
   json<{ applied: boolean; pending: boolean; requested?: number | null; reason: string }>(
     '/gpu/frame-cap', post({ fps }))
+
+// Radeon Super Resolution and Image Sharpening (F4). Same contract as setFrameCap: an intent the agent
+// carries out within a few seconds, never applied:true. Omitted fields are left as the driver has them.
+// A 400/409 RESOLVES with the daemon's reason ("the driver's lowest sharpness is 10 %") instead of
+// throwing "→ 409": the reason is what tells the user what would work.
+export async function setGpuImage(image: GpuImageRequest): Promise<{ applied: boolean; pending: boolean; requested?: GpuImageRequest; reason: string }> {
+  const res = await fetch(`${BASE}/gpu/image`, post(image))
+  const body = await res.json().catch(() => null) as { applied: boolean; pending: boolean; reason?: unknown } | null
+  if (!body || typeof body.reason !== 'string') throw new Error(`POST /gpu/image → ${res.status}`)
+  return body as { applied: boolean; pending: boolean; requested?: GpuImageRequest; reason: string }
+}
 
 // --- AMD GPU profiles (ADLX) ---
 // Read live on every call: Adrenalin is a second writer to these settings, so reporting our last

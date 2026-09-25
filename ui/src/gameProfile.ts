@@ -10,7 +10,7 @@
 // Nothing here touches the network or the DOM (imports are types only), so tests/e2e/
 // game-profile-logic.spec.ts runs it in Node. The requests live in gameProfileSave.ts.
 import type {
-  ActiveGameProfile, AppRule, AppRuleMatch, GpuDesired, GpuInfo, ModeId, RuleFanMode, RuleOverrides,
+  ActiveGameProfile, AppRule, AppRuleMatch, GpuDesired, GpuInfo, GpuOverrides, ModeId, RuleFanMode, RuleOverrides,
 } from './types'
 
 /** Mirrors AppRulePolicy.Normalize: trimmed, lowercase, no ".exe" tail. */
@@ -37,7 +37,8 @@ export const exactRule = (rules: readonly AppRule[], app: string): AppRule | nul
 /** True when at least one field is set. An object of nulls means "the mode decides everything". */
 export const hasOverrides = (o: RuleOverrides | null | undefined): o is RuleOverrides =>
   o != null && (o.stapmW != null || o.frameCapFps != null || o.fanMode != null
-    || o.gpu?.antiLag != null || o.gpu?.chill != null || (o.freeze?.length ?? 0) > 0)
+    || o.gpu?.antiLag != null || o.gpu?.chill != null || o.gpu?.rsr != null || o.gpu?.rsrSharpness != null
+    || o.gpu?.ris != null || o.gpu?.risSharpness != null || (o.freeze?.length ?? 0) > 0)
 
 /** Said wherever a profile is saved or promised while GPDFORGE_AUTO_PROFILES=0: no focus worker runs
  *  then, so nothing applies a profile (F1 audit round 4). The rules are still the user's to edit. */
@@ -52,8 +53,13 @@ export function profileState(rules: readonly AppRule[], app: string): { kind: Pr
   return { kind: rule == null ? 'none' : hasOverrides(rule.overrides) ? 'profile' : 'rule', rule }
 }
 
-type Summarised = Pick<RuleOverrides, 'stapmW' | 'frameCapFps' | 'fanMode'> & {
-  gpu: { antiLag: boolean | null; chill: boolean | null } | null
+type Summarised = Pick<RuleOverrides, 'stapmW' | 'frameCapFps' | 'fanMode'> & { gpu: GpuOverrides | null }
+
+/** "RSR 80 %", "RIS", "RSR off" — a feature with its sharpness when one is set (F4). */
+function imagePart(label: string, on: boolean | null | undefined, sharpness: number | null | undefined): string | null {
+  if (on === false) return `${label} off`
+  if (on === true || sharpness != null) return sharpness != null ? `${label} ${sharpness} %` : label
+  return null
 }
 
 /** "22 W · 60 FPS · Aggressive · Anti-Lag". Only fields that are set; "mode settings" when none is. */
@@ -69,11 +75,14 @@ export function describeOverrides(o: Summarised | null | undefined): string {
   if (o.gpu?.antiLag === true) parts.push('Anti-Lag')
   if (o.gpu?.antiLag === false) parts.push('Anti-Lag off')
   if (o.gpu?.chill === false) parts.push('Chill off')
+  for (const part of [imagePart('RSR', o.gpu?.rsr, o.gpu?.rsrSharpness), imagePart('RIS', o.gpu?.ris, o.gpu?.risSharpness)])
+    if (part) parts.push(part)
   return parts.length > 0 ? parts.join(' · ') : 'mode settings'
 }
 
 const FIELD_LABEL: Record<string, string> = {
   stapmW: 'TDP', frameCapFps: 'frame cap', fanMode: 'fan', gpu: 'Radeon settings', antiLag: 'Anti-Lag', chill: 'Chill',
+  rsr: 'RSR', ris: 'Image Sharpening',
 }
 
 /**

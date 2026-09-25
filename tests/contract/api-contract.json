@@ -146,7 +146,7 @@
           "items": { "id": "string", "match": "string", "mode": "string", "enabled": "boolean", "overrides": "object|null" }
         }
       },
-      "$comment": "`overrides` added in F1 (2026-09-25): per-game stapmW, frameCapFps, fanMode, gpu { antiLag, chill } and freeze, each nullable. Null for a rule that only picks a mode — every seeded rule."
+      "$comment": "`overrides` added in F1 (2026-09-25): per-game stapmW, frameCapFps, fanMode, gpu { antiLag, chill } and freeze, each nullable. F4 adds gpu { rsr, rsrSharpness, ris, risSharpness } (sharpness 0-100). Null for a rule that only picks a mode — every seeded rule."
     },
     {
       "method": "GET",
@@ -163,7 +163,7 @@
             "stapmW": "number|null",
             "frameCapFps": "number|null",
             "fanMode": "string|null",
-            "gpu": { "type": "object", "fields": { "antiLag": "boolean|null", "chill": "boolean|null" } }
+            "gpu": { "type": "object", "fields": { "antiLag": "boolean|null", "chill": "boolean|null", "rsr": "boolean|null", "rsrSharpness": "number|null", "ris": "boolean|null", "risSharpness": "number|null" } }
           }
         },
         "skipped": { "type": "array", "items": { "field": "string", "reason": "string" } },
@@ -308,9 +308,11 @@
         "requestedAtUtc": "string|null",
         "capVersion": "number",
         "antiLag": "boolean|null",
-        "chill": "boolean|null"
+        "chill": "boolean|null",
+        "image": "object|null",
+        "imageVersion": "number"
       },
-      "$comment": "antiLag/chill added in F1 (2026-09-25): a game profile's Radeon features, layered over the mode's by the agent. Null = the mode decides. capVersion added in F1 audit round 4: rises on every cap request; with requestedAtUtc it is the request's identity, so the agent carries out a new request even when its value is the one it last wrote."
+      "$comment": "image/imageVersion added in F4: RSR / RIS to set ({ rsr, rsrSharpness, ris, risSharpness }, each nullable), carried out once per imageVersion. antiLag/chill added in F1 (2026-09-25): a game profile's Radeon features, layered over the mode's by the agent. Null = the mode decides. capVersion added in F1 audit round 4: rises on every cap request; with requestedAtUtc it is the request's identity, so the agent carries out a new request even when its value is the one it last wrote."
     },
     {
       "method": "GET",
@@ -638,6 +640,7 @@
     { "method": "POST", "path": "/ai/anti-standby" },
     { "method": "POST", "path": "/ai/vram" },
     { "method": "POST", "path": "/gpu/frame-cap" },
+    { "method": "POST", "path": "/gpu/image" },
     { "method": "POST", "path": "/gpu/state" },
     { "method": "POST", "path": "/session/foreground" },
     { "method": "POST", "path": "/standby/restore" },

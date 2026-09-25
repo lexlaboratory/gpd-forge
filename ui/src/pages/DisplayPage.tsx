@@ -5,9 +5,10 @@
 // names the call it makes — because the surrounding app has a Hardware page full of controls that
 // only *look* live, and the difference has to be visible at a glance.
 import { useEffect, useRef, useState } from 'react'
-import type { RefreshRateInfo, NightMode } from '../types'
+import type { RefreshRateInfo, NightMode, GpuFeature, GpuImageRequest, GpuInfo } from '../types'
 import {
   getBrightness, setBrightness, getRefreshRate, setRefreshRate, getNightMode, setNightMode,
+  getGpu, setGpuImage,
 } from '../api'
 import { Frame, Badge, Readout, Segmented, Slider, Toggle, Unavailable } from '../components'
 import { useToast } from '../Toast'
@@ -41,6 +42,7 @@ export function DisplayPage() {
       </Frame>
       <RefreshRateCard />
       <NightModeCard />
+      <RadeonImageCard />
       {/* Tablet mode and the keyboard backlight are advisory on this board, so they live on the
           Hardware page with the rest of what cannot be written. Display keeps brightness, refresh
           rate and night mode — all three of which really do change the screen. */}
@@ -111,6 +113,63 @@ export function NightModeCard() {
       </div>
       <Slider label="Warmth" testid="night-warmth" value={night.warmth} min={0} max={100} unit="%" disabled={!night.on} onChange={onWarmth} />
       <p className="muted">Warms the screen by reducing blue in the GDI gamma ramp — the change lands on the display the moment you move the slider. Independent of Windows Night Light, which GPD Forge deliberately leaves untouched.</p>
+    </Frame>
+  )
+}
+
+// Radeon Super Resolution and Image Sharpening (F4) — through the GPU agent, like the frame cap.
+// Absent entirely unless the agent reports ADLX usable AND at least one of the two supported: the
+// GPU panel's rule (a greyed-out control reads as "nearly working" when the machine cannot). What is
+// shown is what the DRIVER reports, re-read after each request, never our last write.
+export function RadeonImageCard() {
+  const toast = useToast()
+  const [gpu, setGpu] = useState<GpuInfo | null>(null)
+  const [draft, setDraft] = useState<{ rsr?: number; ris?: number }>({})
+  const refresh = () => getGpu().then((g) => { setGpu(g); setDraft({}) }).catch(() => {})
+  useEffect(() => { void refresh() }, [])
+
+  const rsr = gpu?.available ? gpu.settings?.superResolution ?? null : null
+  const ris = gpu?.available ? gpu.settings?.imageSharpening ?? null : null
+  if (!rsr?.supported && !ris?.supported) return null
+
+  const send = async (image: GpuImageRequest, done: string) => {
+    try {
+      const r = await setGpuImage(image)
+      toast.push(r.pending ? { kind: 'success', message: done } : { kind: 'warn', message: r.reason })
+    } catch (e) {
+      toast.push({ kind: 'error', message: e instanceof Error ? e.message : 'Not sent to the GPU agent' })
+    }
+    // The agent carries it out on its next tick (3 s) and reports after; read back what the driver holds.
+    setTimeout(() => { void refresh() }, 3500)
+  }
+
+  const row = (f: GpuFeature | null, key: 'rsr' | 'ris', name: string) => {
+    if (!f?.supported) return null
+    const lo = Math.max(0, f.min ?? 0)
+    const hi = Math.min(100, f.max ?? 100)
+    const sharp = draft[key] ?? f.value ?? lo
+    const sharpKey = key === 'rsr' ? 'rsrSharpness' : 'risSharpness'
+    return (
+      <div className="sheet-field" data-testid={`display-${key}`}>
+        <Toggle on={f.enabled} label={name} testid={`display-${key}-toggle`}
+          onClick={() => { void send({ [key]: !f.enabled }, `${name} ${f.enabled ? 'off' : 'on'} — handed to the GPU agent`) }} />
+        <Slider label={`${name} sharpness`} testid={`display-${key}-sharpness`} value={sharp} min={lo} max={hi} step={5} unit=" %"
+          disabled={!f.enabled}
+          onChange={(v) => setDraft((d) => ({ ...d, [key]: v }))}
+          onCommit={(v) => { void send({ [sharpKey]: v }, `${name} sharpness ${v} % — handed to the GPU agent`) }} />
+      </div>
+    )
+  }
+
+  return (
+    <Frame title="Radeon image" hint={<Badge tone="ok">ADLX · GPU agent</Badge>}>
+      {row(rsr, 'rsr', 'Super Resolution')}
+      {row(ris, 'ris', 'Image Sharpening')}
+      <p className="muted">
+        Super Resolution renders a fullscreen game below the panel's resolution and upscales it — the most frames
+        inside the 22 W limit — and turns Radeon Boost off. It acts only when the game runs fullscreen at a lower
+        resolution. Changes go to the driver within a few seconds; a game profile can set its own.
+      </p>
     </Frame>
   )
 }

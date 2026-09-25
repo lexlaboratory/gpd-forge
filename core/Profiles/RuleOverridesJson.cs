@@ -8,8 +8,7 @@
 //  - A wrong TYPE ("stapmW": "22") must come back as a 400 that names the field, like a wrong value
 //    does. Model binding would fail the whole body with a framework error the UI cannot show.
 //
-// Unknown keys are ignored — a newer client (F4's `rsr`) talking to this daemon loses the field, not
-// the request.
+// Unknown keys are ignored — a newer client talking to this daemon loses the field, not the request.
 using System.Text.Json;
 
 namespace GpdForge.Profiles;
@@ -31,7 +30,7 @@ public static class RuleOverridesJson
         if (!TryInt(e, "stapmW", out var stapm)) return Fail("bad_stapm", "stapmW must be a whole number of watts or null.");
         if (!TryInt(e, "frameCapFps", out var cap)) return Fail("bad_frame_cap", "frameCapFps must be a whole number or null.");
         if (!TryString(e, "fanMode", out var fan)) return Fail("bad_fan_mode", "fanMode must be a string or null.");
-        if (!TryGpu(e, out var gpu)) return Fail("bad_gpu", "gpu must be an object with boolean-or-null antiLag and chill.");
+        if (!TryGpu(e, out var gpu)) return Fail("bad_gpu", "gpu must be an object with boolean-or-null antiLag, chill, rsr and ris, and whole-number-or-null rsrSharpness and risSharpness.");
         if (!TryFreeze(e, out var freeze)) return Fail("bad_freeze", "freeze must be an array of process names or null.");
 
         var parsed = new RuleOverrides(stapm, cap, fan, gpu, freeze);
@@ -85,8 +84,10 @@ public static class RuleOverridesJson
         var v = Get(obj, "gpu");
         if (IsNothing(v)) return true;
         if (v.ValueKind != JsonValueKind.Object) return false;
-        if (!TryBool(v, "antiLag", out var antiLag) || !TryBool(v, "chill", out var chill)) return false;
-        gpu = new GpuOverrides(antiLag, chill);
+        if (!TryBool(v, "antiLag", out var antiLag) || !TryBool(v, "chill", out var chill)
+            || !TryBool(v, "rsr", out var rsr) || !TryInt(v, "rsrSharpness", out var rsrSharp)
+            || !TryBool(v, "ris", out var ris) || !TryInt(v, "risSharpness", out var risSharp)) return false;
+        gpu = new GpuOverrides(antiLag, chill, rsr, rsrSharp, ris, risSharp);
         return true;
     }
 

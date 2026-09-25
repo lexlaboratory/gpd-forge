@@ -19,7 +19,8 @@ namespace GpdForge.Gpu;
 /// <see cref="RequestedAtUtc"/> are null from a daemon older than F1 audit round 4.</summary>
 public sealed record DesiredGpuState(
     bool Requested, int? FrameCapFps, bool? AntiLag, bool? Chill,
-    long? CapVersion = null, DateTimeOffset? RequestedAtUtc = null)
+    long? CapVersion = null, DateTimeOffset? RequestedAtUtc = null,
+    GpuImageRequest? Image = null, long? ImageVersion = null)
 {
     /// <summary>Null when the body is not the daemon's answer — which must NOT be read as "no cap
     /// wanted", or a momentary hiccup would undo the user's setting. The route also serves the SPA
@@ -39,7 +40,10 @@ public sealed record DesiredGpuState(
                 && a.TryGetDateTimeOffset(out var parsed) ? parsed : null;
 
             // antiLag / chill are absent on a daemon older than F1, which reads as "no game opinion".
-            return new DesiredGpuState(requested.GetBoolean(), cap, Bool(root, "antiLag"), Bool(root, "chill"), version, at);
+            // image / imageVersion are absent on a daemon older than F4: no RSR / RIS request.
+            var image = root.TryGetProperty("image", out var img) ? GpuImageRequest.Parse(img) : null;
+            long? imageVersion = root.TryGetProperty("imageVersion", out var iv) && iv.ValueKind == JsonValueKind.Number ? iv.GetInt64() : null;
+            return new DesiredGpuState(requested.GetBoolean(), cap, Bool(root, "antiLag"), Bool(root, "chill"), version, at, image, imageVersion);
         }
         catch (JsonException) { return null; }
     }

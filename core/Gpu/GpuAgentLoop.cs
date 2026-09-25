@@ -97,6 +97,7 @@ public static class GpuAgentLoop
         // Mode plus a game profile's Anti-Lag / Chill (F1): the profile is re-applied when either moves.
         string? lastAppliedKey = null;
         var caps = new GpuCapReconciler();
+        var images = new GpuImageReconciler();
 
         while (!ct.IsCancellationRequested)
         {
@@ -154,6 +155,15 @@ public static class GpuAgentLoop
 
                         // Recorded even on failure (GpuCapReconciler.Handled).
                         caps.Handled(desired);
+                    }
+
+                    // RSR / RIS (F4): the same once-per-request reconcile as the cap, for the same
+                    // reason — these are values the user may also set in Adrenalin.
+                    if (desired is not null && images.ShouldApply(desired.Image, desired.ImageVersion))
+                    {
+                        foreach (var (field, (ok, detail)) in settings.ApplyImage(desired.Image!))
+                            Console.WriteLine($"  {field} -> {(ok ? "applied" : "NOT applied")}: {detail}");
+                        images.Handled(desired.ImageVersion);
                     }
                 }
             }

@@ -51,6 +51,14 @@ All notable changes to GPD Forge are documented here. Format loosely follows
   asking for fewer watts in `windows` (92) or `gaming` (95) also lowered the thermal limit.
 
 ### Added
+- **Radeon Super Resolution and Image Sharpening (plan F4).** RSR (on/off and sharpness) is read
+  and applied through ADLX, and Image Sharpening, until now read-only, can be applied too. Both can
+  be set per game in the Games profile editor, and from a new "Radeon image" card on the Display
+  page, which appears only when the GPU agent reports them supported. RSR turns Radeon Boost off
+  first, and each feature is switched on before its sharpness is written. Like the frame cap, each
+  request is written once, so a change made in Adrenalin afterwards stays. When a game leaves, the
+  values the driver had before it are put back. If those values were never read, nothing is forced
+  off. `GET /gpu` gains `settings.superResolution`, and there is a new `POST /gpu/image`.
 - **Forge Advisor (plan F3).** A "Suggestions" card on the Dashboard and the Games page, and a
   one-line suggestion with **Apply** in the overlay, propose changes for the game: cap at the
   display's refresh when it runs well above it uncapped; cap at 30 FPS (or lower the resolution)

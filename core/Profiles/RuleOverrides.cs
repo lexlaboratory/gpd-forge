@@ -10,13 +10,22 @@
 // exactly as before F1. The values are applied through the owners that already exist (TdpIntent,
 // GpuDesiredState, FanState) by GameProfileApplier; nothing here touches hardware.
 using System.Text.Json.Serialization;
+using GpdForge.Gpu;
 
 namespace GpdForge.Profiles;
 
 /// <summary>Radeon features a game wants regardless of its mode's GPU profile. Null = the mode's.</summary>
-public sealed record GpuOverrides(bool? AntiLag = null, bool? Chill = null)
+/// <remarks>RSR / RIS (F4) are not in any mode's profile — they change how the picture looks, so only
+/// a person turns them on. Null for them means "as the driver has it"; the game's values are put back
+/// when it leaves (GameProfileApplier). Sharpness is 0–100 %.</remarks>
+public sealed record GpuOverrides(
+    bool? AntiLag = null, bool? Chill = null,
+    bool? Rsr = null, int? RsrSharpness = null, bool? Ris = null, int? RisSharpness = null)
 {
-    [JsonIgnore] public bool IsEmpty => AntiLag is null && Chill is null;
+    [JsonIgnore] public bool IsEmpty => AntiLag is null && Chill is null && Image.IsEmpty;
+
+    /// <summary>The RSR / RIS half, as the request GpuDesiredState carries.</summary>
+    [JsonIgnore] public GpuImageRequest Image => new(Rsr, RsrSharpness, Ris, RisSharpness);
 }
 
 /// <param name="StapmW">Sustained limit for this game, applied flat at the mode's Tctl like a manual

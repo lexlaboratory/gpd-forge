@@ -37,6 +37,10 @@ public static class RuleOverridesPolicy
             return new("bad_fan_mode", $"fanMode must be one of {string.Join(", ", FanModes)}.");
         if (o.Gpu is { AntiLag: true, Chill: true })
             return new("bad_gpu", "Radeon Chill cannot be on together with Anti-Lag; AMD's driver refuses the pair.");
+        if (o.Gpu is { } g
+            && (GpuImageRequest.Reject(g.RsrSharpness, null, null, "RSR")
+                ?? GpuImageRequest.Reject(g.RisSharpness, null, null, "Image Sharpening")) is string sharp)
+            return new("bad_gpu", sharp);
         if (o.Freeze is { } freeze)
         {
             if (freeze.Count > MaxFreeze)
@@ -69,10 +73,18 @@ public static class RuleOverridesPolicy
             StapmW: o.StapmW is int w ? Math.Clamp(w, MinStapmW, MaxStapmW) : null,
             FrameCapFps: o.FrameCapFps is int fps && Validate(new RuleOverrides(FrameCapFps: fps)) is null ? fps : null,
             FanMode: o.FanMode is string fan && FanModes.Contains(fan, StringComparer.Ordinal) ? fan : null,
-            Gpu: o.Gpu is { AntiLag: true, Chill: true } ? null : o.Gpu,
+            Gpu: o.Gpu is { AntiLag: true, Chill: true } ? null : ClampSharpness(o.Gpu),
             Freeze: o.Freeze?.Where(IsFreezable).Take(MaxFreeze).ToArray());
         return Normalize(fixedUp);
     }
+
+    // A hand-edited sharpness out of 0–100 is clamped, like the watts: the intent (sharper / softer)
+    // is clear, only the number overshot.
+    private static GpuOverrides? ClampSharpness(GpuOverrides? g) => g is null ? null : g with
+    {
+        RsrSharpness = g.RsrSharpness is int r ? Math.Clamp(r, GpuImageRequest.MinSharpness, GpuImageRequest.MaxSharpness) : null,
+        RisSharpness = g.RisSharpness is int s ? Math.Clamp(s, GpuImageRequest.MinSharpness, GpuImageRequest.MaxSharpness) : null,
+    };
 
     // SessionForegroundApp's rule for a process name the agent reports, reused rather than restated:
     // a name the foreground can carry is exactly a name a rule can freeze. (It accepts null; a freeze

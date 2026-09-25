@@ -74,6 +74,10 @@ public sealed class GameProfileApplier(
     private bool _capPersisted;
     private DateTimeOffset _begunAt;
     private (bool? AntiLag, bool? Chill)? _features;
+    private long? _imageVersion;
+    private GpuImageRequest? _imageAsked;
+    private GpuImageRequest? _imageRestore;
+    private bool _imageRestoreUnknown;
 
     /// <summary>The rule whose profile is layered now, or null.</summary>
     public AppRule? Rule => _rule;
@@ -121,6 +125,7 @@ public sealed class GameProfileApplier(
         }
 
         bool? antiLag = null, chill = null;
+        GpuImageRequest? image = null;
         if (o.Gpu is { IsEmpty: false } g)
         {
             if (gpuOff is not null) skipped.Add(new SkippedOverride("gpu", gpuOff));
@@ -134,13 +139,14 @@ public sealed class GameProfileApplier(
                     gpu.RequestFeatures(antiLag, chill);
                     _features = (antiLag, chill);
                 }
+                image = RequestImage(g.Image, settings, skipped);
             }
         }
 
         active.Set(new ActiveGameProfile(
             game, rule.Id, rule.Match, mode,
-            new AppliedOverrides(stapm, capApplied, fanMode, antiLag, chill),
-            skipped, o.Freeze ?? [], now) { CapVersion = _capVersion });
+            new AppliedOverrides(stapm, capApplied, fanMode, antiLag, chill, image),
+            skipped, o.Freeze ?? [], now) { CapVersion = _capVersion, ImageVersion = _imageVersion });
 
         // ASCII separators: the service console writes in the OEM code page, where a middle dot became
         // byte 0xFA and turned the log into "binary" for grep (measured on the daemon, 2026-09-25).
@@ -169,12 +175,22 @@ public sealed class GameProfileApplier(
             _capPersisted = false;
         }
 
-        if (!_capRestoreUnknown) return;
+        if (!_capRestoreUnknown && !_imageRestoreUnknown) return;
         var (report, usable, _) = agent.Current(_time.GetUtcNow());
         if (!usable || report is null || report.AtUtc < _begunAt) return;
-        _capRestore = DriverCap(report);
-        _capRestoreUnknown = false;
-        if (_capPersisted) PersistCapRestore();
+        if (_capRestoreUnknown)
+        {
+            _capRestore = DriverCap(report);
+            _capRestoreUnknown = false;
+            if (_capPersisted) PersistCapRestore();
+        }
+        // Same reading, same reason: the agent reports before it reconciles, so its first report
+        // since the game began shows RSR / RIS as the user had them.
+        if (_imageRestoreUnknown && _imageAsked?.PreviousFrom(report.Settings?.RadeonSuperResolution, report.Settings?.ImageSharpening) is { } before)
+        {
+            _imageRestore = before;
+            _imageRestoreUnknown = false;
+        }
     }
 
     /// <summary>
@@ -241,6 +257,7 @@ public sealed class GameProfileApplier(
         if (_capPersisted && !(keepCapRecord && capStillOurs)) capStore?.Clear();
         if (_features is var (antiLag, chill) && gpu.AntiLag == antiLag && gpu.Chill == chill)
             gpu.RequestFeatures(null, null);
+        RestoreImage();
 
         if (active.Current is not null)
             logger?.LogInformation("Game profile '{Match}' removed; back to the mode's settings.", _rule.Match);
@@ -250,6 +267,10 @@ public sealed class GameProfileApplier(
         _capRestoreUnknown = false;
         _capPersisted = false;
         _features = null;
+        _imageVersion = null;
+        _imageAsked = null;
+        _imageRestore = null;
+        _imageRestoreUnknown = false;
         active.Clear();
         return tdpWasInForce;
     }
@@ -312,6 +333,66 @@ public sealed class GameProfileApplier(
         if (asked is null || state is not { Supported: false }) return asked;
         skipped.Add(new SkippedOverride(field, $"The driver does not offer {name} on this GPU."));
         return null;
+    }
+
+    /// <summary>
+    /// Asks for the game's RSR / RIS (F4), minus what the agent reports the driver does not offer or
+    /// cannot take (a sharpness outside the driver's range), and remembers what to put back: the
+    /// driver's own values from the agent's report, or — with no usable report yet — the first one
+    /// after the game began (Observe). Returns what was requested, null when nothing was.
+    /// </summary>
+    private GpuImageRequest? RequestImage(GpuImageRequest asked, GpuSettingsSnapshot? settings, List<SkippedOverride> skipped)
+    {
+        if (asked.IsEmpty) return null;
+        var rsr = settings?.RadeonSuperResolution;
+        var ris = settings?.ImageSharpening;
+        var r = asked;
+        if ((r.Rsr is not null || r.RsrSharpness is not null) && ImageRefusal(rsr, r.RsrSharpness, "Radeon Super Resolution", "RSR") is string whyRsr)
+        {
+            skipped.Add(new SkippedOverride("rsr", whyRsr));
+            r = r with { Rsr = null, RsrSharpness = null };
+        }
+        if ((r.Ris is not null || r.RisSharpness is not null) && ImageRefusal(ris, r.RisSharpness, "Radeon Image Sharpening", "Image Sharpening") is string whyRis)
+        {
+            skipped.Add(new SkippedOverride("ris", whyRis));
+            r = r with { Ris = null, RisSharpness = null };
+        }
+        if (r.IsEmpty) return null;
+
+        var before = settings is null ? null : r.PreviousFrom(rsr, ris);
+        _imageRestore = before;
+        _imageRestoreUnknown = before is null;
+        gpu.RequestImage(r);
+        _imageVersion = gpu.ImageVersion;
+        _imageAsked = r;
+        return r;
+    }
+
+    /// <summary>Why a feature cannot be asked for, from the agent's report. An unqueried feature (no
+    /// report, or the interface not read) is not refused: desired state converges, and the agent
+    /// reports a driver refusal on its own.</summary>
+    private static string? ImageRefusal(GpuFeatureState? state, int? sharpness, string name, string shortName)
+    {
+        if (state is { Supported: false }) return $"The driver does not offer {name} on this GPU.";
+        return GpuImageRequest.Reject(sharpness, state?.Min, state?.Max, shortName);
+    }
+
+    /// <summary>
+    /// Puts back what the game's RSR / RIS request changed — unless someone asked since (the Display
+    /// page moved the version: that is the user's choice now, not something to undo). When what the
+    /// driver held before was never read, nothing is restored and nothing is forced: "off" would be a
+    /// guess about the user's own Adrenalin setting, the mistake the cap once made.
+    /// </summary>
+    private void RestoreImage()
+    {
+        if (_imageVersion is not long v || gpu.ImageVersion != v) return;
+        if (_imageRestoreUnknown || _imageRestore is null)
+        {
+            gpu.RequestImage(null);   // retires the game's request; the agent writes nothing
+            logger?.LogWarning("Game profile '{Match}': RSR / RIS from before the game were never read (the GPU agent was silent); the driver keeps what it has.", _rule?.Match);
+            return;
+        }
+        gpu.RequestImage(_imageRestore);
     }
 
     /// <summary>Why this cap must not be requested, or null. The same checks POST /gpu/frame-cap

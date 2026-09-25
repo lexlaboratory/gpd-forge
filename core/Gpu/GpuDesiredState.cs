@@ -27,6 +27,8 @@ public sealed class GpuDesiredState
     private long _capVersion;
     private bool? _antiLag;
     private bool? _chill;
+    private GpuImageRequest? _image;
+    private long _imageVersion;
 
     /// <summary>Rises on every cap request. A game profile restores its predecessor's cap only if
     /// this is still the value its own request left — otherwise someone asked for a cap since (the
@@ -43,6 +45,21 @@ public sealed class GpuDesiredState
     public void RequestFeatures(bool? antiLag, bool? chill)
     {
         lock (_gate) { _antiLag = antiLag; _chill = chill; }
+    }
+
+    /// <summary>RSR / RIS to set (F4), from a game profile or the Display page. Null = nothing asked.
+    /// Carried out once per <see cref="ImageVersion"/> (GpuImageReconciler), like the cap.</summary>
+    public GpuImageRequest? Image { get { lock (_gate) return _image; } }
+
+    /// <summary>Rises on every image request. A game profile restores what it changed only while this
+    /// is still the value its own request left — a Display-page change since is the user's.</summary>
+    public long ImageVersion { get { lock (_gate) return _imageVersion; } }
+
+    /// <summary>Record an RSR / RIS intent. An empty or null request asks for nothing (the agent
+    /// writes nothing) but still moves the version, which retires whatever was asked before.</summary>
+    public void RequestImage(GpuImageRequest? image)
+    {
+        lock (_gate) { _image = image is { IsEmpty: false } ? image : null; _imageVersion++; }
     }
 
     /// <summary>Whether anything has ever been asked for. Until then the agent must leave the GPU

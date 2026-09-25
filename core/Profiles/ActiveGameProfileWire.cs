@@ -44,9 +44,12 @@ public sealed record ProfileLiveState(
     int? GuardianThrottleW,
     Func<IReadOnlyList<string>> RivalsNow,
     GpuAgentReport? Agent,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    long ImageVersion = 0);
 
-public sealed record GpuFeaturesWire(bool? AntiLag, bool? Chill);
+/// <remarks>RSR / RIS (F4) additive: null when the profile did not set them, or no longer holds them.</remarks>
+public sealed record GpuFeaturesWire(bool? AntiLag, bool? Chill,
+    bool? Rsr = null, int? RsrSharpness = null, bool? Ris = null, int? RisSharpness = null);
 
 public sealed record AppliedWire(int? StapmW, int? FrameCapFps, string? FanMode, GpuFeaturesWire Gpu);
 
@@ -105,9 +108,25 @@ public sealed record ActiveGameProfileWire(
         bool? chill = check.Keep("chill", a.Chill, s => FeatureMismatch(s?.Chill, a.Chill, "Chill"), skipped);
         bool? antiLag = check.Keep("antiLag", a.AntiLag, s => FeatureMismatch(s?.AntiLag, a.AntiLag, "Anti-Lag"), skipped);
 
+        // RSR / RIS: the Display page asking for anything since makes them the user's (superseded);
+        // otherwise the agent's report must not contradict the enabled flag that was asked for.
+        var img = a.Image;
+        if (img is not null && p.ImageVersion is long iv && live.ImageVersion != iv)
+        {
+            if (img.Rsr is not null || img.RsrSharpness is not null) superseded.Add("rsr");
+            if (img.Ris is not null || img.RisSharpness is not null) superseded.Add("ris");
+            img = null;
+        }
+        bool? rsr = check.Keep("rsr", img?.Rsr, s => FeatureMismatch(s?.RadeonSuperResolution, img?.Rsr, "RSR"), skipped);
+        bool? ris = check.Keep("ris", img?.Ris, s => FeatureMismatch(s?.ImageSharpening, img?.Ris, "Image Sharpening"), skipped);
+        // A sharpness rides with its feature: dropped when the feature was refused, kept when only a
+        // sharpness was asked (nothing to contradict it but the value, which the driver range bounds).
+        int? rsrSharp = img?.Rsr is not null && rsr is null ? null : img?.RsrSharpness;
+        int? risSharp = img?.Ris is not null && ris is null ? null : img?.RisSharpness;
+
         return new ActiveGameProfileWire(
             true, p.Game, p.RuleId, p.Match, p.Mode,
-            new AppliedWire(stapm, cap, fanMode, new GpuFeaturesWire(antiLag, chill)),
+            new AppliedWire(stapm, cap, fanMode, new GpuFeaturesWire(antiLag, chill, rsr, rsrSharp, ris, risSharp)),
             skipped, superseded, p.Freeze, p.SinceUtc);
     }
 
