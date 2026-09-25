@@ -340,9 +340,12 @@ async function prepare(page: Page, { theme, density = 'mouse' }: Prep) {
 /** Everything that must have settled before a pixel comparison is meaningful. */
 async function settle(page: Page) {
   // The logo is a network image; screenshotting before it decodes yields a hole where the brand is.
+  // Both logos: the overlay's is `.qam-logo`, and matching only `.brand-logo` made this wait pass at
+  // once on every overlay shot — which then raced the decode and, on 2026-09-25, lost (a blank where
+  // the overlay's logo should be, 128 px off the baseline).
   await page.waitForFunction(() => {
-    const img = document.querySelector<HTMLImageElement>('.brand-logo')
-    return !img || (img.complete && img.naturalWidth > 0)
+    const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('.brand-logo, .qam-logo'))
+    return imgs.every((img) => img.complete && img.naturalWidth > 0)
   })
   await page.evaluate(() => document.fonts.ready)
 }
