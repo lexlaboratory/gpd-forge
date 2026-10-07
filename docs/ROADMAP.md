@@ -411,6 +411,8 @@ not a claim that a hardware fault is resolved.
   post-attempt XInput captures found connected neutral input; physical actuation
   in those windows still needs confirmation. WinControls is restored. Completed
   calibration, persistent XInput range and GTA V behavior remain unconfirmed.
+  Alex subsequently reports that calibration seems correct; retain this as a
+  positive user observation pending the synchronized range or in-game check.
 - **Power preset persistence follow-up (2026-10-07):** the previous save endpoint
   changed memory only. A dedicated atomic store now loads before workers and saves
   before acknowledging success, including settings imports. Source e333ec6 is

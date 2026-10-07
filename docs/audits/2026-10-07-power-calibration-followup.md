@@ -59,3 +59,7 @@ Read-only native state logs show both trigger displays reaching255 and returning
 WinControls was restored from its verified original path after the utility closed. Two independent30-second XInput captures with WinControls running found slot0 connected and LT/RT0 throughout (271 and272 connected samples respectively), without any observed actuation. This cannot establish a remaining range limit or interference unless Alex confirms physical presses during those exact captures. Root requested that clarification before drawing a cause. Private CSVs: `scripts/diagnostics/xinput-triggers-20261007-012524.csv` and `xinput-triggers-20261007-013030.csv`. Actual GTA V behavior and persistence of any trigger improvement remain unverified.
 
 No controller firmware, driver, BIOS, unverified EC register or Windows protection change was used. Completion of the software repairs is not evidence that the trigger or battery-shutdown symptom is cured.
+
+### Subsequent user observation
+
+Alex subsequently answered yes and reported that calibration now seems correct. This is a positive user observation, distinct from a recorded full-range post-calibration measurement. Root requested a synchronized held-trigger read (or direct GTA V verification at Alex's preference) to avoid the earlier timing ambiguity. No further calibration or configuration write was performed. Live check07:41 UTC still shows12 W verified, Quiet verified, CPU71.8 °C and the power recorder Running. GTA V acceleration/braking/firing and the battery-shutdown cause remain open until directly observed.
