@@ -171,3 +171,8 @@ Get-CimInstance -Namespace root/wmi -ClassName BatteryStatus |
   Select-Object Voltage,DischargeRate,RemainingCapacity,PowerOnline
 ```
 
+Cierre: [PR 1 en borrador](https://github.com/lexlaboratory/gpd-forge/pull/1), base
+`tacodececina/restauracion-y-correcion-cmd`; no merge ni release. GOD.INC recibió
+el informe de operaciones y memoria en `9bc43ca005251ea0753ad4a559493a54c3022b9e`;
+se verificaron SHA remoto y presencia de ambas entradas en `origin/main`.
+
