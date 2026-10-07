@@ -30,7 +30,7 @@ Files: `core/Tdp/RyzenAdjBackend.cs`, `ClosedLoopTdpController.cs`, `TdpProfile.
 - [x] Consume both output streams concurrently; enforce timeout and terminate the child on cancellation; return a bounded error on failed access.
 - [x] Append `Error` and `VerificationStatus` to TdpApplyResult, keeping existing callers compatible; classify verified/mismatch/unavailable.
 - [x] Publish error/status in GET and POST /tdp, with owner and observed limits unchanged.
-- [ ] Run focused tests, then confirm real readback before treating thermal throttling as physically applied.
+- [x] Run focused tests, then confirm real readback before treating thermal throttling as physically applied.
 
 ## 2. Battery and thermal shutdown evidence
 
@@ -38,7 +38,7 @@ Files: `scripts/diagnostics/` and `docs/audits/2026-10-06-device-diagnostics.md`
 
 - [x] Capture battery voltage, remaining/full-charge capacity, AC and shutdown event data with absolute UTC/local timestamps.
 - [x] Correlate the four October 1 events with the last available samples; distinguish no-bugcheck events from September 24 0x9F.
-- [ ] Observe a brief normal-load interval; no stress test or forced discharge.
+- [x] Observe a brief normal-load interval; no stress test or forced discharge.
 - [x] In ForgeWorker publish a throttle request as a request, and report a failure if ApplyAsync did not verify; test that no failed apply produces a confirmed-protection message.
 
 ## 3. Fan control confirmation
@@ -76,8 +76,8 @@ Files: diagnostics operations scripts, audit, roadmap/API documentation.
 - [x] Stop Forge cleanly so its finally/dispose path returns fan to auto, and verify process exit before starting Motion Assistant.
 - [x] Start Motion Assistant alone and observe whether TDP/fan controls work; record crashes or driver errors. Keep GPDTool disabled during this test.
 - [x] Restore previous owner/configuration after the comparison unless measurements establish a better stable controller; document final owner.
-- [ ] Build .NET/UI, types, formatting/lint, full tests and security/dependency checks; install only validated artifacts with rollback available.
-- [ ] Verify installed build identity, live statuses and controlled hardware response. Update vault operations/memory and git push.
+- [x] Build .NET/UI, types, formatting/lint, full tests and security/dependency checks; install only validated artifacts with rollback available.
+- [x] Verify installed build identity, live statuses and controlled hardware response. Update vault operations/memory and git push.
 
 Baseline focused backend tests: 36 passed, zero failed. Hardware baseline: 65.4 °C, 14.3 W package, 3584 RPM, 95% battery, AC disconnected, TDP unverified. These values describe one sample, not idle performance.
 
@@ -88,3 +88,9 @@ Backend: 1,709 passing tests, 91.74% coverage of added executable .NET lines (95
 Physical trigger capture confirmed truncated input (223/181). Manufacturer calibration is not complete: official download returns HTTP 429; the published reseller mirror requires Microsoft authentication or returns a Cloudflare 403 challenge. No bypass or controller firmware write was attempted. The automatic approval review separately rejected opening the manufacturer download page in Edge without a specific reason.
 
 Motion Assistant was tested as the only owner, failed to change the read-back 18/24/22 W limits, and offered no verified manual fan control. Its INI files were restored and Forge resumed as owner. Battery shutdown cause remains unresolved; the October 1 events have no contemporaneous voltage/temperature data.
+
+## Installed verification — 2026-10-07
+
+Repair source 6029655 is installed and destination hashes match all 73 staged files. TDP 10 W verified, Battery 8 W restored with no manual override; fan duty255 verified and Quiet restored. Native Power/Fan reviewed against the real daemon. GPU agent resumed after resolving its DLL lock during install. Automatic profiles selected Windows15 W when AC connected; that readback also verified.
+
+The six workstreams were executed, but two problem outcomes remain open: manufacturer calibration/download and the cause of battery shutdowns. Sustained AC cooling also needs observation. The closed checkboxes describe performed tasks, not claims that those hardware symptoms are cured. Operations/memory synchronization is completed in the closure commit.

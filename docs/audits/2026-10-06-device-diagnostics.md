@@ -106,7 +106,68 @@ vigente de fan al volver era Quiet. No se corrieron dos controladores simultáne
 Motion Assistant de WinRing0 para TDP, sensores y ventilador. Volver a esa versión
 no resolvió el control en esta comparación.
 
-La instalación de artefactos, lectura aplicada de TDP/ventilador y repetición de
-la captura tras calibrar se registrarán aquí al verificarse. El origen de los
-apagones con batería permanece abierto por falta de datos contemporáneos.
+## Entrega instalada y verificada: 2026-10-07
+
+Fuente instalada `6029655a125a6456613992f43c09f8c1cd6633e2`, versión 0.4.0.
+Se verificaron los 73 archivos del manifiesto contra el destino. SHA256 del DLL:
+`01470E48B7E9A703866CDFEB0108CCB76C7E892ED3A9945414482126430F745F`;
+app Tauri `9DC34F60A9ADC50489CF848B48EB6E6B1E116E026607BED5AFA576C5BA4830BC`.
+La app instalada abrió y se revisaron Power y Fan contra el daemon real.
+
+El primer intento de copia falló por la DLL retenida por el agente GPU de Forge;
+el rollback también encontró ese bloqueo. El servicio quedó detenido durante
+la recuperación. Se identificó y detuvo exclusivamente el agente GPU PID 25132
+por ruta y argumentos; se retomó la copia verificada y el servicio inició a las
+00:20 locales. El agente GPU se reinició en la sesión del usuario; `/gpu` Ready.
+No se borró el árbol instalado: se preservaron PresentMon y los demás auxiliares.
+El respaldo de instalación y configuración está en el directorio privado
+`out/repair-validation/backup/deploy-20261007-001844`.
+
+Registro del servicio: se añadió únicamente `GPDFORGE_TDP_BACKEND=pawnio-strix`;
+hardware, fan, FPS y perfiles automáticos conservaron sus flags. Servicio SYSTEM,
+inicio automático; Motion Assistant cerrado y GPDToolService Stopped/Disabled.
+
+Prueba 00:21 local: POST TDP 10 W devolvió requested=10, observed=10,
+verified=true, error=null. Re-seleccionar Battery restauró 8 W, fast 12 W,
+owner=mode, manualStapmW=null, verified=true en un intento. Fan Manual 255 devolvió
+requestedDuty=observedDuty=255 y verified=true. Se restauró Quiet/manualDuty128;
+cuatro segundos después duty 120/120, verified=true, 3072 RPM y CPU 67 C.
+La orden manual breve verificó el registro EC; no midió RPM máxima estacionaria.
+
+Observación normal sin benchmark: 13 muestras 00:08:48–00:09:49 antes de instalar,
+CPU 69.6–80.9 C, paquete 8.4–22.6 W, voltaje 10344–10838 mV. Tras instalar,
+las primeras diez muestras con batería (00:21:30–00:22:16) dieron CPU
+66.8–67.4 C, paquete 7.5–8.5 W y fan 3072 RPM. A las 00:22:21 se detectó AC;
+el modo automático eligió Windows y confirmó 15 W/fast20 W. La observación
+mixta no es una comparación controlada: después de conectar CPU alcanzó 89.4 C
+y paquete 19.7 W, con aumento del ventilador. El boost, la carga y el calor al
+cargar deben evaluarse antes de atribuir la temperatura a una falla física.
+No se reprodujo un apagón ni se provocó descarga profunda o carga de estrés.
+
+Validación: .NET 1709/1709; cobertura de líneas ejecutables añadidas 91.74%
+en la suite (95.65% al combinar la lectura física separada); cobertura global
+de la suite 70.30%. UI completa 283/283 antes de los últimos ajustes de texto;
+regresiones finales 17/17, visual 6/6 y fit final 1/1. Build Release/Tauri,
+tipos y lint/analyzers pasaron; NuGet y npm no reportaron vulnerabilidades.
+`Program.cs` conserva 72 diagnósticos de formato fuera del diff y una prueba
+conserva el warning anterior xUnit1031. No se ocultaron en la cobertura.
+
+GamePad Test Calibration Tool no pudo descargarse: GPD HTTP429 incluso tras una
+espera, espejo publicado con Microsoft OAuth o Cloudflare403. La revisión
+automática también rechazó abrir la página del fabricante en Edge sin motivo
+específico. No se burló autenticación/desafíos ni se usó un binario de origen
+desconocido. La calibración y su repetición XInput siguen pendientes; no afirmar
+que los gatillos se repararon. Los apagones siguen abiertos sin telemetría de
+los eventos de octubre 1. Volver a Motion Assistant 1.2.0.9 no mejoró la prueba.
+
+Para re-medir el estado vigente:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/version
+Invoke-RestMethod http://127.0.0.1:8787/tdp
+Invoke-RestMethod http://127.0.0.1:8787/fan
+Invoke-RestMethod http://127.0.0.1:8787/telemetry
+Get-CimInstance -Namespace root/wmi -ClassName BatteryStatus |
+  Select-Object Voltage,DischargeRate,RemainingCapacity,PowerOnline
+```
 

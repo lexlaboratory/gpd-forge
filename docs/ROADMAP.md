@@ -395,11 +395,14 @@ not a claim that a hardware fault is resolved.
 - **P0 — battery shutdowns:** correlate new voltage/temperature samples with any
   recurrence. The four abrupt October 1 events have no contemporaneous retained
   samples, so their electrical or thermal cause remains unproven.
-- **P0 — effective power and cooling:** verify the new PawnIO Strix backend and fan
-  feedback on the installed build; keep one EC/SMU controller active. Motion
-  Assistant alone requested 12 W while independent readback still showed 18 W.
+- **P0 — sustained cooling:** the installed repair verified 10 W, restored 8 W
+  Battery, and verified fan duty 255 then Quiet. On AC the automatic Windows
+  profile verified 15 W, but temperature and fan speed rose again. Assess sustained
+  load/cooling separately; keep one EC/SMU controller active. Motion Assistant
+  alone requested 12 W while independent readback still showed 18 W.
 - **P1 — L2/R2 calibration:** physical XInput capture reached only 223/255 and
   181/255; calibrate with the manufacturer utility, then repeat the same capture.
+  Download remains blocked: official HTTP 429, published mirror authentication/403.
 - **P1 — broader hardware support:** add fixtures and device proof before widening
   the PawnIO code-name/table-version whitelist.
 
