@@ -63,6 +63,9 @@ export interface TdpInfo {
   /** What the user wants in force (manual, else the game profile, else the mode's preset) — unlike
    *  `stapmW`, never a guardian / auto-FPS / charge-guard / tuner write. Optional: older daemons. */
   intentStapmW?: number | null
+  /** Optional details supplied by newer daemons. */
+  error?: string | null
+  verificationStatus?: string | null
 }
 
 // One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon
@@ -185,7 +188,15 @@ export interface KeyboardBacklightInfo { controllable: boolean; applied: boolean
 
 // Fan mode + gated manual duty (mirror of GET/POST /fan — core/Fan/GpdFanController.cs).
 // `controllable` is true only when the daemon is actually gated to WRITE the EC right now.
-export interface FanInfo { mode: string; manualDuty: number; controllable: boolean }
+export interface FanStatus {
+  requestedDuty: number | null
+  observedDuty: number | null
+  verified: boolean | null
+  error: string | null
+  atUtc: string | null
+  mode: string | null
+}
+export interface FanInfo { mode: string; manualDuty: number; controllable: boolean; status?: FanStatus | null }
 
 // Full settings snapshot (mirror of GET /settings/export).
 export interface SettingsExport {

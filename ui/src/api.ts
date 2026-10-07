@@ -35,7 +35,13 @@ export interface TdpResult { requested: number; observed: number | null; verifie
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init)
-  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path} → ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: string | { message?: string } } | null
+    const message = typeof body?.error === 'string' ? body.error
+      : body?.error && typeof body.error.message === 'string' ? body.error.message
+        : `${init?.method ?? 'GET'} ${path} → ${res.status}`
+    throw new Error(message)
+  }
   return res.json() as Promise<T>
 }
 

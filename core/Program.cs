@@ -514,14 +514,11 @@ builder.Services.AddSingleton<IDelay, SystemDelay>();
 // wired when GPDFORGE_ENABLE_HARDWARE=1 AND the service runs elevated. Otherwise a stub that
 // never touches hardware. This is the metal-access gate.
 bool enableHardware = Environment.GetEnvironmentVariable("GPDFORGE_ENABLE_HARDWARE") == "1";
+TdpBackendRegistration.Register(builder.Services, enableHardware,
+    Environment.GetEnvironmentVariable("GPDFORGE_TDP_BACKEND"),
+    Environment.GetEnvironmentVariable("GPDFORGE_RYZENADJ"));
 if (enableHardware)
 {
-    string ryzenPath = Environment.GetEnvironmentVariable("GPDFORGE_RYZENADJ")
-        ?? @"C:\Program Files\Motion Assistant\amd\ryzenadj.exe";
-    builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
-    builder.Services.AddSingleton<ITdpBackend>(sp =>
-        new RyzenAdjBackend(sp.GetRequiredService<IProcessRunner>(), ryzenPath,
-            sp.GetService<ILogger<RyzenAdjBackend>>()));
     // Read-only richer sensors (package watts, temps). LHM loads its own read-only driver.
     builder.Services.AddSingleton<IHardwareSensors, LhmHardwareSensors>();
     // Real GPD fan RPM via the PawnIO EC read (LHM doesn't expose it). Read-only, keeps one port open.
@@ -608,7 +605,7 @@ builder.Services.AddSingleton(sp => new SerializedTdpController(new AuditingTdpC
     // "verifies". Reporting verified:true without saying the backend is a stub is a liar with a
     // timestamp — resolved from the registered backend rather than from the gate variable, so it
     // describes what is actually wired.
-    sp.GetRequiredService<ITdpBackend>() is StubTdpBackend ? "stub" : "ryzenadj"),
+    TdpBackendRegistration.Name(sp.GetRequiredService<ITdpBackend>())),
     sp.GetRequiredService<TdpState>()));
 builder.Services.AddSingleton<ITdpController>(sp => sp.GetRequiredService<SerializedTdpController>());
 builder.Services.AddSingleton<IFanController, StubFanController>();
@@ -785,6 +782,7 @@ builder.Services.AddSingleton(sp =>
     var saved = sp.GetRequiredService<FanPreferenceStore>().Read();
     return new FanState { Mode = saved.Mode, ManualDuty = saved.ManualDuty };
 });
+builder.Services.AddSingleton<FanControlState>();
 builder.Services.AddSingleton<BatteryService>();
 builder.Services.AddSingleton<IProcessSuspender, NtProcessSuspender>();
 builder.Services.AddSingleton<FreezerService>(sp =>
@@ -1199,9 +1197,16 @@ app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
         // answer and must not be dressed up as 0 W applied by nobody.
         return Results.Json(new
         {
-            stapmW = (int?)null, owner = (string?)null, verified = (bool?)null,
-            backend = (string?)null, observedStapmW = (int?)null, observedPptW = (int?)null,
-            attempts = (int?)null, atUtc = (DateTimeOffset?)null,
+            stapmW = (int?)null,
+            owner = (string?)null,
+            verified = (bool?)null,
+            backend = (string?)null,
+            observedStapmW = (int?)null,
+            observedPptW = (int?)null,
+            attempts = (int?)null,
+            atUtc = (DateTimeOffset?)null,
+            error = (string?)null,
+            verificationStatus = (string?)null,
             note = "No TDP write has happened since the daemon started.",
             manualStapmW,
             intentStapmW,
@@ -1219,6 +1224,8 @@ app.MapGet("/tdp", (TdpState state, TdpIntent intent, ModeState m) =>
         observedPptW = last.Observed.PptW,
         attempts = last.Attempts,
         atUtc = last.AtUtc,
+        error = last.Error,
+        verificationStatus = last.VerificationStatus,
         note = last.Backend == "stub"
             ? "The hardware gate is closed: the stub backend echoes the request, so 'verified' means the echo matched, not the silicon."
             : null,
@@ -1250,7 +1257,14 @@ app.MapPost("/tdp", async (TdpRequest req, SerializedTdpController tdp, ModeStat
         return Results.Json(new { error = new { code = "tdp_superseded",
             message = $"The mode changed to '{m.Active}' while this write waited; that mode's TDP is in force and nothing was written." } },
             statusCode: 409);
-    return Results.Json(new { requested = r.Requested.StapmW, observed = r.Observed.StapmW, verified = r.Verified });
+    return Results.Json(new
+    {
+        requested = r.Requested.StapmW,
+        observed = r.Observed.StapmW,
+        verified = r.Verified,
+        error = r.Error,
+        verificationStatus = r.VerificationStatus,
+    });
 });
 
 // Panic cool: an immediate, dead-simple safety floor. Applies a flat 8W ceiling through the same
@@ -1776,16 +1790,49 @@ app.MapPost("/power-source", (PowerSourceRequest r, PowerSourceState s) =>
 // whether GPD Forge is actually gated to WRITE the EC right now (GPDFORGE_ENABLE_HARDWARE=1 AND
 // GPDFORGE_ENABLE_FAN_CONTROL=1 AND a matched board) — see core/Fan/FanWorker.cs for the 1 s loop that
 // applies this, and core/Fan/GpdFanController.cs for the write path itself.
-app.MapGet("/fan", (FanState f, IGpdFanController controller) => Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available }));
-app.MapPost("/fan", (FanRequest r, FanState f, FanPreferenceStore store, FanOverride gameFan, IGpdFanController controller, ILogger<FanState> log) =>
+app.MapGet("/fan", (FanState f, IGpdFanController controller, FanControlState controlState) => Results.Json(new
+{
+    mode = f.Mode,
+    manualDuty = f.ManualDuty,
+    controllable = controller.Available,
+    status = controlState.Snapshot,
+}));
+app.MapPost("/fan", (FanRequest r, FanState f, FanPreferenceStore store, FanOverride gameFan, IGpdFanController controller,
+    FanControlState controlState, ILogger<FanState> log) =>
 {
     if (r.Mode is not null && !FanControlPolicy.IsValidMode(r.Mode))
         return Results.BadRequest(new { error = new { code = "bad_mode", message = "mode must be one of Auto, Quiet, Balanced, Aggressive, Manual" } });
+    string previousMode = f.Mode;
+    int previousManualDuty = f.ManualDuty;
     // Picking a mode mid-game takes the fan from the game profile: it stays after the game.
     if (r.Mode is not null) { gameFan.Release(); f.Mode = r.Mode; }
     if (r.ManualDuty is int d) f.ManualDuty = Math.Clamp(d, 0, 255);
     SaveFanPreference(store, f, gameFan, log);
-    return Results.Json(new { mode = f.Mode, manualDuty = f.ManualDuty, controllable = controller.Available });
+    bool activePreferenceChanged = !string.Equals(previousMode, f.Mode, StringComparison.Ordinal)
+        || (string.Equals(f.Mode, "Manual", StringComparison.Ordinal) && previousManualDuty != f.ManualDuty);
+    FanControlSnapshot status = controlState.Snapshot;
+    if (activePreferenceChanged)
+    {
+        // A preference update is only a request. Do not return the previous worker tick's verified
+        // result as if it verified this new target; the next tick will publish real write/readback.
+        status = new FanControlSnapshot(
+            string.Equals(f.Mode, "Manual", StringComparison.Ordinal)
+                ? Math.Clamp(f.ManualDuty, GpdFanController.MinManualDuty, 255)
+                : null,
+            status.ObservedDuty,
+            Verified: null,
+            Error: null,
+            AtUtc: null,
+            Mode: f.Mode);
+        controlState.Record(status);
+    }
+    return Results.Json(new
+    {
+        mode = f.Mode,
+        manualDuty = f.ManualDuty,
+        controllable = controller.Available,
+        status,
+    });
 });
 
 app.MapGet("/display", (DisplayService d) => Results.Json(new { brightness = d.GetBrightness() }));

@@ -16,6 +16,7 @@ import type { DaemonHealth, FanInfo, LedInfo, ChargeLimitInfo, UndervoltInfo, Ke
 import { getHealth, getFanInfo, getLed, getChargeLimit, getUndervolt, getKeyboardBacklight, getTabletMode } from '../api'
 import { Frame, Badge } from '../components'
 import { LedCard, ChargeLimitRow, UndervoltRow } from './hardware'
+import { TriggerDiagnostics } from './TriggerDiagnostics'
 
 /** One capability, its live state, and the reason it is blocked — straight from the daemon. */
 function Capability({ name, blocked, reason, testid }: {
@@ -125,6 +126,7 @@ function NotBuiltYet() {
 export function HardwarePage() {
   return (
     <>
+      <TriggerDiagnostics />
       <CapabilityReport />
       <NotBuiltYet />
 

@@ -302,7 +302,7 @@ or `verified: false` for that would be inventing an event.
   change" had no answer. `ITdpController.ApplyAsync` now requires the owner, which is what keeps
   this list complete — a new writer does not compile without one.
 - `verified` — the closed-loop readback for that write. `null` means the backend cannot report one.
-- `backend` — `ryzenadj` or `stub`. **`stub` means no power limit was actually applied to hardware**;
+- `backend` — `ryzenadj`, `pawnio-strix` or `stub`. **`stub` means no power limit was actually applied to hardware**;
   the stub echoes back whatever it was handed, so a `verified: true` from it attests to nothing.
   This is the distinction `GET /telemetry`'s `tdpVerified` hid while it was a hardcoded `true`.
 
@@ -317,6 +317,19 @@ or `verified: false` for that would be inventing an event.
   permanent watts (F1 audit round 1, 2026-09-25).
 
 The same owner is written into the `GET /audit` line for the change.
+
+Repair feedback (2026-10-06): GET and POST also expose nullable `error` and
+`verificationStatus` (`verified`, `mismatch`, `unavailable`). A failed driver or a
+missing required readback is `unavailable`, not evidence of a firmware refusal.
+The requested ceiling and measured package consumption are different quantities.
+
+With `GPDFORGE_ENABLE_HARDWARE=1`, `GPDFORGE_TDP_BACKEND=pawnio-strix` selects
+`PawnIoStrixTdpBackend`; the existing default remains RyzenAdj. The PawnIO backend
+uses the signed embedded module, accepts only Strix Point code 31 / PM table
+`0x5D0009`, validates the table before setting limits, and reports unsupported
+hardware without falling back to another driver. It refreshes the PSMU table with
+command `0x65` and zero arguments, then applies limits through the distinct MP1
+mailbox. See the [device audit](audits/2026-10-06-device-diagnostics.md).
 
 ### `POST /panic`  (Panic cool — safety)
 `200 → { applied: boolean, stapmW: 8 }` — immediately applies a flat 8 W floor TDP profile
@@ -612,6 +625,15 @@ plug-in. Applied the same way `POST /mode` is: through `ProfileApplier`, which y
 power controller (MotionAssistant/GPD Tool) is running.
 
 ### `GET /fan`  ·  `POST /fan`  (fan mode + manual duty — WRITES are GATED)
+Both responses also include `status`: `{ requestedDuty, observedDuty, verified,
+error, atUtc, mode }`, with nullable values. This is the worker's last command and
+readback, rather than confirmation that a preference was saved. A changed
+preference returns pending feedback (`verified: null`, `atUtc: null`) until the
+worker acts. Auto has `verified: null` because the controller's void return cannot
+confirm firmware ownership. Clients must not display an older mode/duty snapshot
+as verification of a new request. Raw duty stays 0–255 in the API; the UI displays
+percent and honors the 40/255 manual floor.
+
 - `GET → { mode: 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive' | 'Manual', manualDuty: number,
   controllable: boolean }`
   - `POST { mode?: string, manualDuty?: number } → (same shape as GET)` — `mode` must be exactly one

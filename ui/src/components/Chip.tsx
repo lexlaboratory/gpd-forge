@@ -39,13 +39,14 @@ interface SegmentedProps<T extends string> {
   label: string
   testid?: string
   flavour?: 'page' | 'qam'
+  disabled?: boolean
 }
 
 /**
  * A single-choice row of chips. Carries the radio semantics the loose copies never had, so a
  * screen reader announces "2 of 5" instead of five unrelated toggle buttons.
  */
-export function Segmented<T extends string>({ options, value, onChange, label, testid, flavour }: SegmentedProps<T>) {
+export function Segmented<T extends string>({ options, value, onChange, label, testid, flavour, disabled }: SegmentedProps<T>) {
   return (
     <div className="chips" role="radiogroup" aria-label={label} data-testid={testid}>
       {options.map((o) => (
@@ -56,6 +57,7 @@ export function Segmented<T extends string>({ options, value, onChange, label, t
           aria-checked={value === o.id}
           className={`${flavour === 'qam' ? 'qam-chip' : 'chip-btn'}${value === o.id ? ' on' : ''}`}
           data-testid={o.testid}
+          disabled={disabled}
           onClick={() => onChange(o.id)}
         >
           {o.label}

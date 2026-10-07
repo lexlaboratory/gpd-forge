@@ -387,6 +387,23 @@ in *Open*), splitting ADLX performance metrics from the session host (H5), and t
 
 ## Open — work someone can pick up today
 
+Repair session 2026-10-06, authorized by Alex: implementation and device delivery
+are tracked in [the six-step plan](superpowers/plans/2026-10-06-thermal-input-control.md)
+and [the device audit](audits/2026-10-06-device-diagnostics.md). Unit-tested code is
+not a claim that a hardware fault is resolved.
+
+- **P0 — battery shutdowns:** correlate new voltage/temperature samples with any
+  recurrence. The four abrupt October 1 events have no contemporaneous retained
+  samples, so their electrical or thermal cause remains unproven.
+- **P0 — effective power and cooling:** verify the new PawnIO Strix backend and fan
+  feedback on the installed build; keep one EC/SMU controller active. Motion
+  Assistant alone requested 12 W while independent readback still showed 18 W.
+- **P1 — L2/R2 calibration:** physical XInput capture reached only 223/255 and
+  181/255; calibrate with the manufacturer utility, then repeat the same capture.
+- **P1 — broader hardware support:** add fixtures and device proof before widening
+  the PawnIO code-name/table-version whitelist.
+
+
 | Item | Where | Note |
 |---|---|---|
 | ~~Sustained fan curve for AI mode~~ | done 2026-09-25 | Wider drop hysteresis on the user's own curve while the mode is `Sustained`; no new write path, so the double gate is the existing one. Phase 3. |

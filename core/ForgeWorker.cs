@@ -172,9 +172,20 @@ public sealed class ForgeWorker(
                     double nowS = _clock.Elapsed.TotalSeconds;
                     if (throttle != _lastThrottleApplied || nowS - _lastThrottleAppliedAt >= ThrottleReassertSeconds)
                     {
-                        await tdp.ApplyAsync(throttle, TdpOwner.ThermalGuardian, stoppingToken);
+                        var applied = await tdp.ApplyAsync(throttle, TdpOwner.ThermalGuardian, stoppingToken);
                         _lastThrottleApplied = throttle;
                         _lastThrottleAppliedAt = nowS;
+
+                        if (!applied.Verified)
+                        {
+                            string message = $"Thermal limit request to {throttleW} W was not verified; hardware protection cannot be confirmed."
+                                + (string.IsNullOrWhiteSpace(applied.Error) ? "" : $" {applied.Error}");
+                            var severity = g.Severity == "critical" ? AlertSeverity.Critica : AlertSeverity.Aviso;
+                            alerts.Publish(AlertCategory.Thermal, severity, "Thermal guardian control", message,
+                                $"requestedStapmW={throttleW};verificationStatus={applied.VerificationStatus ?? "unavailable"};error={applied.Error}",
+                                "guardian:control-unverified");
+                            logger.LogWarning("Guardian TDP request was not verified: {Message}", message);
+                        }
                     }
                 }
                 else
