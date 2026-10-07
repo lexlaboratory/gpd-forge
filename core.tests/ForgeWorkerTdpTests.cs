@@ -27,6 +27,7 @@ public sealed class ForgeWorkerTdpTests : IDisposable
 
     private readonly FakeSilicon _silicon = new();
     private readonly HardwareAuditLog _audit = new();
+    private readonly AlertStore _alertStore;
     private readonly TdpState _state = new();
     private readonly SwitchableDetector _detector = new();
     private readonly ManualTimeProvider _clock = new();
@@ -41,13 +42,14 @@ public sealed class ForgeWorkerTdpTests : IDisposable
     public ForgeWorkerTdpTests()
     {
         Directory.CreateDirectory(_dir);
+        _alertStore = new AlertStore(_dir);
         var tdp = new SerializedTdpController(
             new AuditingTdpController(new ClosedLoopTdpController(_silicon, new NoWait()), _audit, _state, "test"), _state);
         _worker = new ForgeWorker(
             NullLogger<ForgeWorker>.Instance, tdp, new StubFanController(), _source, _mode, _autoFps,
             new FpsTdpController(), new FreezerService(new NullSuspender()), _guardian,
             new ProfileApplier(tdp, _detector, intent: _intent, state: _state), _powerSource, new TunerState(),
-            new AlertService(new AlertStore(_dir)), new ChargeGuardService(new MemoryChargeGuardStore()),
+            new AlertService(_alertStore), new ChargeGuardService(new MemoryChargeGuardStore()),
             new SessionRecorder(new SessionStore(_dir)),
             _intent, _state, new TdpReasserter(_silicon, tdp, _state, _detector, _intent, _mode, _clock));
     }
@@ -193,6 +195,30 @@ public sealed class ForgeWorkerTdpTests : IDisposable
         Assert.Equal(TdpOwner.ThermalGuardian, last.Owner);
         Assert.True(last.Requested.StapmW <= 10, $"throttle raised STAPM to {last.Requested.StapmW} W");
         Assert.True(last.Requested.FastW <= 10);
+    }
+
+    [Theory]
+    [InlineData(93, AlertSeverity.Aviso)]
+    [InlineData(98, AlertSeverity.Critica)]
+    public async Task An_unverified_thermal_limit_publishes_a_deduped_alert(int temperature, AlertSeverity severity)
+    {
+        await _worker.StartAsync(CancellationToken.None);
+        await Until(() => _state.Last is not null);
+        _silicon.ThrowOnApply = true;
+
+        await TickAsync(Cool() with { CpuTempC = temperature });
+
+        var last = _state.Last!.Value;
+        Assert.Equal(TdpOwner.ThermalGuardian, last.Owner);
+        Assert.False(last.Verified);
+        var snapshotType = typeof(TdpSnapshot);
+        Assert.Equal("unavailable", snapshotType.GetProperty("VerificationStatus")?.GetValue(last));
+        Assert.Equal("simulated SMU unavailable", snapshotType.GetProperty("Error")?.GetValue(last));
+        var alert = Assert.Single(_alertStore.List(), x => x.DedupeKey == "guardian:control-unverified");
+        Assert.Equal(severity, alert.Severity);
+        Assert.Contains("not verified", alert.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("simulated SMU unavailable", alert.Message);
+        Assert.DoesNotContain("holding", alert.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---------------------------------------------------------------------------------------------

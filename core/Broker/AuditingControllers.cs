@@ -76,7 +76,8 @@ public sealed class AuditingTdpController(
         // Recorded here, in the decorator, for the same reason the audit line is: every caller is
         // covered by construction rather than by remembering.
         state?.Record(new TdpSnapshot(
-            profile, result.Observed, result.Verified, result.Attempts, owner, backendName, at));
+            profile, result.Observed, result.Verified, result.Attempts, owner, backendName, at,
+            result.Error, result.VerificationStatus));
 
         return result;
     }

@@ -108,6 +108,23 @@ public class FanWorkerTests
     }
 
     [Fact]
+    public void Auto_snapshot_reads_duty_without_claiming_verification()
+    {
+        var source = new ScriptedTelemetrySource();
+        var fan = new RecordingFanController { ReadBackDuty = 92 };
+        var state = new FanControlState();
+        var worker = new FanWorker(source, new FanState { Mode = "Auto" }, fan,
+            NullLogger<FanWorker>.Instance, controlState: state);
+        source.Publish(Temp(70));
+
+        worker.Tick();
+
+        Assert.Equal(92, state.Snapshot.ObservedDuty);
+        Assert.Null(state.Snapshot.RequestedDuty);
+        Assert.Null(state.Snapshot.Verified);
+    }
+
+    [Fact]
     public void A_controller_that_throws_leaves_the_fan_on_firmware_and_the_loop_alive()
     {
         var (worker, source, fan, _, clock) = Build("Manual", manualDuty: 200);
@@ -121,6 +138,27 @@ public class FanWorkerTests
         clock.Advance(TimeSpan.FromSeconds(1));
         worker.Tick();
         Assert.Equal("duty:200", fan.Calls[^1]);
+    }
+
+    [Fact]
+    public void Fan_control_snapshot_records_a_failed_readback_mismatch()
+    {
+        var source = new ScriptedTelemetrySource();
+        var fan = new RecordingFanController { ReadBackDuty = 100 };
+        var state = new FanControlState();
+        var worker = new FanWorker(source, new FanState { Mode = "Manual", ManualDuty = 180 }, fan,
+            NullLogger<FanWorker>.Instance, controlState: state);
+        source.Publish(Temp(70));
+
+        worker.Tick();
+
+        var snapshot = state.Snapshot;
+        Assert.Equal("Manual", snapshot.Mode);
+        Assert.Equal(180, snapshot.RequestedDuty);
+        Assert.Equal(100, snapshot.ObservedDuty);
+        Assert.False(snapshot.Verified);
+        Assert.Contains("mismatch", snapshot.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(snapshot.AtUtc);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -280,6 +318,7 @@ public sealed class RecordingFanController : IGpdFanController
 {
     private readonly List<string> _calls = [];
     public bool ThrowOnDuty { get; set; }
+    public int? ReadBackDuty { get; set; }
 
     public IReadOnlyList<string> Calls { get { lock (_calls) return _calls.ToArray(); } }
 
@@ -300,6 +339,6 @@ public sealed class RecordingFanController : IGpdFanController
         IsManual = false;
     }
 
-    public int? ReadDuty() => null;
+    public int? ReadDuty() => ReadBackDuty;
     public void Dispose() { }
 }

@@ -313,7 +313,7 @@ export function TunerCard() {
           <Readout label="Temp" value={`${info.best.tempC}`} unit="°C" fraction={info.best.tempC / MAX_CPU_C} tone={tempTone(info.best.tempC)} />
         </div>
       )}
-      <p className="muted">Honesty note: this HX370 has no FPS telemetry yet (PresentMon isn't wired), so a real sweep records nothing useful and honestly reports no result rather than a faked one. The mock daemon simulates FPS so this card is fully exercisable in dev/E2E.</p>
+      <p className="muted">Run a supported game before starting a sweep. A result requires live FPS samples; if none are available, no result is recorded.</p>
     </Frame>
   )
 }

@@ -89,13 +89,13 @@ public static class GuardianEvaluator
         // --- thermal takes priority over battery ---
         if (temp >= c.TempCriticalC)
             return new GuardianDecision(c.ThrottleFloorW, false,
-                $"CPU {temp:0}°C — critical, holding {c.ThrottleFloorW} W", "critical",
+                $"CPU {temp:0}°C — critical, requesting a {c.ThrottleFloorW} W thermal ceiling", "critical",
                 GuardianKind.ThermalCritical);
 
         if (temp >= c.TempThrottleC)
         {
             int w = RampWatts(temp, c);
-            return new GuardianDecision(w, false, $"CPU {temp:0}°C — easing to {w} W", "warn",
+            return new GuardianDecision(w, false, $"CPU {temp:0}°C — requesting a thermal limit of {w} W", "warn",
                 GuardianKind.ThermalThrottle);
         }
 

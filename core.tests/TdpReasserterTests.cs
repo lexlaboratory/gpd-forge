@@ -26,6 +26,7 @@ public sealed class FakeSilicon : ITdpBackend
     public int Writes { get; private set; }
     public bool Unreadable { get; set; }
     public bool ThrowOnRead { get; set; }
+    public bool ThrowOnApply { get; set; }
     /// <summary>When set, writes land on all four limits (slow and Tctl too), as a real PM table
     /// reports them. Off by default so the two-limit readouts the older tests compare stay exact.</summary>
     public bool FullTable { get; set; }
@@ -40,6 +41,7 @@ public sealed class FakeSilicon : ITdpBackend
 
     public async Task ApplyAsync(TdpProfile profile, CancellationToken ct)
     {
+        if (ThrowOnApply) throw new InvalidOperationException("simulated SMU unavailable");
         lock (_gate)
         {
             Writes++;

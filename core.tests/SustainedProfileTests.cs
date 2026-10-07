@@ -14,14 +14,14 @@ using Xunit;
 
 namespace GpdForge.Core.Tests;
 
-[Collection("ModeProfiles")]
+[Collection(ModePresetCollection.Name)]
 public class SustainedProfileTests
 {
     /// <summary>Restores the preset map so these tests cannot leak into any other test's view of it.</summary>
     private static void WithPreset(string mode, Action body)
     {
         var original = ModeProfiles.Map[mode];
-        try { body(); } finally { ModeProfiles.Map[mode] = original; }
+        try { body(); } finally { ModeProfiles.Set(mode, original); }
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class SustainedProfileTests
         // (a future default, a migration, a test) must not escape the guarantee either.
         WithPreset("ai", () =>
         {
-            ModeProfiles.Map["ai"] = new TdpProfile(StapmW: 20, FastW: 40, SlowW: 35, TctlC: 88);
+            ModeProfiles.Set("ai", new TdpProfile(StapmW: 20, FastW: 40, SlowW: 35, TctlC: 88));
 
             var applied = ModeProfiles.For("ai")!.Value;
 

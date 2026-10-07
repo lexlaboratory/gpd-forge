@@ -60,7 +60,9 @@ public readonly record struct TdpSnapshot(
     int Attempts,
     string Owner,
     string Backend,
-    DateTimeOffset AtUtc);
+    DateTimeOffset AtUtc,
+    string? Error = null,
+    string? VerificationStatus = null);
 
 /// <summary>
 /// One consistent read of <see cref="TdpState"/>: the last write, whether a mode change has since

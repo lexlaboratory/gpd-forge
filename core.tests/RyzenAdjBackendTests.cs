@@ -1,5 +1,6 @@
 // GPD Forge — RyzenAdj backend/parser tests. GPL-3.0-or-later.
 using GpdForge.Tdp;
+using System.Diagnostics;
 using Xunit;
 
 namespace GpdForge.Core.Tests;
@@ -209,5 +210,103 @@ public class RyzenAdjBackendTests
         Assert.Contains("--stapm-limit=25000", runner.LastArgs);
         Assert.Contains("--fast-limit=25000", runner.LastArgs);
         Assert.Contains("--tctl-temp=90", runner.LastArgs);
+    }
+
+    [Fact]
+    public async Task System_process_runner_throws_with_exit_code_and_stderr_on_nonzero_exit()
+    {
+        var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell", "v1.0", "powershell.exe");
+        var runner = new SystemProcessRunner();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(powershell,
+            "-NoLogo -NoProfile -NonInteractive -Command \"[Console]::Error.WriteLine('WinRing0 driver not found'); exit 17\"",
+            CancellationToken.None));
+
+        Assert.Contains("17", error.Message);
+        Assert.Contains("WinRing0 driver not found", error.Message);
+    }
+
+    [Fact]
+    public async Task System_process_runner_drains_large_stderr_and_bounds_error_details()
+    {
+        var powershell = PowerShellPath();
+        var runner = new SystemProcessRunner(TimeSpan.FromSeconds(10));
+        const string command = "$i=0; while ($i -lt 10000) { [Console]::Error.WriteLine(('x' * 100)); $i++ }; [Console]::Out.WriteLine('stdout-complete')";
+
+        string output = await runner.RunAsync(powershell,
+            $"-NoLogo -NoProfile -NonInteractive -Command \"{command}\"", CancellationToken.None);
+
+        Assert.Contains("stdout-complete", output);
+    }
+
+    [Fact]
+    public async Task System_process_runner_bounds_error_details_when_stderr_floods()
+    {
+        var runner = new SystemProcessRunner(TimeSpan.FromSeconds(10));
+        const string command = "$i=0; while ($i -lt 10000) { [Console]::Error.WriteLine(('x' * 100)); $i++ }; exit 9";
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(PowerShellPath(),
+            $"-NoLogo -NoProfile -NonInteractive -Command \"{command}\"", CancellationToken.None));
+
+        Assert.Contains("[truncated]", error.Message);
+        Assert.True(error.Message.Length < 5000);
+    }
+
+    [Fact]
+    public async Task System_process_runner_kills_process_tree_when_canceled()
+    {
+        string powershell = PowerShellPath();
+        string pidFile = Path.Combine(Path.GetTempPath(), $"gpd-forge-process-{Guid.NewGuid():N}.txt");
+        string pathLiteral = pidFile.Replace("'", "''", StringComparison.Ordinal);
+        string command = $"$child=Start-Process -FilePath $env:ComSpec -ArgumentList '/c ping -n 21 127.0.0.1 > nul' -PassThru -WindowStyle Hidden; [System.IO.File]::WriteAllText('{pathLiteral}', [string]$PID + ',' + [string]$child.Id); Start-Sleep -Seconds 20";
+        using var cts = new CancellationTokenSource();
+        var runner = new SystemProcessRunner(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            Task<string> run = runner.RunAsync(powershell,
+                $"-NoLogo -NoProfile -NonInteractive -Command \"{command}\"", cts.Token);
+            await WaitUntil(() => File.Exists(pidFile), TimeSpan.FromSeconds(5));
+            int[] processIds = (await File.ReadAllTextAsync(pidFile)).Split(',').Select(int.Parse).ToArray();
+
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await run);
+
+            await WaitUntil(() => processIds.All(id => !IsProcessRunning(id)), TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            try { File.Delete(pidFile); } catch { /* best-effort temp cleanup */ }
+        }
+    }
+
+    [Fact]
+    public async Task System_process_runner_times_out_and_stops_the_process()
+    {
+        var runner = new SystemProcessRunner(TimeSpan.FromMilliseconds(200));
+        var powershell = PowerShellPath();
+
+        await Assert.ThrowsAsync<TimeoutException>(() => runner.RunAsync(powershell,
+            "-NoLogo -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 20\"", CancellationToken.None));
+    }
+
+    private static string PowerShellPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+
+    private static bool IsProcessRunning(int id)
+    {
+        try { using var process = Process.GetProcessById(id); return !process.HasExited; }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("child process did not publish its PID");
+            await Task.Delay(25);
+        }
     }
 }
