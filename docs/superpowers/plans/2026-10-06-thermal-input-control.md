@@ -94,3 +94,14 @@ Motion Assistant was tested as the only owner, failed to change the read-back 18
 Repair source 6029655 is installed and destination hashes match all 73 staged files. TDP 10 W verified, Battery 8 W restored with no manual override; fan duty255 verified and Quiet restored. Native Power/Fan reviewed against the real daemon. GPU agent resumed after resolving its DLL lock during install. Automatic profiles selected Windows15 W when AC connected; that readback also verified.
 
 The six workstreams were executed, but two problem outcomes remain open: manufacturer calibration/download and the cause of battery shutdowns. Sustained AC cooling also needs observation. The closed checkboxes describe performed tasks, not claims that those hardware symptoms are cured. Operations/memory synchronization is completed in the closure commit.
+
+## Follow-up authorized on 2026-10-07
+
+Alex instructed continued autonomous execution. Three independent follow-up tasks remain within the repair:
+
+- [x] Observe 15/20/17 W versus a temporary flat 12 W without stress; restore original intent after comparison. Record direct-charger observations separately after Alex removes the Steren dock. Do not infer negotiated USB PD watts from the charger label or battery charge rate.
+- [x] Add a bounded, read-only JSONL recorder for voltage/capacity/temperature, actual control status and Windows power events. Flush every record to disk. Run as Alex with limited privileges at logon for up to 24 hours; keep raw logs private and do not delete forensic evidence automatically.
+- [ ] Fix discovered preset persistence: `/profiles` currently changes a static map only although API documentation promises persistence. Add a dedicated atomic store under existing DataRoot; load before workers start; validate known modes and central clamping/shaping; save disk before claiming success or changing memory. Use the same store on settings import. Prove save/recreate, corrupt input handling, failed-write behavior and host restart, then build/analyzers/tests/security and verify the installed service after restart.
+- [ ] Obtain manufacturer calibrator through its published public download. SoftwinCN WIN4 V1.03 is behind a visible image verification code; Alex must complete that verification. No controller firmware updater or unknown binary substitute. Verify raw XInput again only after actual physical calibration.
+
+Service-only deployment for persistence must preserve the already verified native UI and stop only an exact validated user-session GPU-agent process if it holds the service DLL. Preserve rollback and restore that agent afterward. A lower Windows preset is a mitigation to evaluate, not proof of the shutdown cause.

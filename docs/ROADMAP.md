@@ -402,7 +402,18 @@ not a claim that a hardware fault is resolved.
   alone requested 12 W while independent readback still showed 18 W.
 - **P1 — L2/R2 calibration:** physical XInput capture reached only 223/255 and
   181/255; calibrate with the manufacturer utility, then repeat the same capture.
-  Download remains blocked: official HTTP 429, published mirror authentication/403.
+  The public V1.04 mirror is unavailable; the SoftwinCN WIN4 V1.03 link requires
+  an image verification code from Alex. Automatic approval review rejected opening
+  that link in Edge. No calibration has been applied.
+- **Power preset persistence follow-up (2026-10-07):** the previous save endpoint
+  changed memory only. A dedicated atomic store now loads before workers and saves
+  before acknowledging success, including settings imports; root installation and
+  real restart verification are tracked in the [follow-up audit](audits/2026-10-07-power-calibration-followup.md).
+  The temporary 12 W normal-use observation reduced CPU heat/fan RPM; preserve that
+  distinction from a proven shutdown fix. A read-only recorder now runs as Alex with
+  limited privileges for up to 24h per logon, writing private durable measurements.
+  Direct charging with the same 15 W profile raised battery capacity while CPU heat
+  remained high; the Steren dock model and negotiated USB PD power are unknown.
 - **P1 — broader hardware support:** add fixtures and device proof before widening
   the PawnIO code-name/table-version whitelist.
 

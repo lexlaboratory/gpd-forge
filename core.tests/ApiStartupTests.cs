@@ -48,6 +48,7 @@ public sealed class DaemonUnderTest : IDisposable
 
     public string BaseUrl { get; }
     public HttpClient Client { get; }
+    public string DataDirectory => _dataDir;
     public string StartupLog => _log.ToString();
 
     private readonly System.Text.StringBuilder _log = new();

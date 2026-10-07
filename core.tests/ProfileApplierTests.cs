@@ -5,6 +5,7 @@ using Xunit;
 
 namespace GpdForge.Core.Tests;
 
+[Collection(ModePresetCollection.Name)]
 public class ModeProfilesTests
 {
     [Theory]
@@ -35,6 +36,13 @@ public class ModeProfilesTests
         var saved = ModeProfiles.Set("gaming", new GpdForge.Tdp.TdpProfile(999, 999, 999, 999));
         Assert.True(saved.StapmW <= 40 && saved.FastW <= 45 && saved.TctlC <= 95);
         ModeProfiles.Set("gaming", new GpdForge.Tdp.TdpProfile(25, 33, 28, 95)); // restore default
+    }
+
+    [Fact]
+    public void Set_rejects_modes_outside_the_catalogue()
+    {
+        Assert.Throws<ArgumentException>(() => ModeProfiles.Set("overdrive", new GpdForge.Tdp.TdpProfile(12, 12, 12, 90)));
+        Assert.DoesNotContain("overdrive", ModeProfiles.Snapshot().Keys);
     }
 }
 

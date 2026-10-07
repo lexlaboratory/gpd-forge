@@ -648,6 +648,7 @@ builder.Services.AddHostedService<SleepStudyWorker>();
 // Persisted (core/Profiles/ModeStore.cs): ForgeWorker writes the active mode's TDP at start, so after a
 // restart the active mode must be the one the user picked, not an in-memory `windows`.
 builder.Services.AddSingleton(sp => new ModeState(new ModeStore(DataRoot.Current), sp.GetService<ILogger<ModeState>>()));
+builder.Services.AddSingleton(sp => new ModePresetStore(DataRoot.Current, sp.GetService<ILogger<ModePresetStore>>()));
 builder.Services.AddSingleton<TelemetryHistory>();
 
 // Agents / AI mode: anti-Modern-Standby during inference (REAL — an unprivileged, fully reversible
@@ -899,6 +900,9 @@ var forgePort = Environment.GetEnvironmentVariable("GPDFORGE_PORT") is string p 
 builder.WebHost.UseUrls($"http://127.0.0.1:{forgePort}");
 
 var app = builder.Build();
+
+// Load persisted preset overlays before hosted workers start and replay the active mode's TDP.
+ModeProfiles.Initialize(app.Services.GetRequiredService<ModePresetStore>().Read());
 
 // Before any worker can ask for a cap: a request made after this is newer and wins anyway, but one made
 // before it would make the replay skip itself for no reason.
@@ -1608,16 +1612,30 @@ app.MapPost("/standby/restore", async (IStandbyService standby, ModeState mode, 
 
 // Editable per-mode TDP presets (like MotionAssistant profiles).
 app.MapGet("/profiles", () => Results.Json(
-    ModeProfiles.Map.ToDictionary(k => k.Key, v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC })));
-app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e) =>
+    ModeProfiles.Snapshot().ToDictionary(
+        k => k.Key,
+        v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC })));
+app.MapPost("/profiles/{mode}", (string mode, ProfileEdit e, ModePresetStore store) =>
 {
-    var s = ModeProfiles.Set(mode, new GpdForge.Tdp.TdpProfile(e.StapmW, e.FastW, e.SlowW, e.TctlC));
+    if (!ModeCatalogue.Exists(mode)) return Results.BadRequest(new { error = $"Unknown mode '{mode}'." });
+    GpdForge.Tdp.TdpProfile s;
+    try { s = ModeProfiles.PersistSet(store, mode, new GpdForge.Tdp.TdpProfile(e.StapmW, e.FastW, e.SlowW, e.TctlC)); }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Could not save TDP preset for {Mode}.", mode);
+        return Results.Json(new { error = "Unable to save the TDP preset. Check the data folder permissions and try again." },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
     // `sustained` tells the client WHY the boost figures it posted came back equal to STAPM, instead
     // of leaving it to guess that its edit was ignored.
     return Results.Json(new
     {
-        mode, stapmW = s.StapmW, fastW = s.FastW, slowW = s.SlowW, tctlC = s.TctlC,
-        sustained = mode == ModeProfiles.SustainedMode,
+        mode,
+        stapmW = s.StapmW,
+        fastW = s.FastW,
+        slowW = s.SlowW,
+        tctlC = s.TctlC,
+        sustained = string.Equals(mode, ModeProfiles.SustainedMode, StringComparison.OrdinalIgnoreCase),
     });
 });
 
@@ -2157,7 +2175,9 @@ app.MapGet("/health/check", async (ITelemetrySource t, SessionForegroundApp fore
 app.MapGet("/settings/export", (GuardianService guardian, FanState fan, FanOverride gameFan, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
     Results.Json(new
     {
-        modePresets = ModeProfiles.Map.ToDictionary(k => k.Key, v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC }),
+        modePresets = ModeProfiles.Snapshot().ToDictionary(
+            k => k.Key,
+            v => new { stapmW = v.Value.StapmW, fastW = v.Value.FastW, slowW = v.Value.SlowW, tctlC = v.Value.TctlC }),
         guardian = new
         {
             enabled = guardian.Config.Enabled, autoThrottle = guardian.Config.AutoThrottle,
@@ -2171,18 +2191,32 @@ app.MapGet("/settings/export", (GuardianService guardian, FanState fan, FanOverr
         autoFps = new { enabled = autoFps.Enabled, targetFps = autoFps.TargetFps },
     }));
 
-app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, FanPreferenceStore fanStore, FanOverride gameFan, ILogger<FanState> fanLog, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps) =>
+app.MapPost("/settings/import", (SettingsImportRequest req, GuardianService guardian, FanState fan, FanPreferenceStore fanStore, FanOverride gameFan, ILogger<FanState> fanLog, DisplayService display, PowerSourceState powerSource, AutoFpsState autoFps, ModePresetStore presetStore) =>
 {
     var applied = new List<string>();
 
     if (req.ModePresets is not null)
     {
+        var presets = new Dictionary<string, GpdForge.Tdp.TdpProfile>(StringComparer.OrdinalIgnoreCase);
         foreach (var (presetMode, edit) in req.ModePresets)
         {
-            if (string.IsNullOrWhiteSpace(presetMode) || edit is null) continue;
-            ModeProfiles.Set(presetMode, new GpdForge.Tdp.TdpProfile(edit.StapmW, edit.FastW, edit.SlowW, edit.TctlC));
+            if (string.IsNullOrWhiteSpace(presetMode) || edit is null)
+                return Results.BadRequest(new { error = "modePresets entries require a known mode and a complete profile." });
+            if (!ModeCatalogue.Exists(presetMode))
+                return Results.BadRequest(new { error = $"Unknown mode '{presetMode}' in modePresets." });
+            presets[presetMode] = new GpdForge.Tdp.TdpProfile(edit.StapmW, edit.FastW, edit.SlowW, edit.TctlC);
         }
-        applied.Add("modePresets");
+        try
+        {
+            ModeProfiles.PersistMany(presetStore, presets);
+            applied.Add("modePresets");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            app.Logger.LogError(ex, "Could not save imported mode presets.");
+            return Results.Json(new { error = "Unable to save imported mode presets. Check the data folder permissions and try again." },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
     }
     if (req.Guardian is not null)
     {

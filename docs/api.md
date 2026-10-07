@@ -343,6 +343,11 @@ body; dead simple by design so it's safe to wire to a single always-visible butt
   preset for every mode, keyed by mode id.
 - `POST /profiles/:mode { stapmW, fastW, slowW, tctlC } → { mode: ModeId, stapmW, fastW, slowW, tctlC }` —
   persists that mode's preset (what the Power page's "Save preset" writes).
+  Presets are atomic sparse overlays in `mode-presets.json` under the existing DataRoot, loaded
+  before daemon workers start. Success means the preset was written to disk; hardware application
+  remains a separate mode selection and `/tdp` verification. Unknown modes return `400 { error }`;
+  a disk failure returns `503 { error }` and leaves the in-memory preset unchanged. Settings import
+  uses the same durable store for `modePresets`, validating the entire preset section before saving.
 
 ### `GET /app-rules` · `POST /app-rules` · `PUT|DELETE /app-rules/:id` · `POST /app-rules/:id/move`  (per-app profile rules)
 A rule says "while this process is in the foreground, run in this mode". Precedence is list order:
