@@ -105,4 +105,6 @@ Alex instructed continued autonomous execution. The follow-up work remains withi
 - [x] Obtain manufacturer calibrator through its published public download. Alex completed the image verification; V1.03 RAR5 integrity/provenance and exact archive/EXE Defender scans checked. Reviewed EXE launched and connected after temporarily closing verified WinControls.
 - [ ] Perform physical calibration when Alex is ready, repeat raw XInput range/hold/release capture, then close the calibrator and restore WinControls. No controller firmware updater or unknown binary substitute.
 
+Physical attempts were made after readiness/Gamepad confirmation; Alex confirmed full stick rotations. Both utility trigger displays reached255, but success did not remain stable. The utility later disappeared without a root close action; WinControls is restored. Two post-attempt captures had connected neutral input only. Root is awaiting confirmation of physical presses during those windows before attributing a cause; final calibration/range/GTA proof stays open.
+
 Service-only deployment for persistence must preserve the already verified native UI and stop only an exact validated user-session GPU-agent process if it holds the service DLL. Preserve rollback and restore that agent afterward. A lower Windows preset is a mitigation to evaluate, not proof of the shutdown cause.

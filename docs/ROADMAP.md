@@ -406,8 +406,11 @@ not a claim that a hardware fault is resolved.
   181/255; calibrate with the manufacturer utility, then repeat the same capture.
   Alex completed the official download verification; the V1.03 archive passed
   integrity/provenance checks and Defender scans. The utility is connected after
-  temporarily closing WinControls. Physical calibration and post-calibration
-  capture remain pending; no completed calibration is claimed.
+  temporarily closing WinControls. Physical attempts reached255 in both trigger
+  displays, but completion status reverted and the utility later closed. Two
+  post-attempt XInput captures found connected neutral input; physical actuation
+  in those windows still needs confirmation. WinControls is restored. Completed
+  calibration, persistent XInput range and GTA V behavior remain unconfirmed.
 - **Power preset persistence follow-up (2026-10-07):** the previous save endpoint
   changed memory only. A dedicated atomic store now loads before workers and saves
   before acknowledging success, including settings imports. Source e333ec6 is
