@@ -397,18 +397,22 @@ not a claim that a hardware fault is resolved.
   samples, so their electrical or thermal cause remains unproven.
 - **P0 — sustained cooling:** the installed repair verified 10 W, restored 8 W
   Battery, and verified fan duty 255 then Quiet. On AC the automatic Windows
-  profile verified 15 W, but temperature and fan speed rose again. Assess sustained
+  profile verified 15 W, but temperature and fan speed rose again. The follow-up
+  installed a persistent Windows12/12/12 W preset, verified through a real service
+  restart, with lower temperature/RPM observed during normal use. Assess sustained
   load/cooling separately; keep one EC/SMU controller active. Motion Assistant
   alone requested 12 W while independent readback still showed 18 W.
 - **P1 — L2/R2 calibration:** physical XInput capture reached only 223/255 and
   181/255; calibrate with the manufacturer utility, then repeat the same capture.
-  The public V1.04 mirror is unavailable; the SoftwinCN WIN4 V1.03 link requires
-  an image verification code from Alex. Automatic approval review rejected opening
-  that link in Edge. No calibration has been applied.
+  Alex completed the official download verification; the V1.03 archive passed
+  integrity/provenance checks and Defender scans. The utility is connected after
+  temporarily closing WinControls. Physical calibration and post-calibration
+  capture remain pending; no completed calibration is claimed.
 - **Power preset persistence follow-up (2026-10-07):** the previous save endpoint
   changed memory only. A dedicated atomic store now loads before workers and saves
-  before acknowledging success, including settings imports; root installation and
-  real restart verification are tracked in the [follow-up audit](audits/2026-10-07-power-calibration-followup.md).
+  before acknowledging success, including settings imports. Source e333ec6 is
+  installed; saved Windows12/12/12 W survives a real restart with verified hardware
+  readback. Evidence is tracked in the [follow-up audit](audits/2026-10-07-power-calibration-followup.md).
   The temporary 12 W normal-use observation reduced CPU heat/fan RPM; preserve that
   distinction from a proven shutdown fix. A read-only recorder now runs as Alex with
   limited privileges for up to 24h per logon, writing private durable measurements.

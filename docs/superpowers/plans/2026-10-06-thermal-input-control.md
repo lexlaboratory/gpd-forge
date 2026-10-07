@@ -97,11 +97,12 @@ The six workstreams were executed, but two problem outcomes remain open: manufac
 
 ## Follow-up authorized on 2026-10-07
 
-Alex instructed continued autonomous execution. Three independent follow-up tasks remain within the repair:
+Alex instructed continued autonomous execution. The follow-up work remains within the repair:
 
 - [x] Observe 15/20/17 W versus a temporary flat 12 W without stress; restore original intent after comparison. Record direct-charger observations separately after Alex removes the Steren dock. Do not infer negotiated USB PD watts from the charger label or battery charge rate.
 - [x] Add a bounded, read-only JSONL recorder for voltage/capacity/temperature, actual control status and Windows power events. Flush every record to disk. Run as Alex with limited privileges at logon for up to 24 hours; keep raw logs private and do not delete forensic evidence automatically.
-- [ ] Fix discovered preset persistence: `/profiles` currently changes a static map only although API documentation promises persistence. Add a dedicated atomic store under existing DataRoot; load before workers start; validate known modes and central clamping/shaping; save disk before claiming success or changing memory. Use the same store on settings import. Prove save/recreate, corrupt input handling, failed-write behavior and host restart, then build/analyzers/tests/security and verify the installed service after restart.
-- [ ] Obtain manufacturer calibrator through its published public download. SoftwinCN WIN4 V1.03 is behind a visible image verification code; Alex must complete that verification. No controller firmware updater or unknown binary substitute. Verify raw XInput again only after actual physical calibration.
+- [x] Fix discovered preset persistence: `/profiles` changed a static map only although API documentation promised persistence. Added a dedicated atomic store under existing DataRoot; loads before workers start; validates known modes and central clamping/shaping; saves disk before claiming success or changing memory. Settings import uses the same store. Save/recreate, corrupt input, failed writes and installed host restart are verified. Source e333ec6 installed; Windows12/12/12 W reloaded and read back after restart;1722 tests pass and changed executable coverage92.98%/production80.07%.
+- [x] Obtain manufacturer calibrator through its published public download. Alex completed the image verification; V1.03 RAR5 integrity/provenance and exact archive/EXE Defender scans checked. Reviewed EXE launched and connected after temporarily closing verified WinControls.
+- [ ] Perform physical calibration when Alex is ready, repeat raw XInput range/hold/release capture, then close the calibrator and restore WinControls. No controller firmware updater or unknown binary substitute.
 
 Service-only deployment for persistence must preserve the already verified native UI and stop only an exact validated user-session GPU-agent process if it holds the service DLL. Preserve rollback and restore that agent afterward. A lower Windows preset is a mitigation to evaluate, not proof of the shutdown cause.
