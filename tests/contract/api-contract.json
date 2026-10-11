@@ -112,7 +112,12 @@
     {
       "method": "GET",
       "path": "/mode",
-      "shape": { "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "gaming-battery", "ai", "standby"] } }
+      "shape": {
+        "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "gaming-battery", "ai", "standby"] },
+        "auto": "boolean",
+        "decidedBy": "object|null"
+      },
+      "$comment": "`auto` and `decidedBy` added 2026-10-11. Auto used to live only in the UI, which showed 'Manual: Windows' while auto-profiles had switched the handheld to gaming at 25 W; `decidedBy` names the app rule that chose the mode ({ ruleId, match, process }), null for the user's pick, the power default, or with auto off."
     },
     {
       "method": "GET",
@@ -639,6 +644,7 @@
     { "method": "GET", "path": "/sessions/{id}", "shape": null, "$comment": "Parameterised; needs a live id, so it is declared for coverage and exercised by sessions.spec.ts." },
 
     { "method": "POST", "path": "/mode" },
+    { "method": "POST", "path": "/mode/auto" },
     { "method": "POST", "path": "/tdp" },
     { "method": "POST", "path": "/fan" },
     { "method": "POST", "path": "/profiles/{mode}" },

@@ -304,6 +304,45 @@ public sealed class FocusProfileLoopTests : IDisposable
         Assert.Equal("windows", after.Active);
     }
 
+    // 2026-10-10 on this device: the user picked windows (12 W) while a ruled app was in front; a minute
+    // later that app came back to the front, auto-profiles switched to gaming and wrote 25 W, and the UI
+    // still said "Manual: Windows" — its Auto switch never reached the daemon. Picking a mode turns Auto
+    // off (POST /mode); the pick then holds until Auto is turned back on.
+    [Fact]
+    public async Task With_auto_off_a_ruled_app_coming_back_to_the_front_does_not_switch_the_mode()
+    {
+        var mode = new ModeState();
+        var (loop, fg, tdp) = Build(mode, foreground: "steam");
+        await TickAsync(loop, 3);
+        Assert.Equal("gaming", mode.Active);
+        tdp.Writes.Clear();
+
+        mode.Pick("windows");   // what POST /mode does
+        fg.Proc = "notepad";
+        await TickAsync(loop, 3);
+        fg.Proc = "steam";
+        await TickAsync(loop, 6);
+
+        Assert.Equal("windows", mode.Active);
+        Assert.Empty(tdp.Writes);
+    }
+
+    [Fact]
+    public async Task Turning_auto_back_on_follows_the_app_in_front()
+    {
+        var mode = new ModeState { Active = "windows" };
+        mode.SetAuto(false);
+        var (loop, _, tdp) = Build(mode, foreground: "steam");
+        await TickAsync(loop, 6);
+        Assert.Equal("windows", mode.Active);
+
+        mode.SetAuto(true);
+        await TickAsync(loop, 3);
+
+        Assert.Equal("gaming", mode.Active);
+        Assert.Single(tdp.Writes);
+    }
+
     private sealed class UnsampledSource : ITelemetrySource
     {
         public TelemetryReading Latest => TelemetryReading.Unsampled;

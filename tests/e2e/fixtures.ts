@@ -76,7 +76,13 @@ function patchNavigation(page: Page): void {
   page.reload = (options) => rideOut(() => reload(options), NAV_CONNECT_FAILED)
 }
 
-export const test = base.extend({
+export const test = base.extend<{ modeAutoOn: void }>({
   request: async ({ request }, use) => { await use(withConnectRetry(request)) },
   page: async ({ page }, use) => { patchNavigation(page); await use(page) },
+  // Since 2026-10-11 picking a mode turns Auto off in the daemon (POST /mode), and the mock is shared
+  // by every spec: without this, any spec that picks a mode would leave the next one in Manual.
+  modeAutoOn: [async ({ request }, use) => {
+    await withConnectRetry(request).post('http://127.0.0.1:8799/mode/auto', { data: { enabled: true } })
+    await use()
+  }, { auto: true }],
 })

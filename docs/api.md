@@ -174,10 +174,21 @@ kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
   isoTime, cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fps, fps1PctLow, batteryPct, dischargeW, acConnected,
   tdpVerified`.
 
-### `GET /mode`  ·  `POST /mode`
-- `GET  → { active: ModeId }`
+### `GET /mode`  ·  `POST /mode`  ·  `POST /mode/auto`
+- `GET  → { active: ModeId, auto: boolean, decidedBy: { ruleId, match, process } | null }` — `auto` is
+  whether the daemon may switch the mode on its own (auto-profiles); `decidedBy` names the app rule
+  that chose the mode in force, and is `null` for the user's pick, the power-source default, or with
+  `auto` off. Both added 2026-10-11: Auto used to be a switch in the UI only, so the dashboard said
+  "Manual: Windows" while auto-profiles had moved the handheld to gaming at 25 W behind it.
+- `POST /mode/auto { enabled: boolean } → ` the `GET /mode` body. `400` without a boolean. Turning it
+  on hands the mode back to the app in front: the focus loop switches after its usual ~4.5 s
+  hysteresis. Off keeps the mode in force as the user's pick, and nothing switches it automatically —
+  neither auto-profiles nor the AC/battery switch (`/power-source`); `ModeState` itself refuses an
+  automatic switch while Auto is off, so a pick cannot be overwritten by a switch already under way.
+  Kept across restarts (`mode.json`); with Auto off the saved mode is restored whoever chose it.
 - `POST { name: ModeId } → { active: ModeId, tdp: string, frameCap: string | null }` — switches the
-  active mode (applies its TDP + fan curve). `400` on unknown mode. Selecting a mode — the same one
+  active mode (applies its TDP + fan curve) and **turns `auto` off**: a mode picked here holds until
+  `POST /mode/auto { enabled: true }`. `400` on unknown mode. Selecting a mode — the same one
   included — ends a manual `POST /tdp` override. It does not end a game profile's TDP
   (`GET /profiles/active`): re-picking `gaming` with that game in front writes the game's watts
   (owner `game-profile`); picking another mode ends the profile.
@@ -510,7 +521,7 @@ there is none. Kinds:
 | `cap_30` | live, guardian throttling, 1 % low < 50 % of the average, no cap ≤ 30 | `frameCapFps` = 30 |
 | `lower_resolution` | as `cap_30`, but already capped at ≤ 30 | nothing (`applicable: false`; RSR arrives in F4) |
 | `fewer_watts` | 1 % low ≥ 1.5× refresh, not throttling, limit known | `stapmW` = 75 % of the limit |
-| `stapm_ceiling` | a ceiling is learned (and `fewer_watts` did not fire) | `stapmW` = the ceiling |
+| `stapm_ceiling` | a ceiling is learned, it is **below** the known limit in force (and `fewer_watts` did not fire) | `stapmW` = the ceiling |
 | `battery_mode` (F6) | on battery, mode `gaming`, and the game's gaming-battery play (5+ min) averaged ≥ 30 FPS with a 1 % low ≥ half of it | nothing (`applicable: false`): the rule's mode also governs AC, so the user switches the mode |
 
 `cap_refresh` takes precedence over `cap_30` (the smaller step: capping at 60 alone lifted the 1 % low
@@ -520,7 +531,11 @@ left out. `applied` is this game's accepted suggestions, newest first (at most 1
 
 `POST /advisor/apply { id } → AdvisorView` writes that one suggestion into the game's profile (the
 F1 rule overrides) — merged into the game's own rule, which is enabled, or a new rule in the mode the
-game already runs in, moved ahead of any broader rule — and records it. Nothing else is changed; the
+game already runs in (a broader rule's, else the active mode), moved ahead of any broader rule — and
+records it. Advice changes watts or a cap, never the mode: until 2026-10-11 the fallback was `gaming`,
+and advice for Orca (a desktop app running in `windows`) created `orca → gaming`, so the handheld went
+to the gaming preset whenever Orca had focus. A `stapm_ceiling` is offered only below the limit in
+force for the same reason: it proposed "Hold 25 W" for an app running at 12 W. Nothing else is changed; the
 focus loop applies the profile as it would one typed on the Games page. The suggestion is re-derived
 from the current state: `400 { code: "bad_id" }` for a malformed id, `409 { code: "stale_suggestion" }`
 when it no longer applies, `400 { code: "not_applicable" }` for a hint, and the `/app-rules` codes if
@@ -627,7 +642,8 @@ disagree. Read-only. The setup wizard calls this once on its incumbents-check st
 When enabled, the daemon switches the active mode the instant AC connects or disconnects (edge-
 triggered, not every tick) — e.g. auto-drop to Battery mode on unplug, back to Windows mode on
 plug-in. Applied the same way `POST /mode` is: through `ProfileApplier`, which yields if another
-power controller (MotionAssistant/GPD Tool) is running.
+power controller (MotionAssistant/GPD Tool) is running. Not while Auto is off (`GET /mode` →
+`auto: false`, 2026-10-11): a mode the user picked holds through an AC edge too.
 
 ### `GET /fan`  ·  `POST /fan`  (fan mode + manual duty — WRITES are GATED)
 Both responses also include `status`: `{ requestedDuty, observedDuty, verified,

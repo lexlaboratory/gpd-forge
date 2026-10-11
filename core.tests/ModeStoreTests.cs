@@ -127,4 +127,110 @@ public sealed class ModeStoreTests : IDisposable
         Assert.True(state.Restored);
         Assert.Equal("gaming", state.Active);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Auto: whether the daemon may switch the mode on its own (2026-10-11). The UI's Auto switch used
+    // to live only in the browser, so "Manual: Windows" stayed on screen while auto-profiles moved the
+    // handheld to gaming at 25 W behind it.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Auto_is_on_unless_it_was_turned_off()
+    {
+        Assert.True(new ModeState().Auto);
+        Assert.True(new ModeState(new ModeStore(_dir)).Auto);
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "mode.json"), "{ \"active\": \"gaming\", \"source\": \"user\" }");
+        Assert.True(new ModeState(new ModeStore(_dir)).Auto);
+    }
+
+    [Fact]
+    public void Auto_turned_off_stays_off_after_a_restart()
+    {
+        var state = new ModeState(new ModeStore(_dir)) { Active = "windows" };
+        state.SetAuto(false);
+
+        var after = new ModeState(new ModeStore(_dir));
+        Assert.False(after.Auto);
+        Assert.Equal("windows", after.Active);
+    }
+
+    [Fact]
+    public void Turning_auto_off_makes_the_mode_in_force_the_users()
+    {
+        // Off means "keep what is on now". A mode auto-profiles chose is not restored after a restart,
+        // so without this the daemon would come back in windows with nothing left to switch it.
+        var state = new ModeState(new ModeStore(_dir));
+        state.SwitchAutomatically("gaming");
+        state.SetAuto(false);
+
+        var after = new ModeState(new ModeStore(_dir));
+        Assert.True(after.Restored);
+        Assert.Equal("gaming", after.Active);
+        Assert.True(after.ChosenByUser);
+    }
+
+    [Fact]
+    public void A_mode_write_keeps_auto_as_it_was()
+    {
+        var state = new ModeState(new ModeStore(_dir));
+        state.SetAuto(false);
+        state.Active = "battery";
+        state.SwitchAutomatically("gaming");
+
+        Assert.False(new ModeState(new ModeStore(_dir)).Auto);
+    }
+
+    [Fact]
+    public void Picking_a_mode_makes_it_the_users_and_turns_auto_off()
+    {
+        var state = new ModeState(new ModeStore(_dir));
+        state.SwitchAutomatically("gaming");
+
+        state.Pick("windows");
+
+        Assert.Equal(new ModeState.View("windows", Auto: false, ChosenByUser: true), state.Snapshot());
+        Assert.Equal(new ModeStore.Entry("windows", ChosenByUser: true, Auto: false), new ModeStore(_dir).ReadEntry());
+    }
+
+    [Fact]
+    public void An_automatic_switch_is_refused_while_auto_is_off()
+    {
+        // In the state itself, not only in its callers: the focus loop reads Auto, then switches a few
+        // lines later, and a POST /mode landing in between used to be overwritten by that switch.
+        var state = new ModeState(new ModeStore(_dir));
+        state.Pick("windows");
+
+        Assert.False(state.SwitchAutomatically("gaming"));
+
+        Assert.Equal(new ModeState.View("windows", Auto: false, ChosenByUser: true), state.Snapshot());
+        state.SetAuto(true);
+        Assert.True(state.SwitchAutomatically("gaming"));
+        Assert.Equal("gaming", state.Active);
+    }
+
+    [Fact]
+    public void With_auto_off_the_saved_mode_is_restored_whoever_chose_it()
+    {
+        // Nothing switches with Auto off, so the saved mode is the one in force; starting in the
+        // default instead would leave the daemon there with nothing to move it.
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "mode.json"), "{ \"active\": \"gaming\", \"source\": \"auto\", \"auto\": false }");
+
+        var state = new ModeState(new ModeStore(_dir));
+
+        Assert.True(state.Restored);
+        Assert.Equal("gaming", state.Active);
+        Assert.False(state.Auto);
+    }
+
+    [Fact]
+    public void Who_chose_the_mode_in_force_is_readable()
+    {
+        var state = new ModeState();
+        state.SwitchAutomatically("gaming");
+        Assert.False(state.ChosenByUser);
+        state.Active = "windows";
+        Assert.True(state.ChosenByUser);
+    }
 }

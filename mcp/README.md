@@ -35,7 +35,8 @@ claude mcp add gpd-forge -- node C:\Users\Alex\gpd-forge\mcp\server.mjs
 |------|------|--------------|
 | `get_telemetry` | read | CPU/GPU °C, watts, clock, fan RPM, FPS, battery %, discharge, AC, tdpVerified |
 | `get_mode` | read | active power mode |
-| `set_mode` | **write** | switch mode (gaming/ai/windows/battery/standby) → applies TDP + fan |
+| `set_mode` | **write** | switch mode (gaming/ai/windows/battery/standby) → applies TDP + fan; turns Auto off |
+| `set_auto_mode` | **write** | Auto on (the app in focus picks the mode via rules) or off (the mode holds) |
 | `set_tdp` | **write** | set sustained TDP (W); returns `verified` |
 | `get_battery_budget` | read | runtime estimate + what-if projections |
 | `get_profiles` | read | per-mode TDP presets |

@@ -26,4 +26,15 @@ public static class GuardianThrottle
             Math.Min(throttleW, m.SlowW),
             Math.Min(tctlCriticalC, m.TctlC));
     }
+
+    /// <summary>The alert for a <paramref name="throttleW"/> ceiling that lowers nothing, because every
+    /// limit in force is already under it; null when it does lower something, and the evaluator's
+    /// "requesting a thermal limit of N W" is then true.</summary>
+    /// <remarks>On 2026-10-10 this device logged 1,746 alerts of "CPU 91°C — requesting a thermal limit
+    /// of 24 W" while the user's 12 W held — read on screen as Forge lifting a 12 W handheld to 24 W.</remarks>
+    public static string? NothingLowered(double? tempC, int throttleW, TdpProfile? inForce, int tctlCriticalC)
+    {
+        if (inForce is not TdpProfile m || Profile(throttleW, m, tctlCriticalC) != m) return null;
+        return $"CPU {tempC:0}°C — the {m.StapmW} W limit in force is already at or under the {throttleW} W thermal ceiling; nothing to lower";
+    }
 }

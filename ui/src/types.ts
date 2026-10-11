@@ -10,6 +10,20 @@ export interface Mode {
   blurb: string
 }
 
+/** The app rule that switched to the mode in force (GET /mode `decidedBy`). */
+export interface ModeDecision {
+  ruleId: string
+  match: string | null
+  process: string | null
+}
+
+/** GET /mode and POST /mode/auto. `auto` is the daemon's: whether it may switch the mode on its own. */
+export interface ModeInfo {
+  active: ModeId
+  auto: boolean
+  decidedBy: ModeDecision | null
+}
+
 /**
  * A telemetry reading. Every sensor is nullable as of 2026-09-01.
  *

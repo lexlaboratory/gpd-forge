@@ -108,7 +108,7 @@ const FIXTURES: Record<string, unknown> = {
     fanDutyPct: 45, fps: 60, fps1PctLow: 48, batteryPct: 78, dischargeW: 18.2,
     acConnected: false, tdpVerified: true,
   },
-  '/mode': { active: 'windows' },
+  '/mode': { active: 'windows', auto: true, decidedBy: null },
   // The TDP controls open on what is in force (2026-09-24): here the `windows` preset, written by the
   // mode and verified — the mock's own start-up state. Frozen because the live mock's last write is
   // whatever the spec before this one set.

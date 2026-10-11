@@ -1,5 +1,5 @@
 // GPD Forge UI — shared page constants and types. GPL-3.0-or-later.
-import type { Mode, ModeId, TdpInfo, Telemetry } from '../types'
+import type { Mode, ModeDecision, ModeId, TdpInfo, Telemetry } from '../types'
 
 export const MODES: Mode[] = [
   { id: 'gaming',  label: 'Gaming', blurb: 'Auto-TDP to target FPS, reactive fan, OSD.' },
@@ -89,10 +89,20 @@ export const tdpVerifiedNow = (tele: Telemetry | null | undefined, write: TdpWri
 /** How long the TDP controls wait before asking again when nothing said what is in force. */
 export const TDP_SEED_RETRY_MS = 2000
 
+/** The Modes card's line: who has the mode. A rule is named when one chose it — 2026-10-10, "Auto —
+ *  optimizing for the app in focus" sat over a gaming mode at 25 W that a rule on Orca had chosen. */
+export function modesHint(auto: boolean, decidedBy: ModeDecision | null): string {
+  if (!auto) return 'Manual — you chose the mode'
+  const rule = decidedBy?.match ?? decidedBy?.process
+  return rule ? `Auto — the “${rule}” rule chose this mode` : 'Auto — optimizing for the app in focus'
+}
+
 export interface Shared {
   tele: Telemetry | null
   active: ModeId
   auto: boolean
+  /** The app rule that chose the mode in force; null for the user's pick or the power default. */
+  decidedBy: ModeDecision | null
   setAuto: (v: boolean) => void
   /** Resolves true once the daemon accepted the mode, false if POST /mode failed. */
   pickMode: (id: ModeId) => Promise<boolean>

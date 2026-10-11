@@ -57,6 +57,14 @@ try {
   const mode = await callTool(5, 'set_mode', { name: 'windows' })
   check('set_mode(windows) returns active=windows', !mode.isError && mode.data?.active === 'windows', mode.text.slice(0, 60))
 
+  // 2026-10-11: a picked mode holds — Auto goes off in the daemon until it is turned back on.
+  const held = await callTool(51, 'get_mode')
+  check('set_mode turns auto off', !held.isError && held.data?.auto === false, held.text.slice(0, 80))
+  const resumed = await callTool(52, 'set_auto_mode', { enabled: true })
+  check('set_auto_mode(true) turns auto back on', !resumed.isError && resumed.data?.auto === true, resumed.text.slice(0, 80))
+  const badauto = await callTool(53, 'set_auto_mode', {})
+  check('set_auto_mode without a boolean is reported as error', badauto.isError === true)
+
   const badmode = await callTool(6, 'set_mode', { name: 'nope' })
   check('set_mode(invalid) is reported as error', badmode.isError === true)
 

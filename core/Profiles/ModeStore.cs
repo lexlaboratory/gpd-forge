@@ -19,11 +19,12 @@ public sealed class ModeStore
     private const string UserSource = "user";
     private const string AutoSource = "auto";
 
-    private sealed record Saved(string? Active, string? Source = null);
+    private sealed record Saved(string? Active, string? Source = null, bool? Auto = null);
 
     /// <summary>A saved mode and whether the user picked it (POST /mode) rather than an automatic
-    /// switch (auto-profiles, the AC/battery switch).</summary>
-    public sealed record Entry(string Mode, bool ChosenByUser);
+    /// switch (auto-profiles, the AC/battery switch), and whether the daemon may switch it on its own.
+    /// A file without <c>auto</c> predates it and was written with auto-profiles switching.</summary>
+    public sealed record Entry(string Mode, bool ChosenByUser, bool Auto = true);
 
     private readonly Lock _gate = new();
     private readonly string _filePath;
@@ -56,7 +57,7 @@ public sealed class ModeStore
             {
                 var saved = JsonSerializer.Deserialize<Saved>(File.ReadAllText(_filePath), _json);
                 if (!ModeCatalogue.Exists(saved?.Active)) return null;
-                return new Entry(saved!.Active!, !string.Equals(saved.Source, AutoSource, StringComparison.Ordinal));
+                return new Entry(saved!.Active!, !string.Equals(saved.Source, AutoSource, StringComparison.Ordinal), saved.Auto ?? true);
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
@@ -67,16 +68,16 @@ public sealed class ModeStore
         }
     }
 
-    /// <summary>Saves <paramref name="mode"/> and who chose it. Throws on an I/O failure; the caller
-    /// decides whether a mode that cannot be saved is worth more than a log line (ModeState: it is
-    /// not).</summary>
-    public void Write(string mode, bool chosenByUser = true)
+    /// <summary>Saves <paramref name="mode"/>, who chose it and whether Auto is on. Throws on an I/O
+    /// failure; the caller decides whether a mode that cannot be saved is worth more than a log line
+    /// (ModeState: it is not).</summary>
+    public void Write(string mode, bool chosenByUser = true, bool auto = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(mode);
         lock (_gate)
         {
             var temp = _filePath + ".tmp-" + Guid.NewGuid().ToString("N");
-            File.WriteAllText(temp, JsonSerializer.Serialize(new Saved(mode, chosenByUser ? UserSource : AutoSource), _json));
+            File.WriteAllText(temp, JsonSerializer.Serialize(new Saved(mode, chosenByUser ? UserSource : AutoSource, auto), _json));
             try { if (File.Exists(_filePath)) File.Replace(temp, _filePath, null); else File.Move(temp, _filePath); }
             finally { try { if (File.Exists(temp)) File.Delete(temp); } catch (IOException) { } }
         }

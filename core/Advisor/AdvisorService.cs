@@ -61,11 +61,15 @@ public sealed class AdvisorService
     }
 
     /// <summary>Writes the suggestion into the game's own rule: merged into its overrides when it has
-    /// one, else a new rule in the mode the game already runs in, moved ahead of any broader rule that
-    /// would otherwise keep claiming the game (the same plan as the UI's saveGameProfile). The rule is
-    /// enabled — pressing Apply asks for it to be in force. Throws InvalidOperationException for a hint,
-    /// and lets the store's AppRuleRejectedException through for a value it refuses.</summary>
-    public AppliedSuggestion Apply(AdvisorSuggestion s, IAppRuleStore rules, DateTimeOffset now)
+    /// one, else a new rule in the mode the game already runs in — the broader rule's, or with none,
+    /// <paramref name="activeMode"/> — moved ahead of any broader rule that would otherwise keep
+    /// claiming the game (the same plan as the UI's saveGameProfile). The rule is enabled — pressing
+    /// Apply asks for it to be in force. Throws InvalidOperationException for a hint, and lets the
+    /// store's AppRuleRejectedException through for a value it refuses.</summary>
+    /// <remarks>The fallback used to be `gaming`: on 2026-10-08, advice for Orca (the workspace app,
+    /// running in `windows`) created `orca -> gaming`, and from then on every time it had focus the
+    /// handheld switched to the gaming preset. Advice changes the watts; it never changes the mode.</remarks>
+    public AppliedSuggestion Apply(AdvisorSuggestion s, IAppRuleStore rules, string activeMode, DateTimeOffset now)
     {
         if (!s.Applicable) throw new InvalidOperationException("This suggestion is advice only; there is nothing to apply.");
         var game = AppRulePolicy.Normalize(s.Game);
@@ -81,7 +85,7 @@ public sealed class AdvisorService
             else
             {
                 var governing = rules.RuleFor(game);
-                var added = rules.Add(game, governing?.Mode ?? ModeCatalogue.Gaming, enabled: true, patch);
+                var added = rules.Add(game, governing?.Mode ?? activeMode, enabled: true, patch);
                 if (governing is not null)
                 {
                     var list = rules.List().ToList();

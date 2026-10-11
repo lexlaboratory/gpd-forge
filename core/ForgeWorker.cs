@@ -115,11 +115,10 @@ public sealed class ForgeWorker(
                     if (_lastAcConnected is bool prevAc && prevAc != snapshot.AcConnected)
                     {
                         string? desired = PowerSourceProfiles.Resolve(snapshot.AcConnected, powerSource.Config, mode.Active);
-                        if (desired is not null)
-                        {
-                            mode.SwitchAutomatically(desired);   // not restored as the user's pick (audit round 3)
+                        // Refused with Auto off: a mode the user picked holds through an AC edge too.
+                        // Not restored as the user's pick when it does switch (audit round 3).
+                        if (desired is not null && mode.SwitchAutomatically(desired))
                             await profileApplier.ApplyAsync(mode.Active, stoppingToken);
-                        }
                     }
                     _lastAcConnected = snapshot.AcConnected;
                 }
@@ -129,9 +128,15 @@ public sealed class ForgeWorker(
                 var g = guardian.Observe(snapshot);
                 // Where the guardian comes to rest in this game is its thermal ceiling (plan F3).
                 ceilings?.Observe(sessions.CurrentApp, guardian.ThrottledToW, DateTimeOffset.UtcNow);
+                var inForce = intent.Resolve(mode.Active);
+                int tctlCriticalC = (int)guardian.Config.TempCriticalC;
                 if (g.Alert is not null)
                 {
-                    logger.LogWarning("Guardian [{Severity}]: {Alert}", g.Severity, g.Alert);
+                    // Told in what is actually held: a ceiling over every limit in force lowers nothing.
+                    var alertText = g.ThrottleToW is int ceilingW
+                        ? GuardianThrottle.NothingLowered(snapshot.CpuTempC, ceilingW, inForce, tctlCriticalC) ?? g.Alert
+                        : g.Alert;
+                    logger.LogWarning("Guardian [{Severity}]: {Alert}", g.Severity, alertText);
                     var severity = g.Severity switch { "critical" => AlertSeverity.Critica, "warn" => AlertSeverity.Aviso, _ => AlertSeverity.Info };
 
                     // Key on the PHENOMENON, not on the message. The key used to be
@@ -154,7 +159,7 @@ public sealed class ForgeWorker(
                     var category = isBattery ? AlertCategory.System : AlertCategory.Thermal;
                     var title = isBattery ? "Battery guardian" : "Thermal guardian";
 
-                    alerts.Publish(category, severity, title, g.Alert,
+                    alerts.Publish(category, severity, title, alertText,
                         $"cpuTempC={snapshot.CpuTempC:F1}; batteryPct={snapshot.BatteryPct}", dedupeKey);
                 }
 
@@ -164,8 +169,7 @@ public sealed class ForgeWorker(
                     // force (see GuardianThrottle.cs — it used to lift `windows` from 15 W to 25 W).
                     // Under the intent, not the preset: built on the preset, a 10 W manual override
                     // met the 12 W throttle floor and went UP. Skips auto-FPS this tick.
-                    var throttle = GuardianThrottle.Profile(throttleW, intent.Resolve(mode.Active),
-                        (int)guardian.Config.TempCriticalC);
+                    var throttle = GuardianThrottle.Profile(throttleW, inForce, tctlCriticalC);
                     // An unchanged ceiling is re-asserted every ThrottleReassertSeconds, not every
                     // tick: each apply runs ryzenadj twice, and under a sustained throttle that
                     // stretched the loop to ~1.7 s per tick (measured 2026-09-24).

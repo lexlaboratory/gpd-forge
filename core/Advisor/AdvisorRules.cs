@@ -152,7 +152,12 @@ public static class AdvisorRules
         // (3) Learned ceiling: the guardian ends up here anyway, so start here and skip the swing
         // between boost and throttle. A light game's lower limit wins — the ceiling is where a heavy
         // game settles, not a target.
-        if (!fewer && input.LearnedCeilingW is double ceiling && ceiling > 0)
+        //
+        // Only BELOW the limit in force, and only when that limit is known. The ceiling is where the
+        // guardian pulled power down to; holding it is advice to lower. On 2026-10-08 this proposed
+        // "Hold 25 W" for an app running at 12 W, and applying it switched that app to 25 W.
+        if (!fewer && input.LearnedCeilingW is double ceiling && ceiling > 0
+            && input.StapmW is int inForce && Clamp(ceiling) < inForce)
         {
             var w = Clamp(ceiling);
             if (input.Profile?.StapmW != w)

@@ -253,6 +253,10 @@ const SAMPLE_SESSIONS = [
 
 const state = {
   activeMode: 'windows',
+  // Mirrors core/Api/ModeState.cs (2026-10-11): whether the daemon may switch the mode on its own, and
+  // whether the mode in force is the user's pick. POST /mode turns auto off; POST /mode/auto turns it on.
+  modeAuto: true,
+  modeChosenByUser: true,
   stapmW: 20,
   tdpVerified: true,
   acConnected: false,
@@ -657,6 +661,15 @@ function fanInfo() {
   return { mode: state.fanMode, manualDuty: state.fanManualDuty, controllable: true }
 }
 
+// GET /mode — core/Api/ModeView.cs: the rule that chose the mode, only for an automatic switch that agrees.
+function modeView() {
+  const m = lastRuleMatch()
+  const decidedBy = state.modeAuto && !state.modeChosenByUser && m.ruleId != null && m.mode === state.activeMode
+    ? { ruleId: m.ruleId, match: m.match, process: m.process }
+    : null
+  return { active: state.activeMode, auto: state.modeAuto, decidedBy }
+}
+
 // Per-app rules: every response (including mutations) carries the WHOLE ruleset plus the context the
 // editor needs — the selectable modes and whether anything is actually applying them.
 const MOCK_FOREGROUND = 'steam'
@@ -709,7 +722,8 @@ function adviseMock(input) {
   if (fewer) out.push({ id: `fewer_watts:${game}:${lower}`, game, kind: 'fewer_watts', title: `Try ${lower} W`,
     detail: `Even the 1 % low is well above the ${hz} Hz refresh at ${input.stapmW} W.`, stapmW: lower, frameCapFps: null })
   const ceiling = input.ceiling
-  if (!fewer && ceiling > 0 && profile?.stapmW !== clampW(ceiling)) {
+  // Only below a known limit in force (AdvisorRules.cs, 2026-10-11): holding a ceiling is advice to lower.
+  if (!fewer && ceiling > 0 && input.stapmW != null && clampW(ceiling) < input.stapmW && profile?.stapmW !== clampW(ceiling)) {
     const w = clampW(ceiling)
     out.push({ id: `stapm_ceiling:${game}:${w}`, game, kind: 'stapm_ceiling', title: `Hold ${w} W`,
       detail: `In this game the thermal guardian settles at about ${ceiling} W. Holding the sustained limit there avoids swinging between boost and throttle.`,
@@ -761,7 +775,8 @@ function applyToProfile(sug) {
   }
   const governing = governingRule(game)
   const id = `rule-${++ruleSeq}`
-  const rule = { id, match: game, mode: governing?.mode ?? 'gaming', enabled: true, overrides: patch(null) }
+  // The mode the game already runs in, never `gaming` by default (AdvisorService.cs, 2026-10-11).
+  const rule = { id, match: game, mode: governing?.mode ?? state.activeMode, enabled: true, overrides: patch(null) }
   const at = governing ? state.appRules.indexOf(governing) : state.appRules.length
   state.appRules.splice(at, 0, rule)
   profileSince.set(id, new Date().toISOString())
@@ -835,6 +850,7 @@ const NON_GAME_PRESENTERS = new Set([
   'chrome', 'msedge', 'msedgewebview2', 'firefox', 'brave', 'opera', 'vivaldi',
   'steam', 'steamwebhelper', 'epicgameslauncher', 'eadesktop', 'galaxyclient', 'ubisoftconnect',
   'gamebar', 'gamebarftserver', 'xboxpcappft', 'radeonsoftware', 'discord', 'motionassistant',
+  'orca', 'electron', 'rustdesk', 'logioptionsplus_agent',
   'gpd forge', 'gpd-forge',
 ])
 
@@ -1093,7 +1109,24 @@ async function handle(req, res) {
     }
     return send(res, 200, { ...last, note: null, manualStapmW, intentStapmW })
   }
-  if (method === 'GET' && path === '/mode') return send(res, 200, { active: state.activeMode })
+  if (method === 'GET' && path === '/mode') return send(res, 200, modeView())
+  if (method === 'POST' && path === '/mode/auto') {
+    const body = await readBody(req)
+    if (typeof body?.enabled !== 'boolean') return err(res, 400, 'bad_auto', 'enabled must be true or false')
+    state.modeAuto = body.enabled
+    if (!body.enabled) state.modeChosenByUser = true
+    return send(res, 200, modeView())
+  }
+  // Test hook: the switch the real daemon's focus loop makes when a ruled app comes to the front (the
+  // mock has no focus loop). Refused with auto off, as the loop would not switch then either.
+  if (method === 'POST' && path === '/mode/_test-auto-switch') {
+    const body = await readBody(req)
+    if (!body || !MODES.has(body.name)) return err(res, 400, 'bad_mode', 'unknown mode')
+    if (!state.modeAuto) return err(res, 409, 'auto_off', 'auto is off')
+    state.activeMode = body.name
+    state.modeChosenByUser = false
+    return send(res, 200, modeView())
+  }
 
   if (method === 'GET' && path === '/history') {
     const minutes = Math.max(1, Math.min(60, Number(url.searchParams.get('minutes')) || 5))
@@ -1121,6 +1154,9 @@ async function handle(req, res) {
     const body = await readBody(req)
     if (!body || !MODES.has(body.name)) return err(res, 400, 'bad_mode', 'unknown mode')
     state.activeMode = body.name
+    // A mode picked by hand holds until auto is turned back on (core/Program.cs, POST /mode).
+    state.modeAuto = false
+    state.modeChosenByUser = true
     // Picking a mode ends a manual override, as core/Profiles/ProfileApplier.cs does.
     state.manualStapmW = null
     const p = PROFILES.find((x) => x.id === body.name)

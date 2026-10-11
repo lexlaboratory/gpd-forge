@@ -197,6 +197,35 @@ public sealed class ForgeWorkerTdpTests : IDisposable
         Assert.True(last.Requested.FastW <= 10);
     }
 
+    [Fact]
+    public async Task A_throttle_alert_says_nothing_was_lowered_when_the_limit_in_force_is_already_under_it()
+    {
+        // 2026-10-10 on this device: 1,746 alerts of "CPU 91°C — requesting a thermal limit of 24 W"
+        // while the user's 12 W held. Read on screen, that is Forge lifting a 12 W handheld to 24 W.
+        await _worker.StartAsync(CancellationToken.None);
+        await Until(() => _state.Last is not null);
+        _intent.SetManual("windows", TdpIntent.ManualProfile(12, "windows"));
+
+        for (var i = 0; i < 5; i++) await TickAsync(Cool() with { CpuTempC = 91 });
+
+        var alert = Assert.Single(_alertStore.List(), x => x.DedupeKey == GuardianKind.ThermalThrottle);
+        Assert.Contains("12 W limit in force", alert.Message);
+        Assert.DoesNotContain("requesting", alert.Message);
+    }
+
+    [Fact]
+    public async Task A_throttle_alert_still_names_the_ceiling_when_it_lowers_the_limit()
+    {
+        await _worker.StartAsync(CancellationToken.None);
+        await Until(() => _state.Last is not null);
+        _intent.SetManual("windows", TdpIntent.ManualProfile(25, "windows"));
+
+        for (var i = 0; i < 5; i++) await TickAsync(Cool() with { CpuTempC = 91 });
+
+        var alert = Assert.Single(_alertStore.List(), x => x.DedupeKey == GuardianKind.ThermalThrottle);
+        Assert.Contains("requesting a thermal limit of 23 W", alert.Message);
+    }
+
     [Theory]
     [InlineData(93, AlertSeverity.Aviso)]
     [InlineData(98, AlertSeverity.Critica)]
@@ -284,6 +313,25 @@ public sealed class ForgeWorkerTdpTests : IDisposable
         // The control: the same config does act on an observed unplug.
         await TickAsync(Cool() with { AcConnected = false });
         Assert.Equal("battery", _mode.Active);
+    }
+
+    [Fact]
+    public async Task With_auto_off_an_unplug_does_not_switch_the_mode_the_user_picked()
+    {
+        // Auto off is "keep what I picked" (2026-10-11): no automatic switch of any kind. The AC switch
+        // used to overwrite the pick and save it as automatic — and a restart then came back in the
+        // default mode with Auto still off, so nothing would ever switch it back.
+        _powerSource.Config = new PowerSourceConfig(Enabled: true);
+        _mode.Pick("gaming");
+        await _worker.StartAsync(CancellationToken.None);
+        await Until(() => _state.Last is not null);
+
+        await TickAsync(Cool() with { AcConnected = true });
+        await TickAsync(Cool() with { AcConnected = false });
+
+        Assert.Equal("gaming", _mode.Active);
+        Assert.True(_mode.ChosenByUser);
+        Assert.Single(Writes(TdpOwner.Mode));   // the startup apply, and nothing since
     }
 
     private sealed class NullSuspender : IProcessSuspender

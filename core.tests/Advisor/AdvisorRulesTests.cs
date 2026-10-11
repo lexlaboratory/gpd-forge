@@ -55,6 +55,11 @@ public class AdvisorRulesTests
         { "throttle rules need live data", Input(last: Session(55, 20, 60), throttling: true), [] },
         { "learned ceiling", Input(live: Live(55, 40), cap: 60, ceiling: 22.4), ["stapm_ceiling"] },
         { "learned ceiling already in the profile", Input(ceiling: 22.4, profile: new(StapmW: 22)), [] },
+        // 2026-10-08 on this device: "Hold 25 W" for an app running at 12 W, and Apply made it a gaming
+        // rule. A ceiling is where the guardian pulled power DOWN to — advice to hold it must lower.
+        { "learned ceiling above the limit in force would raise it", Input(ceiling: 24.6, stapm: 12), [] },
+        { "learned ceiling equal to the limit in force changes nothing", Input(ceiling: 25, stapm: 25), [] },
+        { "learned ceiling with the limit in force unknown", Input(ceiling: 22.4, stapm: null), [] },
         { "light game beats ceiling advice", Input(live: Live(140, 100), ceiling: 22), ["cap_refresh", "fewer_watts"] },
         { "light game, sustained limit unknown", Input(live: Live(140, 100), stapm: null), ["cap_refresh"] },
         { "light game, profile already lower", Input(live: Live(140, 100), profile: new(StapmW: 18)), ["cap_refresh"] },

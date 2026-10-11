@@ -33,7 +33,7 @@ public class AdvisorServiceTests : IDisposable
         rules.Add("elden", ModeCatalogue.Gaming);
         var svc = new AdvisorService(_dir);
 
-        var entry = svc.Apply(Cap("eldenring", 60), rules, Now);
+        var entry = svc.Apply(Cap("eldenring", 60), rules, ModeCatalogue.Windows, Now);
 
         var own = rules.RuleFor("eldenring.exe")!;
         Assert.Equal("eldenring", own.Match);
@@ -43,6 +43,21 @@ public class AdvisorServiceTests : IDisposable
         Assert.Single(new AdvisorService(_dir).Applied);
     }
 
+    // 2026-10-08 on this device: applying advice for an app no rule named created `orca -> gaming`, so
+    // the workspace app the user was typing in switched the handheld to the gaming preset whenever it
+    // had focus. A new rule keeps the mode the app was running in; the advice only changes the watts.
+    [Fact]
+    public void Apply_for_an_unruled_app_keeps_the_mode_it_runs_in()
+    {
+        var rules = new AppRuleStore(_dir, seedDefaults: false);
+
+        new AdvisorService(_dir).Apply(Stapm("orca", 10), rules, ModeCatalogue.Windows, Now);
+
+        var own = rules.RuleFor("orca")!;
+        Assert.Equal(ModeCatalogue.Windows, own.Mode);
+        Assert.Equal(10, own.Overrides!.StapmW);
+    }
+
     [Fact]
     public void Apply_merges_into_an_existing_profile_and_keeps_the_rest()
     {
@@ -50,7 +65,7 @@ public class AdvisorServiceTests : IDisposable
         var existing = rules.Add("eldenring", ModeCatalogue.Gaming, enabled: false, new RuleOverrides(FrameCapFps: 60, FanMode: "Aggressive"));
         var svc = new AdvisorService(_dir);
 
-        svc.Apply(Stapm("eldenring", 22), rules, Now);
+        svc.Apply(Stapm("eldenring", 22), rules, ModeCatalogue.Gaming, Now);
 
         var rule = rules.List().Single(r => r.Id == existing.Id);
         Assert.True(rule.Enabled);
@@ -62,7 +77,7 @@ public class AdvisorServiceTests : IDisposable
     {
         var rules = new AppRuleStore(_dir, seedDefaults: false);
         var hint = new AdvisorSuggestion("lower_resolution:g", "g", "lower_resolution", "t", "d", null, null);
-        Assert.Throws<InvalidOperationException>(() => new AdvisorService(_dir).Apply(hint, rules, Now));
+        Assert.Throws<InvalidOperationException>(() => new AdvisorService(_dir).Apply(hint, rules, ModeCatalogue.Gaming, Now));
         Assert.Empty(rules.List());
     }
 
@@ -71,7 +86,7 @@ public class AdvisorServiceTests : IDisposable
     {
         var rules = new AppRuleStore(_dir, seedDefaults: false);
         var svc = new AdvisorService(_dir);
-        for (var i = 0; i < AdvisorService.MaxApplied + 5; i++) svc.Apply(Cap("g", 30 + 10 * (i % 2)), rules, Now.AddSeconds(i));
+        for (var i = 0; i < AdvisorService.MaxApplied + 5; i++) svc.Apply(Cap("g", 30 + 10 * (i % 2)), rules, ModeCatalogue.Gaming, Now.AddSeconds(i));
         Assert.Equal(AdvisorService.MaxApplied, svc.Applied.Count);
         Assert.Equal(Now.AddSeconds(AdvisorService.MaxApplied + 4), svc.Applied[0].AtUtc);
     }

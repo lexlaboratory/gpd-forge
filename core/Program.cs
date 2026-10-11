@@ -1139,7 +1139,18 @@ app.MapGet("/history/export.csv", (HttpContext ctx, TelemetryHistory history) =>
     return Results.Text(CsvExport.ToCsv(history.Since(0)), "text/csv");
 });
 
-app.MapGet("/mode", (ModeState m) => Results.Json(new { active = m.Active }));
+app.MapGet("/mode", (ModeState m, IAppRuleStore rules) => Results.Json(ModeView.From(m, rules.LastMatch)));
+
+// Auto on/off (2026-10-11). It used to be a switch in the browser only: picking a mode stopped the UI
+// asking, while auto-profiles kept switching behind it. Turning it on hands the mode back to the app in
+// front; the focus loop switches within its usual ~4.5 s hysteresis.
+app.MapPost("/mode/auto", (ModeAutoRequest r, ModeState m, IAppRuleStore rules) =>
+{
+    if (r.Enabled is not bool enabled)
+        return Results.BadRequest(new { error = new { code = "bad_auto", message = "enabled must be true or false" } });
+    m.SetAuto(enabled);
+    return Results.Json(ModeView.From(m, rules.LastMatch));
+});
 
 app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier,
                             GpuDesiredState gpuDesired, AutoFpsState autoFps, CancellationToken ct) =>
@@ -1149,7 +1160,7 @@ app.MapPost("/mode", async (ModeRequest req, ModeState m, ProfileApplier applier
 
     if (!string.IsNullOrWhiteSpace(req.Name))
     {
-        m.Active = req.Name!;
+        m.Pick(req.Name!);   // the user's, with Auto off: it holds until POST /mode/auto turns it back on
         outcome = (await applier.ApplyAsync(m.Active, ct)).ToString();   // apply the mode's TDP (yields if a rival runs)
 
         // A mode may ask the driver for a frame cap — `gaming-battery` does, and the cap is the
@@ -1741,7 +1752,7 @@ app.MapDelete("/sessions/{id:guid}", (Guid id, SessionStore sessions) =>
 // re-derives the suggestion from the live state, so a client cannot write arbitrary values through it,
 // and advice that no longer holds (the throttle ended, the cap was set) is refused as stale.
 app.MapGet("/advisor/suggestions", (string? game, HttpContext ctx) => Results.Json(AdvisorPayload(ctx.RequestServices, game)));
-app.MapPost("/advisor/apply", (AdvisorRequest r, HttpContext ctx, AdvisorService advisor, IAppRuleStore rules) =>
+app.MapPost("/advisor/apply", (AdvisorRequest r, HttpContext ctx, AdvisorService advisor, IAppRuleStore rules, ModeState mode) =>
 {
     if (AdvisorRules.GameOf(r.Id) is not string game)
         return Results.BadRequest(new { error = "Unknown suggestion id.", code = "bad_id" });
@@ -1749,7 +1760,7 @@ app.MapPost("/advisor/apply", (AdvisorRequest r, HttpContext ctx, AdvisorService
         return Results.Conflict(new { error = "That suggestion no longer applies.", code = "stale_suggestion" });
     if (!suggestion.Applicable)
         return Results.BadRequest(new { error = "This suggestion is advice only; there is nothing to apply.", code = "not_applicable" });
-    try { advisor.Apply(suggestion, rules, DateTimeOffset.UtcNow); }
+    try { advisor.Apply(suggestion, rules, mode.Active, DateTimeOffset.UtcNow); }
     catch (ArgumentException ex) { return RuleRejectedFrom(ex); }
     return Results.Json(AdvisorPayload(ctx.RequestServices, game));
 });
@@ -2346,6 +2357,7 @@ namespace GpdForge.Api
     // ModeState: core/Api/ModeState.cs (persisted since audit round 2, 2026-09-24).
 
     public sealed record ModeRequest(string? Name);
+    public sealed record ModeAutoRequest(bool? Enabled);
     public sealed record TdpRequest(int StapmW);
     public sealed record ProfileEdit(int StapmW, int FastW, int SlowW, int TctlC);
 
