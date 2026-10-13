@@ -1,51 +1,128 @@
 // GPD Forge - per-mode TDP presets. GPL-3.0-or-later.
-// Starting points for the Ryzen AI 9 HX 370; tune per device. Watts / °C.
 using GpdForge.Ai;
 using GpdForge.Tdp;
+using System.Collections.ObjectModel;
 
 namespace GpdForge.Profiles;
 
 public static class ModeProfiles
 {
-    /// <summary>
-    /// The mode whose profile is a <b>sustained ceiling</b>, not a burst budget: boost above the
-    /// sustained STAPM buys no throughput once a workload is continuously CPU-bound, it only adds
-    /// heat, fan noise and thermal cycling. <see cref="ProfileShaper"/> exists to collapse that
-    /// headroom, and this is where it enters the path — every caller that resolves a profile
-    /// (ProfileApplier, ForgeWorker, the standby restore, the resume worker, GET /ai) goes through
-    /// <see cref="For"/>, so shaping here covers all of them instead of one call site.
-    ///
-    /// The default preset below is already flat, but nothing was <i>keeping</i> it flat: a single
-    /// POST to /profiles/ai reintroduced boost, because Set clamps ranges without flattening.
-    /// </summary>
+    /// <summary>The mode whose profile is a sustained ceiling and must not retain boost headroom.</summary>
     public const string SustainedMode = ModeCatalogue.Ai;
 
-    // Mutable so the UI can tune presets live (like MotionAssistant's per-profile TDP), but SEEDED
-    // from ModeCatalogue rather than from a second hand-written list. A preset table that did not
-    // know about the catalogue is how a mode could exist with a GPU profile and no TDP preset — or
-    // the reverse — with nothing to catch it.
-    public static readonly Dictionary<string, TdpProfile> Map =
-        ModeCatalogue.All.ToDictionary(m => m.Id, m => m.DefaultTdp, StringComparer.OrdinalIgnoreCase);
+    private static readonly object Gate = new();
+    private static Dictionary<string, TdpProfile> _map = Defaults();
 
-    public static TdpProfile? For(string mode) =>
-        Map.TryGetValue(mode, out var p) ? (mode == SustainedMode ? Shape(p) : p) : null;
+    /// <summary>A thread-safe snapshot. Mutations go through Set or PersistSet.</summary>
+    public static IReadOnlyDictionary<string, TdpProfile> Map => Snapshot();
 
-    /// <summary>
-    /// Update a mode's TDP preset (clamped to sane bounds). Returns the stored value.
-    ///
-    /// The sustained mode is flattened on the way IN as well as on the way out, so what
-    /// <c>GET /profiles</c> reports is what will actually be applied. Storing a boost that
-    /// <see cref="For"/> would quietly discard would put a number on screen that never reaches the
-    /// silicon — the failure this codebase keeps removing.
-    /// </summary>
-    public static TdpProfile Set(string mode, TdpProfile p)
+    public static TdpProfile? For(string mode)
     {
-        int Clamp(int v, int lo, int hi) => Math.Max(lo, Math.Min(hi, v));
-        var safe = new TdpProfile(Clamp(p.StapmW, 5, 40), Clamp(p.FastW, 5, 45), Clamp(p.SlowW, 5, 45), Clamp(p.TctlC, 60, 95));
-        if (mode == SustainedMode) safe = Shape(safe);
-        Map[mode] = safe;
-        return safe;
+        lock (Gate)
+            return _map.TryGetValue(mode, out var profile)
+                ? string.Equals(mode, SustainedMode, StringComparison.OrdinalIgnoreCase) ? Shape(profile) : profile
+                : null;
     }
 
-    private static TdpProfile Shape(TdpProfile p) => ProfileShaper.Shape(p.StapmW, p.TctlC);
+    public static IReadOnlyDictionary<string, TdpProfile> Snapshot()
+    {
+        lock (Gate) return new ReadOnlyDictionary<string, TdpProfile>(new Dictionary<string, TdpProfile>(_map, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Rebuild the map from catalogue defaults and persisted user overlays.</summary>
+    public static void Initialize(IEnumerable<KeyValuePair<string, TdpProfile>> overlays)
+    {
+        ArgumentNullException.ThrowIfNull(overlays);
+        lock (Gate)
+        {
+            var next = Defaults();
+            foreach (var (mode, profile) in overlays)
+            {
+                if (!ModeCatalogue.Exists(mode)) continue;
+                next[ModeCatalogue.Find(mode)!.Id] = Normalize(ModeCatalogue.Find(mode)!.Id, profile);
+            }
+            _map = next;
+        }
+    }
+
+    /// <summary>Update an in-memory profile. Unknown modes are rejected.</summary>
+    public static TdpProfile Set(string mode, TdpProfile profile)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+        if (!ModeCatalogue.Exists(mode)) throw new ArgumentException($"Unknown mode '{mode}'.", nameof(mode));
+        lock (Gate)
+        {
+            var normalized = Normalize(mode, profile);
+            _map[ModeCatalogue.Find(mode)!.Id] = normalized;
+            return normalized;
+        }
+    }
+
+    /// <summary>Persist the complete sparse overlay before changing memory; I/O failures leave the map untouched.</summary>
+    public static TdpProfile PersistSet(ModePresetStore store, string mode, TdpProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+        if (!ModeCatalogue.Exists(mode)) throw new ArgumentException($"Unknown mode '{mode}'.", nameof(mode));
+        lock (Gate)
+        {
+            var canonical = ModeCatalogue.Find(mode)!.Id;
+            var normalized = Normalize(canonical, profile);
+            var overlays = new Dictionary<string, TdpProfile>(store.Read(), StringComparer.OrdinalIgnoreCase)
+            {
+                [canonical] = normalized,
+            };
+            store.Write(overlays);
+            _map[canonical] = normalized;
+            return normalized;
+        }
+    }
+
+    /// <summary>Validate and persist a settings import as one transaction before changing memory.</summary>
+    public static IReadOnlyDictionary<string, TdpProfile> PersistMany(ModePresetStore store, IReadOnlyDictionary<string, TdpProfile> profiles)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(profiles);
+        var normalized = new Dictionary<string, TdpProfile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (mode, profile) in profiles)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(mode);
+            if (!ModeCatalogue.Exists(mode)) throw new ArgumentException($"Unknown mode '{mode}'.", nameof(profiles));
+            var canonical = ModeCatalogue.Find(mode)!.Id;
+            normalized[canonical] = Normalize(canonical, profile);
+        }
+
+        lock (Gate)
+        {
+            var overlays = new Dictionary<string, TdpProfile>(store.Read(), StringComparer.OrdinalIgnoreCase);
+            foreach (var (mode, profile) in normalized) overlays[mode] = profile;
+            store.Write(overlays);
+            foreach (var (mode, profile) in normalized) _map[mode] = profile;
+            return new Dictionary<string, TdpProfile>(normalized, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static Dictionary<string, TdpProfile> Defaults() =>
+        ModeCatalogue.All.ToDictionary(m => m.Id, m => m.DefaultTdp, StringComparer.OrdinalIgnoreCase);
+
+    private static TdpProfile Normalize(string mode, TdpProfile profile)
+    {
+        int Clamp(int value, int min, int max) => Math.Clamp(value, min, max);
+        var safe = new TdpProfile(Clamp(profile.StapmW, 5, 40), Clamp(profile.FastW, 5, 45), Clamp(profile.SlowW, 5, 45), Clamp(profile.TctlC, 60, 95));
+        return string.Equals(mode, SustainedMode, StringComparison.OrdinalIgnoreCase) ? Shape(safe) : safe;
+    }
+
+    internal static bool TryNormalizePersisted(string mode, TdpProfile profile, out TdpProfile normalized)
+    {
+        if (profile.StapmW is < 5 or > 40 || profile.FastW is < 5 or > 45 ||
+            profile.SlowW is < 5 or > 45 || profile.TctlC is < 60 or > 95)
+        {
+            normalized = default;
+            return false;
+        }
+        normalized = Normalize(mode, profile);
+        return true;
+    }
+
+    private static TdpProfile Shape(TdpProfile profile) => ProfileShaper.Shape(profile.StapmW, profile.TctlC);
 }

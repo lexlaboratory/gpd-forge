@@ -1,7 +1,7 @@
 // GPD Forge UI — app shell (multi-page). GPL-3.0-or-later.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ModeId, Telemetry } from './types'
-import { getTelemetry, getMode, setMode as apiSetMode, getAlertSummary } from './api'
+import type { ModeDecision, ModeId, ModeInfo, Telemetry } from './types'
+import { getTelemetry, getModeInfo, setMode as apiSetMode, setModeAuto, getAlertSummary } from './api'
 import { Toggle } from './ui'
 import { useDensity } from './hooks/useDensity'
 import { useHashRoute } from './hooks/useHashRoute'
@@ -72,6 +72,7 @@ export function App() {
   const [tele, setTele] = useState<Telemetry | null>(null)
   const [active, setActive] = useState<ModeId>('windows')
   const [auto, setAuto] = useState(true)
+  const [decidedBy, setDecidedBy] = useState<ModeDecision | null>(null)
   const [connected, setConnected] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
   const [retryBusy, setRetryBusy] = useState(false)
@@ -127,25 +128,31 @@ export function App() {
     return () => { alive = false; clearInterval(id) }
   }, [])
 
-  // A GET /mode answer is only taken if no pick happened since it was asked, and none is still in
-  // flight. Picking turns auto off, which re-runs the effect below, and its read raced the POST:
-  // served first, it answered the OLD mode and flipped the card straight back.
+  // A GET /mode answer is only taken if no pick or Auto toggle happened since it was asked, and none is
+  // still in flight: served before the POST, a read answers the OLD state and flips the card back.
   const pickSeq = useRef(0)
   const picksInFlight = useRef(0)
+  // A daemon up to 0.4.0 answers { active } alone, and its auto-profiles always ran: that is Auto.
+  const takeMode = (m: ModeInfo) => {
+    setActive(m.active)
+    setAuto(typeof m.auto === 'boolean' ? m.auto : true)
+    setDecidedBy(m.decidedBy ?? null)
+  }
+  // Read every 2 s whatever Auto says (2026-10-11). Manual used to read once and stop, so the screen
+  // kept "Manual: Windows" while the daemon had switched to gaming at 25 W; the overlay, the MCP server
+  // or an agent can change the mode too, and the shell must show what is in force.
   useEffect(() => {
     let alive = true
     const read = () => {
       const seq = pickSeq.current
-      getMode().then((m) => {
-        if (alive && seq === pickSeq.current && picksInFlight.current === 0) setActive(m)
+      getModeInfo().then((m) => {
+        if (alive && seq === pickSeq.current && picksInFlight.current === 0) takeMode(m)
       }).catch(() => {})
     }
     read()
-    // Manual mode reads once, but still needs the cleanup: without it that one read outlived the
-    // effect and could land after auto was switched back on.
-    const id = auto ? setInterval(read, 2000) : null
-    return () => { alive = false; if (id) clearInterval(id) }
-  }, [auto])
+    const id = setInterval(read, 2000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -156,13 +163,28 @@ export function App() {
 
   // Resolves with whether the daemon took it, so a page that shows what the mode put in force (the
   // Dashboard's TDP control) can re-read it once the mode has actually been applied.
+  // After a refused write, read what the daemon holds at once instead of leaving the guess on screen
+  // until the next poll — unless another pick or toggle has happened since.
+  const reread = (seq: number) => {
+    getModeInfo().then((m) => { if (seq === pickSeq.current) takeMode(m) }).catch(() => {})
+  }
+  // Picking a mode turns Auto off in the daemon too (POST /mode): the pick holds until Auto is back on.
   const pickMode = (id: ModeId) => {
-    pickSeq.current += 1; picksInFlight.current += 1
-    setAuto(false); setActive(id)
-    return apiSetMode(id).then(() => true, () => false)
+    const seq = ++pickSeq.current; picksInFlight.current += 1
+    setAuto(false); setDecidedBy(null); setActive(id)
+    return apiSetMode(id).then(() => true, () => { reread(seq); return false })
       .finally(() => { picksInFlight.current -= 1 })
   }
-  const shared: Shared = { tele, active, auto, setAuto, pickMode }
+  // The Auto switch is the daemon's. Shown at once, then replaced by what the daemon answered — or put
+  // back if it refused, rather than claiming a state the daemon does not hold.
+  const toggleAuto = (on: boolean) => {
+    const seq = ++pickSeq.current; picksInFlight.current += 1
+    setAuto(on)
+    if (!on) setDecidedBy(null)
+    setModeAuto(on).then(takeMode, () => { setAuto(!on); reread(seq) })
+      .finally(() => { picksInFlight.current -= 1 })
+  }
+  const shared: Shared = { tele, active, auto, decidedBy, setAuto: toggleAuto, pickMode }
   const connLabel = connected ? 'Live' : 'Offline'
   const activeMode = MODES.find((m) => m.id === active)
   // Since 2026-09-24 the daemon answers GET /telemetry from its sampler's cache. Before, a hung
@@ -201,7 +223,7 @@ export function App() {
             <p className="page-sub" data-testid="device">GPD Win 4 · Ryzen AI 9 HX 370</p>
           </div>
           <div className="topbar-right">
-            <Toggle on={auto} onClick={() => setAuto(!auto)} label="Auto" testid="auto-toggle" />
+            <Toggle on={auto} onClick={() => toggleAuto(!auto)} label="Auto" testid="auto-toggle" />
             <span className={`conn conn-${connLabel.toLowerCase()}`} data-testid="conn">{connLabel}</span>
             {staleS != null && (
               <span className="conn conn-stale" data-testid="telemetry-stale" role="status"
@@ -242,7 +264,7 @@ export function App() {
           {page === 'monitor'    && <MonitorPage tele={tele} />}
           {page === 'sessions'   && <SessionsPage />}
           {page === 'system'     && <SystemPage tele={tele} />}
-          {page === 'settings'   && <SettingsPage auto={auto} setAuto={setAuto} theme={theme} setTheme={setTheme} textScale={textScale} setTextScale={setTextScale} />}
+          {page === 'settings'   && <SettingsPage auto={auto} setAuto={toggleAuto} theme={theme} setTheme={setTheme} textScale={textScale} setTextScale={setTextScale} />}
           {page === 'alerts'     && <AlertsPage onChanged={() => getAlertSummary().then((s) => setUnreadAlerts(s.unread)).catch(() => {})} />}
           </ErrorBoundary>
         </div>

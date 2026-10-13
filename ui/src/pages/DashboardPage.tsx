@@ -9,7 +9,7 @@ import { useToast } from '../Toast'
 import { JobsPanel } from '../JobsPanel'
 import { StandbyPanel } from '../StandbyPanel'
 import { AdvisorCard } from '../AdvisorCard'
-import { MODES, reading, fractionOf, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type Shared, type TdpWrite } from './shared'
+import { MODES, modesHint, reading, fractionOf, tdpInForce, tdpVerifiedNow, TDP_SEED_RETRY_MS, type Shared, type TdpWrite } from './shared'
 import { BatteryBudgetCard } from './SystemPage'
 
 // Ceilings the fill bars are read against. The TDP one is the slider's own maximum, so the bar and
@@ -34,7 +34,7 @@ const battTone = (p: number | null): Tone | undefined =>
 const tdpBadge = (v: boolean | null): { tone: Tone; label: string } =>
   v === true ? { tone: 'ok', label: 'verified' } : v === false ? { tone: 'warn', label: 'unverified' } : { tone: 'muted', label: 'unknown' }
 
-export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
+export function DashboardPage({ tele, active, auto, decidedBy, pickMode }: Shared) {
   const toast = useToast()
   // Null until something says what is in force — never a placeholder number. It was a hardcoded 20
   // that looked like the value: first a remembered 12 W override opened as 20 W (2026-09-24), then,
@@ -122,7 +122,7 @@ export function DashboardPage({ tele, active, auto, pickMode }: Shared) {
           fraction={fractionOf(tele?.batteryPct, 100)} tone={battTone(tele?.batteryPct ?? null)} />
       </section>
 
-      <Frame title="Modes" hint={<span data-testid="modes-hint">{auto ? 'Auto — optimizing for the app in focus' : 'Manual — you chose the mode'}</span>}>
+      <Frame title="Modes" hint={<span data-testid="modes-hint">{modesHint(auto, decidedBy)}</span>}>
         <div className="mode-grid" role="listbox" aria-label="Usage mode">
           {MODES.map((m) => (
             <button key={m.id} role="option" aria-selected={active === m.id} data-testid={`mode-${m.id}`}
@@ -313,7 +313,7 @@ export function TunerCard() {
           <Readout label="Temp" value={`${info.best.tempC}`} unit="°C" fraction={info.best.tempC / MAX_CPU_C} tone={tempTone(info.best.tempC)} />
         </div>
       )}
-      <p className="muted">Honesty note: this HX370 has no FPS telemetry yet (PresentMon isn't wired), so a real sweep records nothing useful and honestly reports no result rather than a faked one. The mock daemon simulates FPS so this card is fully exercisable in dev/E2E.</p>
+      <p className="muted">Run a supported game before starting a sweep. A result requires live FPS samples; if none are available, no result is recorded.</p>
     </Frame>
   )
 }

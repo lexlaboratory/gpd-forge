@@ -387,6 +387,46 @@ in *Open*), splitting ADLX performance metrics from the session host (H5), and t
 
 ## Open — work someone can pick up today
 
+Repair session 2026-10-06, authorized by Alex: implementation and device delivery
+are tracked in [the six-step plan](superpowers/plans/2026-10-06-thermal-input-control.md)
+and [the device audit](audits/2026-10-06-device-diagnostics.md). Unit-tested code is
+not a claim that a hardware fault is resolved.
+
+- **P0 — battery shutdowns:** correlate new voltage/temperature samples with any
+  recurrence. The four abrupt October 1 events have no contemporaneous retained
+  samples, so their electrical or thermal cause remains unproven.
+- **P0 — sustained cooling:** the installed repair verified 10 W, restored 8 W
+  Battery, and verified fan duty 255 then Quiet. On AC the automatic Windows
+  profile verified 15 W, but temperature and fan speed rose again. The follow-up
+  installed a persistent Windows12/12/12 W preset, verified through a real service
+  restart, with lower temperature/RPM observed during normal use. Assess sustained
+  load/cooling separately; keep one EC/SMU controller active. Motion Assistant
+  alone requested 12 W while independent readback still showed 18 W.
+- **P1 — L2/R2 calibration:** physical XInput capture reached only 223/255 and
+  181/255; calibrate with the manufacturer utility, then repeat the same capture.
+  Alex completed the official download verification; the V1.03 archive passed
+  integrity/provenance checks and Defender scans. The utility is connected after
+  temporarily closing WinControls. Physical attempts reached255 in both trigger
+  displays, but completion status reverted and the utility later closed. Two
+  post-attempt XInput captures found connected neutral input; physical actuation
+  in those windows still needs confirmation. WinControls is restored. Completed
+  calibration, persistent XInput range and GTA V behavior remain unconfirmed.
+  Alex subsequently reports that calibration seems correct; retain this as a
+  positive user observation pending the synchronized range or in-game check.
+- **Power preset persistence follow-up (2026-10-07):** the previous save endpoint
+  changed memory only. A dedicated atomic store now loads before workers and saves
+  before acknowledging success, including settings imports. Source e333ec6 is
+  installed; saved Windows12/12/12 W survives a real restart with verified hardware
+  readback. Evidence is tracked in the [follow-up audit](audits/2026-10-07-power-calibration-followup.md).
+  The temporary 12 W normal-use observation reduced CPU heat/fan RPM; preserve that
+  distinction from a proven shutdown fix. A read-only recorder now runs as Alex with
+  limited privileges for up to 24h per logon, writing private durable measurements.
+  Direct charging with the same 15 W profile raised battery capacity while CPU heat
+  remained high; the Steren dock model and negotiated USB PD power are unknown.
+- **P1 — broader hardware support:** add fixtures and device proof before widening
+  the PawnIO code-name/table-version whitelist.
+
+
 | Item | Where | Note |
 |---|---|---|
 | ~~Sustained fan curve for AI mode~~ | done 2026-09-25 | Wider drop hysteresis on the user's own curve while the mode is `Sustained`; no new write path, so the double gate is the existing one. Phase 3. |

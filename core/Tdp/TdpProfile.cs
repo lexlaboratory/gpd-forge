@@ -23,4 +23,20 @@ public readonly record struct TdpProfile(int StapmW, int FastW, int SlowW, int T
 public readonly record struct TdpReadout(int? StapmW, int? PptW, int? PptSlowW = null, int? TctlC = null);
 
 /// <summary>Outcome of a closed-loop apply: what was requested, what held, and whether it stuck.</summary>
-public readonly record struct TdpApplyResult(TdpProfile Requested, TdpReadout Observed, bool Verified, int Attempts);
+public readonly record struct TdpApplyResult(
+    TdpProfile Requested,
+    TdpReadout Observed,
+    bool Verified,
+    int Attempts,
+    string? Error = null,
+    string? VerificationStatus = null)
+{
+    // Preserve source compatibility for existing four-value deconstruction callers.
+    public void Deconstruct(out TdpProfile requested, out TdpReadout observed, out bool verified, out int attempts)
+    {
+        requested = Requested;
+        observed = Observed;
+        verified = Verified;
+        attempts = Attempts;
+    }
+}

@@ -174,10 +174,39 @@ kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
   isoTime, cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fps, fps1PctLow, batteryPct, dischargeW, acConnected,
   tdpVerified`.
 
-### `GET /mode`  ·  `POST /mode`
-- `GET  → { active: ModeId }`
+### `GET /gpu/clock`  ·  `POST /gpu/clock`  (fixed GPU clock — WRITES, pawnio-strix only)
+- `GET → { supported, forcedMhz: number | null, sinceUtc: string | null, minMhz: 400, maxMhz: 2900,
+  resetsOnRestart: true, note }` — `forcedMhz` is the clock Forge fixed in **this boot**; `null` means
+  automatic (the driver decides).
+- `POST { mhz } →` the `GET` body. `400 bad_mhz` outside 400–2900 or without a value; `409
+  not_supported` without the pawnio-strix backend (hardware gate closed, or ryzenadj); `503` when the SMU
+  refused it (`smu_failed`) or did not hand the value back (`not_confirmed`). Error bodies carry
+  `error: { code, message }` plus the `GET` fields.
+- Measured on the GPD Win 4 (HX 370), 2026-10-13: ADLX 1.5 offers **no** clock tuning for the Radeon
+  890M (every `IsSupported*Tuning` is false), so this is PSMU `0x89` — RyzenAdj's `--gfx-clk`, what
+  Motion Assistant's `GPUClock` does. It **fixes** the clock (idle included); it is not a ceiling. No
+  message is known that hands it back to the driver: `0` pinned the GPU at 0 MHz, a graphics-driver
+  reset did not undo it, only a restart did — so `0` is refused and the value lasts until the
+  handheld restarts (stored with its boot in `gpu-clock.json`; a later boot reads as automatic).
+- Re-sent after a resume from sleep (`ResumeRestoreWorker`), since whether a suspend drops it is not known.
+  With Fast Startup, Shut down hibernates the kernel session, so the service and its state survive the
+  power cycle and the clock is re-sent the same way: only **Restart** returns it to automatic.
+
+### `GET /mode`  ·  `POST /mode`  ·  `POST /mode/auto`
+- `GET  → { active: ModeId, auto: boolean, decidedBy: { ruleId, match, process } | null }` — `auto` is
+  whether the daemon may switch the mode on its own (auto-profiles); `decidedBy` names the app rule
+  that chose the mode in force, and is `null` for the user's pick, the power-source default, or with
+  `auto` off. Both added 2026-10-11: Auto used to be a switch in the UI only, so the dashboard said
+  "Manual: Windows" while auto-profiles had moved the handheld to gaming at 25 W behind it.
+- `POST /mode/auto { enabled: boolean } → ` the `GET /mode` body. `400` without a boolean. Turning it
+  on hands the mode back to the app in front: the focus loop switches after its usual ~4.5 s
+  hysteresis. Off keeps the mode in force as the user's pick, and nothing switches it automatically —
+  neither auto-profiles nor the AC/battery switch (`/power-source`); `ModeState` itself refuses an
+  automatic switch while Auto is off, so a pick cannot be overwritten by a switch already under way.
+  Kept across restarts (`mode.json`); with Auto off the saved mode is restored whoever chose it.
 - `POST { name: ModeId } → { active: ModeId, tdp: string, frameCap: string | null }` — switches the
-  active mode (applies its TDP + fan curve). `400` on unknown mode. Selecting a mode — the same one
+  active mode (applies its TDP + fan curve) and **turns `auto` off**: a mode picked here holds until
+  `POST /mode/auto { enabled: true }`. `400` on unknown mode. Selecting a mode — the same one
   included — ends a manual `POST /tdp` override. It does not end a game profile's TDP
   (`GET /profiles/active`): re-picking `gaming` with that game in front writes the game's watts
   (owner `game-profile`); picking another mode ends the profile.
@@ -302,7 +331,7 @@ or `verified: false` for that would be inventing an event.
   change" had no answer. `ITdpController.ApplyAsync` now requires the owner, which is what keeps
   this list complete — a new writer does not compile without one.
 - `verified` — the closed-loop readback for that write. `null` means the backend cannot report one.
-- `backend` — `ryzenadj` or `stub`. **`stub` means no power limit was actually applied to hardware**;
+- `backend` — `ryzenadj`, `pawnio-strix` or `stub`. **`stub` means no power limit was actually applied to hardware**;
   the stub echoes back whatever it was handed, so a `verified: true` from it attests to nothing.
   This is the distinction `GET /telemetry`'s `tdpVerified` hid while it was a hardcoded `true`.
 
@@ -318,6 +347,19 @@ or `verified: false` for that would be inventing an event.
 
 The same owner is written into the `GET /audit` line for the change.
 
+Repair feedback (2026-10-06): GET and POST also expose nullable `error` and
+`verificationStatus` (`verified`, `mismatch`, `unavailable`). A failed driver or a
+missing required readback is `unavailable`, not evidence of a firmware refusal.
+The requested ceiling and measured package consumption are different quantities.
+
+With `GPDFORGE_ENABLE_HARDWARE=1`, `GPDFORGE_TDP_BACKEND=pawnio-strix` selects
+`PawnIoStrixTdpBackend`; the existing default remains RyzenAdj. The PawnIO backend
+uses the signed embedded module, accepts only Strix Point code 31 / PM table
+`0x5D0009`, validates the table before setting limits, and reports unsupported
+hardware without falling back to another driver. It refreshes the PSMU table with
+command `0x65` and zero arguments, then applies limits through the distinct MP1
+mailbox. See the [device audit](audits/2026-10-06-device-diagnostics.md).
+
 ### `POST /panic`  (Panic cool — safety)
 `200 → { applied: boolean, stapmW: 8 }` — immediately applies a flat 8 W floor TDP profile
 (`stapmW=fastW=slowW=8`, `tctlC=90`) through the same closed-loop `ITdpController` every other TDP
@@ -330,6 +372,11 @@ body; dead simple by design so it's safe to wire to a single always-visible butt
   preset for every mode, keyed by mode id.
 - `POST /profiles/:mode { stapmW, fastW, slowW, tctlC } → { mode: ModeId, stapmW, fastW, slowW, tctlC }` —
   persists that mode's preset (what the Power page's "Save preset" writes).
+  Presets are atomic sparse overlays in `mode-presets.json` under the existing DataRoot, loaded
+  before daemon workers start. Success means the preset was written to disk; hardware application
+  remains a separate mode selection and `/tdp` verification. Unknown modes return `400 { error }`;
+  a disk failure returns `503 { error }` and leaves the in-memory preset unchanged. Settings import
+  uses the same durable store for `modePresets`, validating the entire preset section before saving.
 
 ### `GET /app-rules` · `POST /app-rules` · `PUT|DELETE /app-rules/:id` · `POST /app-rules/:id/move`  (per-app profile rules)
 A rule says "while this process is in the foreground, run in this mode". Precedence is list order:
@@ -492,7 +539,7 @@ there is none. Kinds:
 | `cap_30` | live, guardian throttling, 1 % low < 50 % of the average, no cap ≤ 30 | `frameCapFps` = 30 |
 | `lower_resolution` | as `cap_30`, but already capped at ≤ 30 | nothing (`applicable: false`; RSR arrives in F4) |
 | `fewer_watts` | 1 % low ≥ 1.5× refresh, not throttling, limit known | `stapmW` = 75 % of the limit |
-| `stapm_ceiling` | a ceiling is learned (and `fewer_watts` did not fire) | `stapmW` = the ceiling |
+| `stapm_ceiling` | a ceiling is learned, it is **below** the known limit in force (and `fewer_watts` did not fire) | `stapmW` = the ceiling |
 | `battery_mode` (F6) | on battery, mode `gaming`, and the game's gaming-battery play (5+ min) averaged ≥ 30 FPS with a 1 % low ≥ half of it | nothing (`applicable: false`): the rule's mode also governs AC, so the user switches the mode |
 
 `cap_refresh` takes precedence over `cap_30` (the smaller step: capping at 60 alone lifted the 1 % low
@@ -502,7 +549,11 @@ left out. `applied` is this game's accepted suggestions, newest first (at most 1
 
 `POST /advisor/apply { id } → AdvisorView` writes that one suggestion into the game's profile (the
 F1 rule overrides) — merged into the game's own rule, which is enabled, or a new rule in the mode the
-game already runs in, moved ahead of any broader rule — and records it. Nothing else is changed; the
+game already runs in (a broader rule's, else the active mode), moved ahead of any broader rule — and
+records it. Advice changes watts or a cap, never the mode: until 2026-10-11 the fallback was `gaming`,
+and advice for Orca (a desktop app running in `windows`) created `orca → gaming`, so the handheld went
+to the gaming preset whenever Orca had focus. A `stapm_ceiling` is offered only below the limit in
+force for the same reason: it proposed "Hold 25 W" for an app running at 12 W. Nothing else is changed; the
 focus loop applies the profile as it would one typed on the Games page. The suggestion is re-derived
 from the current state: `400 { code: "bad_id" }` for a malformed id, `409 { code: "stale_suggestion" }`
 when it no longer applies, `400 { code: "not_applicable" }` for a hint, and the `/app-rules` codes if
@@ -609,9 +660,19 @@ disagree. Read-only. The setup wizard calls this once on its incumbents-check st
 When enabled, the daemon switches the active mode the instant AC connects or disconnects (edge-
 triggered, not every tick) — e.g. auto-drop to Battery mode on unplug, back to Windows mode on
 plug-in. Applied the same way `POST /mode` is: through `ProfileApplier`, which yields if another
-power controller (MotionAssistant/GPD Tool) is running.
+power controller (MotionAssistant/GPD Tool) is running. Not while Auto is off (`GET /mode` →
+`auto: false`, 2026-10-11): a mode the user picked holds through an AC edge too.
 
 ### `GET /fan`  ·  `POST /fan`  (fan mode + manual duty — WRITES are GATED)
+Both responses also include `status`: `{ requestedDuty, observedDuty, verified,
+error, atUtc, mode }`, with nullable values. This is the worker's last command and
+readback, rather than confirmation that a preference was saved. A changed
+preference returns pending feedback (`verified: null`, `atUtc: null`) until the
+worker acts. Auto has `verified: null` because the controller's void return cannot
+confirm firmware ownership. Clients must not display an older mode/duty snapshot
+as verification of a new request. Raw duty stays 0–255 in the API; the UI displays
+percent and honors the 40/255 manual floor.
+
 - `GET → { mode: 'Auto' | 'Quiet' | 'Balanced' | 'Aggressive' | 'Manual', manualDuty: number,
   controllable: boolean }`
   - `POST { mode?: string, manualDuty?: number } → (same shape as GET)` — `mode` must be exactly one

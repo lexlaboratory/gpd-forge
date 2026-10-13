@@ -111,8 +111,27 @@
     },
     {
       "method": "GET",
+      "path": "/gpu/clock",
+      "shape": {
+        "supported": "boolean",
+        "forcedMhz": "number|null",
+        "sinceUtc": "string|null",
+        "minMhz": "number",
+        "maxMhz": "number",
+        "resetsOnRestart": "boolean",
+        "note": "string"
+      },
+      "$comment": "Added 2026-10-13. A FIXED GPU clock (PSMU 0x89, what Motion Assistant's GPUClock does): the 890M offers no ADLX clock tuning, and only a restart hands the clock back to the driver, so forcedMhz is null again after one. 0 is refused - it pinned the GPU at 0 MHz on the device."
+    },
+    {
+      "method": "GET",
       "path": "/mode",
-      "shape": { "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "gaming-battery", "ai", "standby"] } }
+      "shape": {
+        "active": { "type": "string", "oneOf": ["battery", "windows", "gaming", "gaming-battery", "ai", "standby"] },
+        "auto": "boolean",
+        "decidedBy": "object|null"
+      },
+      "$comment": "`auto` and `decidedBy` added 2026-10-11. Auto used to live only in the UI, which showed 'Manual: Windows' while auto-profiles had switched the handheld to gaming at 25 W; `decidedBy` names the app rule that chose the mode ({ ruleId, match, process }), null for the user's pick, the power default, or with auto off."
     },
     {
       "method": "GET",
@@ -639,6 +658,8 @@
     { "method": "GET", "path": "/sessions/{id}", "shape": null, "$comment": "Parameterised; needs a live id, so it is declared for coverage and exercised by sessions.spec.ts." },
 
     { "method": "POST", "path": "/mode" },
+    { "method": "POST", "path": "/mode/auto" },
+    { "method": "POST", "path": "/gpu/clock" },
     { "method": "POST", "path": "/tdp" },
     { "method": "POST", "path": "/fan" },
     { "method": "POST", "path": "/profiles/{mode}" },

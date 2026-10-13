@@ -91,7 +91,18 @@ public sealed class FocusProfileLoop(
         // must stay true while the mode is steady, which is most of the time. It records the app that
         // decided — the game under the overlay, not the overlay.
         rules.RecordMatch(proc, _engine.Resolve(proc, ac), ac);
-        var switched = _engine.Tick(proc, ac);
+
+        // Auto off (2026-10-11): the mode is the user's until they turn Auto back on. The engine adopts
+        // it every tick, so turning Auto on starts from the mode in force and switches after the usual
+        // hysteresis if the app in front asks for another. Game profiles still layer, under the user's
+        // mode only, exactly as they do over any mode the user picks.
+        string? switched;
+        if (mode.Auto) switched = _engine.Tick(proc, ac);
+        else
+        {
+            _engine.Adopt(mode.Active);
+            switched = null;
+        }
         bool gameTdpChanged = games is not null && LayerGameProfile(games, proc, switched ?? mode.Active);
 
         if (switched is null)
@@ -105,7 +116,13 @@ public sealed class FocusProfileLoop(
             return null;
         }
 
-        mode.SwitchAutomatically(switched);
+        // Refused when the user picked a mode after Auto was read above: their pick stands, and the next
+        // tick re-layers any game profile under it.
+        if (!mode.SwitchAutomatically(switched))
+        {
+            _engine.Adopt(mode.Active);
+            return null;
+        }
         logger?.LogInformation("Auto-profile -> {Mode} (foreground={Proc})", switched, proc ?? "(none)");
         // The mode's TDP, or its game layer (yields if a rival is running). A mode change ends the override.
         var report = await applier.ApplyWithReportAsync(switched, clearManual: true, ct);

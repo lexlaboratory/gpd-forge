@@ -34,6 +34,9 @@ public static class FrameTarget
         // Launchers and overlays
         "steam", "steamwebhelper", "epicgameslauncher", "eadesktop", "galaxyclient", "ubisoftconnect",
         "gamebar", "gamebarftserver", "xboxpcappft", "radeonsoftware", "discord", "motionassistant",
+        // Desktop apps learned as "games" on this device (thermal-ceilings.json, 2026-10-10) — the
+        // advisor gave Orca, the workspace app, a rule of its own
+        "orca", "electron", "rustdesk", "logioptionsplus_agent",
         // GPD Forge
         "gpd forge", "gpd-forge",
     };

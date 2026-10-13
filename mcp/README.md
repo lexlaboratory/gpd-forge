@@ -35,7 +35,10 @@ claude mcp add gpd-forge -- node C:\Users\Alex\gpd-forge\mcp\server.mjs
 |------|------|--------------|
 | `get_telemetry` | read | CPU/GPU °C, watts, clock, fan RPM, FPS, battery %, discharge, AC, tdpVerified |
 | `get_mode` | read | active power mode |
-| `set_mode` | **write** | switch mode (gaming/ai/windows/battery/standby) → applies TDP + fan |
+| `set_mode` | **write** | switch mode (gaming/ai/windows/battery/standby) → applies TDP + fan; turns Auto off |
+| `set_auto_mode` | **write** | Auto on (the app in focus picks the mode via rules) or off (the mode holds) |
+| `get_gpu_clock` | read | fixed GPU clock (null = automatic) and the allowed band |
+| `set_gpu_clock` | **write** | fix the GPU clock at 400–2900 MHz — lasts until the handheld restarts |
 | `set_tdp` | **write** | set sustained TDP (W); returns `verified` |
 | `get_battery_budget` | read | runtime estimate + what-if projections |
 | `get_profiles` | read | per-mode TDP presets |

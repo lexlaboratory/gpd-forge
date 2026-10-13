@@ -25,15 +25,38 @@ public sealed class ClosedLoopTdpController(
 
         for (int attempt = 1; attempt <= _opt.MaxAttempts; attempt++)
         {
-            await backend.ApplyAsync(profile, ct);
+            try
+            {
+                await backend.ApplyAsync(profile, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                return Unavailable(profile, observed, attempt, ex);
+            }
+
             await delay.WaitAsync(TimeSpan.FromMilliseconds(_opt.SettleMs), ct);
-            observed = await backend.ReadAsync(ct);
+            try
+            {
+                observed = await backend.ReadAsync(ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                return Unavailable(profile, observed, attempt, ex);
+            }
+
+            // Without the two required PM-table rows there is no evidence to call this a refusal.
+            // Retrying an unavailable reader only hammers the driver and labels uncertainty as a
+            // firmware revert, so stop after this attempt and report the missing measurement.
+            if (observed.StapmW is null || observed.PptW is null)
+                return Unavailable(profile, observed, attempt,
+                    new InvalidOperationException("Required TDP readback rows (STAPM and fast PPT) were unavailable."));
+
             _rule.Observe(observed, profile, _opt.ToleranceW);
 
             if (_rule.Holds(observed, profile, _opt.ToleranceW))
             {
                 logger?.LogDebug("TDP verified on attempt {Attempt}: {Observed}", attempt, observed);
-                return new TdpApplyResult(profile, observed, true, attempt);
+                return new TdpApplyResult(profile, observed, true, attempt, VerificationStatus: "verified");
             }
 
             await delay.WaitAsync(Backoff(attempt), ct);
@@ -45,12 +68,20 @@ public sealed class ClosedLoopTdpController(
         // later write too and have the 30 s reassert rewrite the limits forever.
         if (_rule.DisownRowsThatNeverTracked(observed, profile, _opt.ToleranceW)
             && _rule.Holds(observed, profile, _opt.ToleranceW))
-            return new TdpApplyResult(profile, observed, true, _opt.MaxAttempts);
+            return new TdpApplyResult(profile, observed, true, _opt.MaxAttempts, VerificationStatus: "verified");
 
         logger?.LogWarning(
             "TDP reverted by firmware after {Attempts} attempts — wanted STAPM {Want}W, observed {Got}W",
             _opt.MaxAttempts, profile.StapmW, observed.StapmW);
-        return new TdpApplyResult(profile, observed, false, _opt.MaxAttempts);
+        return new TdpApplyResult(profile, observed, false, _opt.MaxAttempts,
+            $"Readback did not match the requested profile after {_opt.MaxAttempts} attempts.", "mismatch");
+    }
+
+    private TdpApplyResult Unavailable(TdpProfile profile, TdpReadout observed, int attempts, Exception ex)
+    {
+        string error = ex.Message.Length <= 1000 ? ex.Message : ex.Message[..1000];
+        logger?.LogWarning("TDP verification unavailable after attempt {Attempt}: {Error}", attempts, error);
+        return new TdpApplyResult(profile, observed, false, attempts, error, "unavailable");
     }
 
     /// <summary>

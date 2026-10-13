@@ -22,7 +22,8 @@ public sealed class FanWorker(
     IGpdFanController fanControl,
     ILogger<FanWorker> logger,
     TimeProvider? time = null,
-    Func<bool>? sustained = null) : BackgroundService
+    Func<bool>? sustained = null,
+    FanControlState? controlState = null) : BackgroundService
 {
     /// <summary>
     /// Whether <paramref name="powerMode"/> is a catalogue mode flagged <c>Sustained</c> (today only
@@ -33,6 +34,7 @@ public sealed class FanWorker(
         GpdForge.Profiles.ModeCatalogue.Find(powerMode)?.Sustained == true;
 
     private readonly Func<bool> _sustained = sustained ?? (() => false);
+    private readonly FanControlState? _controlState = controlState;
 
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
@@ -55,6 +57,7 @@ public sealed class FanWorker(
     /// </summary>
     public void Tick()
     {
+        string? mode = null;
         try
         {
             var reading = telemetry.Latest;
@@ -67,7 +70,7 @@ public sealed class FanWorker(
 
             // Read once: /fan and /panic write these from request threads, and the policy must see
             // one consistent pair for the whole tick.
-            string mode = fanState.Mode;
+            mode = fanState.Mode;
             int manualDuty = fanState.ManualDuty;
             double nowS = _time.GetElapsedTime(_startTimestamp).TotalSeconds;
 
@@ -76,9 +79,22 @@ public sealed class FanWorker(
             {
                 case FanCommandKind.Auto:
                     fanControl.SetAuto();
+                    _controlState?.Record(new FanControlSnapshot(null, fanControl.ReadDuty(), null, null,
+                        _time.GetUtcNow(), mode));
                     break;
                 case FanCommandKind.Duty:
-                    _ = fanControl.SetManualDuty(command.Duty);   // failures are already logged inside GpdFanController
+                    bool writeVerified = fanControl.SetManualDuty(command.Duty);
+                    int? observedDuty = fanControl.ReadDuty();
+                    int expectedDuty = Math.Clamp(command.Duty, GpdFanController.MinManualDuty, 255);
+                    bool readbackMatches = observedDuty is int read && Math.Abs(read - expectedDuty) <= 1;
+                    bool verified = writeVerified && readbackMatches;
+                    string? error = verified ? null : observedDuty is null
+                        ? "Fan duty readback unavailable."
+                        : !readbackMatches
+                            ? $"Fan duty readback mismatch: requested {command.Duty}, observed {observedDuty}."
+                            : "Manual duty write did not verify.";
+                    _controlState?.Record(new FanControlSnapshot(command.Duty, observedDuty, verified, error,
+                        _time.GetUtcNow(), mode));
                     break;
             }
 
@@ -93,6 +109,7 @@ public sealed class FanWorker(
             // ForgeWorker it would have stopped the host. Warned once per outage, not once a second.
             if (!_tickFailing) logger.LogWarning(ex, "Fan tick failed; fan handed back to firmware until it recovers.");
             _tickFailing = true;
+            _controlState?.Record(new FanControlSnapshot(null, null, false, ex.Message, _time.GetUtcNow(), mode));
             _policy.Reset();
             try { fanControl.SetAuto(); } catch { /* best effort */ }
         }

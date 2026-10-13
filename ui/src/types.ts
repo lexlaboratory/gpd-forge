@@ -10,6 +10,32 @@ export interface Mode {
   blurb: string
 }
 
+/** The app rule that switched to the mode in force (GET /mode `decidedBy`). */
+export interface ModeDecision {
+  ruleId: string
+  match: string | null
+  process: string | null
+}
+
+/** GET/POST /gpu/clock: a FIXED GPU clock (PSMU 0x89). `forcedMhz` null = automatic; a fixed clock
+ *  lasts until the handheld restarts — there is no way back to automatic without one. */
+export interface GpuClockInfo {
+  supported: boolean
+  forcedMhz: number | null
+  sinceUtc: string | null
+  minMhz: number
+  maxMhz: number
+  resetsOnRestart: boolean
+  note: string
+}
+
+/** GET /mode and POST /mode/auto. `auto` is the daemon's: whether it may switch the mode on its own. */
+export interface ModeInfo {
+  active: ModeId
+  auto: boolean
+  decidedBy: ModeDecision | null
+}
+
 /**
  * A telemetry reading. Every sensor is nullable as of 2026-09-01.
  *
@@ -63,6 +89,9 @@ export interface TdpInfo {
   /** What the user wants in force (manual, else the game profile, else the mode's preset) — unlike
    *  `stapmW`, never a guardian / auto-FPS / charge-guard / tuner write. Optional: older daemons. */
   intentStapmW?: number | null
+  /** Optional details supplied by newer daemons. */
+  error?: string | null
+  verificationStatus?: string | null
 }
 
 // One recorded telemetry sample (mirror of core/History/HistorySample) — unixMs is when the daemon
@@ -185,7 +214,15 @@ export interface KeyboardBacklightInfo { controllable: boolean; applied: boolean
 
 // Fan mode + gated manual duty (mirror of GET/POST /fan — core/Fan/GpdFanController.cs).
 // `controllable` is true only when the daemon is actually gated to WRITE the EC right now.
-export interface FanInfo { mode: string; manualDuty: number; controllable: boolean }
+export interface FanStatus {
+  requestedDuty: number | null
+  observedDuty: number | null
+  verified: boolean | null
+  error: string | null
+  atUtc: string | null
+  mode: string | null
+}
+export interface FanInfo { mode: string; manualDuty: number; controllable: boolean; status?: FanStatus | null }
 
 // Full settings snapshot (mirror of GET /settings/export).
 export interface SettingsExport {

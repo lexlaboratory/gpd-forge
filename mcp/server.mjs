@@ -60,17 +60,41 @@ const tools = [
   },
   {
     name: 'get_mode',
-    description: 'The active power mode (gaming | gaming-battery | ai | windows | battery | standby).',
+    description: 'The active power mode (gaming | gaming-battery | ai | windows | battery | standby), whether Auto is on (the daemon may switch the mode from the app in focus), and decidedBy: the app rule that chose the mode, or null.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     call: () => api('/mode'),
   },
   {
     name: 'set_mode',
-    description: 'Switch the active power mode. Applies that mode\'s TDP preset + fan curve through the closed loop. WRITES to the device.',
+    description: 'Switch the active power mode. Applies that mode\'s TDP preset + fan curve through the closed loop, and turns Auto off: the mode holds until set_auto_mode(true). WRITES to the device.',
     inputSchema: { type: 'object', properties: { name: { type: 'string', enum: MODES } }, required: ['name'], additionalProperties: false },
     call: (a) => {
       if (!MODES.includes(a?.name)) throw new Error(`name must be one of ${MODES.join(', ')}`)
       return api('/mode', 'POST', { name: a.name })
+    },
+  },
+  {
+    name: 'set_auto_mode',
+    description: 'Turn Auto on or off. On hands the mode back to the app in focus (per-app rules; the switch follows within ~5 s); off keeps the mode in force. WRITES to the device.',
+    inputSchema: { type: 'object', properties: { enabled: { type: 'boolean' } }, required: ['enabled'], additionalProperties: false },
+    call: (a) => {
+      if (typeof a?.enabled !== 'boolean') throw new Error('enabled must be true or false')
+      return api('/mode/auto', 'POST', { enabled: a.enabled })
+    },
+  },
+  {
+    name: 'get_gpu_clock',
+    description: 'The fixed GPU clock: forcedMhz (null = automatic, the driver decides), the allowed band, and whether this handheld supports it.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/gpu/clock'),
+  },
+  {
+    name: 'set_gpu_clock',
+    description: 'FIX the Radeon GPU clock at mhz (400-2900). It stays fixed, idle included, until the handheld restarts: AMD firmware has no way back to automatic. WRITES to the device.',
+    inputSchema: { type: 'object', properties: { mhz: { type: 'integer', minimum: 400, maximum: 2900 } }, required: ['mhz'], additionalProperties: false },
+    call: (a) => {
+      if (!Number.isInteger(a?.mhz) || a.mhz < 400 || a.mhz > 2900) throw new Error('mhz must be an integer 400-2900 (0 is not automatic: it pins the GPU at 0 MHz)')
+      return api('/gpu/clock', 'POST', { mhz: a.mhz })
     },
   },
   {

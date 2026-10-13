@@ -38,7 +38,8 @@ test.describe('Features', () => {
 
     const duty = page.getByTestId('fan-manual-duty')
     await expect(duty).toBeVisible()
-    await duty.fill('173')
+    // Duty is percentage in the UI and 0..255 at the API. 68% rounds to raw 173.
+    await duty.fill('68')
 
     const dutyResponse = page.waitForResponse((response) =>
       response.url().endsWith('/fan') && response.request().method() === 'POST',

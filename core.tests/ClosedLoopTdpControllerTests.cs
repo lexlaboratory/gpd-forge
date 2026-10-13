@@ -66,4 +66,73 @@ public class ClosedLoopTdpControllerTests
 
         Assert.True(result.Verified);
     }
+
+    [Fact]
+    public async Task Missing_readback_is_reported_as_unavailable_not_a_firmware_revert()
+    {
+        var backend = new FakeBackend(_ => new TdpReadout(null, null));
+        var controller = new ClosedLoopTdpController(backend, new NoDelay(), options:
+            new ClosedLoopTdpController.Options(MaxAttempts: 4));
+
+        var result = await controller.ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
+
+        Assert.False(result.Verified);
+        Assert.Equal("unavailable", result.VerificationStatus);
+        Assert.NotNull(result.Error);
+        Assert.Equal(1, result.Attempts);
+    }
+
+    [Fact]
+    public async Task Backend_exception_is_returned_as_an_unavailable_result()
+    {
+        var backend = new ThrowingBackend(new InvalidOperationException("WinRing0 driver not found"));
+
+        var result = await Controller(backend).ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
+
+        Assert.False(result.Verified);
+        Assert.Equal("unavailable", result.VerificationStatus);
+        Assert.Contains("WinRing0 driver not found", result.Error);
+        Assert.Equal(1, result.Attempts);
+    }
+
+    [Fact]
+    public async Task Read_exception_is_returned_as_unavailable_without_retrying_invalid_backend()
+    {
+        var backend = new ReadThrowingBackend(new InvalidOperationException("WinRing0 driver not found"));
+
+        var result = await Controller(backend, new ClosedLoopTdpController.Options(MaxAttempts: 4))
+            .ApplyAsync(Want, TdpOwner.Manual, CancellationToken.None);
+
+        Assert.False(result.Verified);
+        Assert.Equal("unavailable", result.VerificationStatus);
+        Assert.Contains("WinRing0 driver not found", result.Error);
+        Assert.Equal(1, result.Attempts);
+        Assert.Equal(1, backend.Applies);
+    }
+
+    [Fact]
+    public void Tdp_apply_result_preserves_four_field_deconstruction()
+    {
+        var expected = new TdpApplyResult(Want, new TdpReadout(25, 25), true, 1, "detail", "verified");
+
+        var (requested, observed, verified, attempts) = expected;
+
+        Assert.Equal(Want, requested);
+        Assert.Equal(new TdpReadout(25, 25), observed);
+        Assert.True(verified);
+        Assert.Equal(1, attempts);
+    }
+
+    private sealed class ThrowingBackend(Exception exception) : ITdpBackend
+    {
+        public Task ApplyAsync(TdpProfile profile, CancellationToken ct) => throw exception;
+        public Task<TdpReadout> ReadAsync(CancellationToken ct) => throw exception;
+    }
+
+    private sealed class ReadThrowingBackend(Exception exception) : ITdpBackend
+    {
+        public int Applies { get; private set; }
+        public Task ApplyAsync(TdpProfile profile, CancellationToken ct) { Applies++; return Task.CompletedTask; }
+        public Task<TdpReadout> ReadAsync(CancellationToken ct) => throw exception;
+    }
 }

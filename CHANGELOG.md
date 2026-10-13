@@ -5,6 +5,31 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **A fixed GPU clock** (Power page, `GET/POST /gpu/clock`, MCP `get_gpu_clock` / `set_gpu_clock`),
+  400–2900 MHz. Measured on the Win 4 (HX 370): the Radeon 890M offers no clock tuning through ADLX,
+  so this is PSMU `0x89` — what Motion Assistant's GPU clock does. It **fixes** the clock, idle
+  included, and AMD's firmware has no way back to automatic: it returns when the handheld restarts,
+  which the card says. `0` is refused — on the device it pinned the GPU at 0 MHz until a restart.
+  Re-sent after a resume from sleep; needs the `pawnio-strix` backend.
+
+### Fixed
+- **A mode you pick holds.** Auto was a switch in the UI only: picking Windows (12 W) showed
+  "Manual: Windows" and stopped reading the mode, while auto-profiles kept switching behind it — on
+  2026-10-10 to gaming at 25 W whenever Orca had focus. Auto is the daemon's now (`GET /mode` →
+  `auto`, `POST /mode/auto`, kept across restarts): `POST /mode` turns it off and the pick holds
+  until it is turned back on — the AC/battery switch included. The shell reads the mode every 2 s
+  either way, re-reads at once when the daemon refuses a pick, and the Modes card
+  names the app rule that chose the mode (`decidedBy`). MCP: `set_auto_mode`.
+- **The Advisor never raises power.** "Hold N W" is offered only below the limit in force — it
+  proposed "Hold 25 W" for an app running at 12 W — and Apply on an app with no rule keeps the mode
+  it runs in instead of creating a `gaming` rule (it had created `orca → gaming`).
+- **Orca, Electron, RustDesk and Logi Options+ are not games**: they were learned as games here, with
+  thermal ceilings of their own, and that is how Orca got its rule.
+- **The thermal alert says what is held.** "CPU 91°C — requesting a thermal limit of 24 W" was
+  logged 1,746 times in a day while the user's 12 W held; when the limit in force is already under
+  the guardian's ceiling the alert now says so.
+
 ## [0.4.0] — 2026-09-25
 
 0.3.0 taught the app the difference between a measurement and a zero. This one is about the game in

@@ -2,6 +2,8 @@
 import { test, expect } from './fixtures'
 import { DashboardPage } from './pages/DashboardPage'
 
+const API = 'http://127.0.0.1:8799'
+
 test.describe('Dashboard', () => {
   let dash: DashboardPage
 
@@ -85,6 +87,94 @@ test.describe('Dashboard', () => {
     await dash.pickMode('gaming')
     await expect(auto).toHaveAttribute('aria-pressed', 'false')
     await expect(page.getByTestId('modes-hint')).toContainText('Manual')
+  })
+
+  // 2026-10-10 on the device: Auto lived only in the browser. The user picked Windows (12 W), the
+  // screen said "Manual: Windows" and stopped asking, and auto-profiles moved the handheld to gaming at
+  // 25 W behind it. Auto is the daemon's now, and the screen keeps reading the mode either way.
+  test('the Auto switch reaches the daemon', async ({ page, request }) => {
+    const auto = page.getByTestId('auto-toggle')
+    await auto.click()
+    await expect(auto).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(async () => (await (await request.get(`${API}/mode`)).json()).auto).toBe(false)
+
+    await auto.click()
+    await expect(auto).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(async () => (await (await request.get(`${API}/mode`)).json()).auto).toBe(true)
+  })
+
+  test('picking a mode turns Auto off in the daemon too', async ({ request }) => {
+    await dash.pickMode('windows')
+    await expect.poll(async () => (await (await request.get(`${API}/mode`)).json()).auto).toBe(false)
+  })
+
+  test('with Auto off the screen still follows a mode changed elsewhere', async ({ page, request }) => {
+    await dash.pickMode('windows')
+    await expect(dash.mode('windows')).toHaveAttribute('aria-selected', 'true')
+
+    // The overlay, the MCP server or an agent switches it; the dashboard must not keep showing Windows.
+    await request.post(`${API}/mode`, { data: { name: 'battery' } })
+    try {
+      await expect(dash.mode('battery')).toHaveAttribute('aria-selected', 'true', { timeout: 5000 })
+      await expect(page.getByTestId('active-mode')).toContainText('Manual')
+    } finally {
+      await request.post(`${API}/mode`, { data: { name: 'windows' } })   // the mock is shared
+    }
+  })
+
+  test('a pick the daemon refused shows what the daemon holds, not the pick', async ({ page, request }) => {
+    await request.post(`${API}/mode`, { data: { name: 'windows' } })
+    await request.post(`${API}/mode/auto`, { data: { enabled: true } })
+    // The 2 s poll is frozen, so only an immediate re-read can put the screen right.
+    await page.clock.install()
+    await page.reload()
+    await expect(dash.mode('windows')).toHaveAttribute('aria-selected', 'true')
+    await page.clock.pauseAt(Date.now() + 500)
+    await page.route(/\/mode$/, (route) => route.request().method() === 'POST'
+      ? route.fulfill({ status: 500, json: { error: 'simulated' } })
+      : route.continue())
+
+    await dash.mode('gaming').click()
+
+    await expect(dash.mode('windows')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('auto-toggle')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('an Auto switch the daemon refused is put back', async ({ page }) => {
+    await page.clock.install()
+    await page.reload()
+    await expect(page.getByTestId('auto-toggle')).toHaveAttribute('aria-pressed', 'true')
+    await page.clock.pauseAt(Date.now() + 500)
+    await page.route(/\/mode\/auto$/, (route) => route.fulfill({ status: 500, json: { error: 'simulated' } }))
+
+    await page.getByTestId('auto-toggle').click()
+
+    await expect(page.getByTestId('auto-toggle')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('a daemon from before Auto was its own still reads as Auto', async ({ page }) => {
+    // Up to 0.4.0 GET /mode answered { active } alone, and auto-profiles always ran: that is Auto.
+    await page.route(/\/mode$/, (route) => route.request().method() === 'GET'
+      ? route.fulfill({ json: { active: 'windows' } })
+      : route.continue())
+    await page.reload()
+    await expect(page.getByTestId('auto-toggle')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('active-mode')).toContainText('Auto')
+  })
+
+  test('a mode an app rule chose says which rule', async ({ page, request }) => {
+    // The mock's foreground is steam, and the shipped steam rule asks for gaming.
+    const switched = await request.post(`${API}/mode/_test-auto-switch`, { data: { name: 'gaming' } })
+    expect(switched.ok()).toBe(true)
+    try {
+      await expect(dash.mode('gaming')).toHaveAttribute('aria-selected', 'true', { timeout: 5000 })
+      await expect(page.getByTestId('modes-hint')).toContainText('“steam” rule', { timeout: 5000 })
+      await expect(page.getByTestId('active-mode')).toContainText('Auto')
+    } finally {
+      // The mock is shared: leave it in the user's windows, not in a rule's gaming (Auto comes back on
+      // before the next test through the modeAutoOn fixture).
+      await request.post(`${API}/mode`, { data: { name: 'windows' } })
+    }
   })
 
   test('TDP slider updates its readout', async () => {
