@@ -311,6 +311,53 @@ public sealed class PawnIoStrixTdpBackendTests
     private static PawnIoSmuTransport CreateTransport(FakePawnApi pawn, params string[] capabilities) =>
         new(string.Join('\n', capabilities), pawn, typeof(FakePawnApi));
 
+    // ---------------------------------------------------------------------------------------------
+    // Fixed GPU clock (PSMU 0x89, RyzenAdj --gfx-clk). Measured on this device 2026-10-13: 1200 held the
+    // 890M at exactly 1200 MHz; 0 pinned it at 0 MHz until a restart. Never 0, never outside the band.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Forcing_the_GPU_clock_sends_PSMU_0x89_with_the_MHz_after_validating_the_chip()
+    {
+        var transport = new FakeSmuTransport();
+        using var backend = Build(transport);
+
+        int echoed = await backend.ForceAsync(1200, CancellationToken.None);
+
+        Assert.Equal(1200, echoed);
+        var force = Assert.Single(transport.Calls, c => c.Name == "ioctl_send_smu_command" && c.Input[0] == 0x89);
+        Assert.Equal(new long[] { 0x89, 1200, 0, 0, 0, 0, 0 }, force.Input);
+        Assert.Equal(6, force.OutCount);
+        Assert.Contains(transport.Calls.TakeWhile(c => c != force), c => c.Name == "ioctl_get_code_name");
+        Assert.DoesNotContain(transport.Calls, IsRegisterWrite);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(399)]
+    [InlineData(2901)]
+    public async Task A_GPU_clock_outside_400_to_2900_MHz_is_refused_before_transport_creation(int mhz)
+    {
+        var factory = new RecordingTransportFactory(new FakeSmuTransport());
+        using var backend = Build(factory);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => backend.ForceAsync(mhz, CancellationToken.None));
+
+        Assert.Equal(0, factory.CreateCount);
+    }
+
+    [Fact]
+    public async Task The_GPU_clock_is_not_forced_on_an_unsupported_chip()
+    {
+        var transport = new FakeSmuTransport { CodeName = 23 };
+        using var backend = Build(transport);
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => backend.ForceAsync(1200, CancellationToken.None));
+
+        Assert.DoesNotContain(transport.Calls, c => c.Name == "ioctl_send_smu_command" && c.Input[0] == 0x89);
+    }
+
     private static PawnIoStrixTdpBackend Build(
         FakeSmuTransport transport,
         Func<ISmuMutex>? mutexFactory = null,
@@ -362,7 +409,9 @@ public sealed class PawnIoStrixTdpBackendTests
                 "ioctl_get_code_name" => [CodeName],
                 "ioctl_get_smu_version" => [0x5D0000],
                 "ioctl_resolve_pm_table" => [TableVersion, TableBase],
-                "ioctl_send_smu_command" => [.. new long[outputCount]],
+                // The SMU hands its arguments back in the reply (measured 2026-10-13: 0x89 with 1200
+                // returned 0x4B0), so the fake echoes them.
+                "ioctl_send_smu_command" => [.. input.Skip(1).Concat(new long[outputCount]).Take(outputCount)],
                 "ioctl_read_pm_table" when ThrowOnTableRead => throw new InvalidOperationException("synthetic table read failure"),
                 "ioctl_read_pm_table" => PackTable(),
                 "ioctl_read_smu_register" => [input[0] == ResponseRegister ? ReadResponse() : 0],

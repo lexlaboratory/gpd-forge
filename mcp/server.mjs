@@ -83,6 +83,21 @@ const tools = [
     },
   },
   {
+    name: 'get_gpu_clock',
+    description: 'The fixed GPU clock: forcedMhz (null = automatic, the driver decides), the allowed band, and whether this handheld supports it.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    call: () => api('/gpu/clock'),
+  },
+  {
+    name: 'set_gpu_clock',
+    description: 'FIX the Radeon GPU clock at mhz (400-2900). It stays fixed, idle included, until the handheld restarts: AMD firmware has no way back to automatic. WRITES to the device.',
+    inputSchema: { type: 'object', properties: { mhz: { type: 'integer', minimum: 400, maximum: 2900 } }, required: ['mhz'], additionalProperties: false },
+    call: (a) => {
+      if (!Number.isInteger(a?.mhz) || a.mhz < 400 || a.mhz > 2900) throw new Error('mhz must be an integer 400-2900 (0 is not automatic: it pins the GPU at 0 MHz)')
+      return api('/gpu/clock', 'POST', { mhz: a.mhz })
+    },
+  },
+  {
     name: 'set_tdp',
     description: 'Set the sustained TDP (STAPM watts) through the closed loop. Returns {requested, observed, verified}; verified=false means the firmware reverted it. WRITES to the device.',
     inputSchema: { type: 'object', properties: { stapmW: { type: 'number', minimum: 5, maximum: 40 } }, required: ['stapmW'], additionalProperties: false },

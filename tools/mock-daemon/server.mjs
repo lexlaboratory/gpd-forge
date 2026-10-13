@@ -256,6 +256,9 @@ const state = {
   // Mirrors core/Api/ModeState.cs (2026-10-11): whether the daemon may switch the mode on its own, and
   // whether the mode in force is the user's pick. POST /mode turns auto off; POST /mode/auto turns it on.
   modeAuto: true,
+  // core/Gpu/GpuClock.cs: the clock Forge fixed in this boot (null = automatic). The mock reports
+  // supported:true, like the fan, so the Power page's card can be exercised without hardware.
+  gpuClock: { forcedMhz: null, sinceUtc: null },
   modeChosenByUser: true,
   stapmW: 20,
   tdpVerified: true,
@@ -659,6 +662,16 @@ function undervoltInfo() {
 // separate opt-in — fan writes are gated more strictly than other hardware writes) and a matched board.
 function fanInfo() {
   return { mode: state.fanMode, manualDuty: state.fanManualDuty, controllable: true }
+}
+
+const GPU_CLOCK_MIN = 400
+const GPU_CLOCK_MAX = 2900
+function gpuClockView() {
+  return {
+    supported: true, forcedMhz: state.gpuClock.forcedMhz, sinceUtc: state.gpuClock.sinceUtc,
+    minMhz: GPU_CLOCK_MIN, maxMhz: GPU_CLOCK_MAX, resetsOnRestart: true,
+    note: 'A fixed clock stays fixed, idle included. AMD firmware has no way back to automatic: it returns when the handheld restarts.',
+  }
 }
 
 // GET /mode — core/Api/ModeView.cs: the rule that chose the mode, only for an automatic switch that agrees.
@@ -1533,6 +1546,23 @@ async function handle(req, res) {
   // Mirrors the daemon: never claims applied:true, because the daemon cannot apply it either — the
   // user-session agent does, seconds later. A mock that answered "applied" would train the UI to
   // trust a confirmation the real thing never sends.
+  if (method === 'GET' && path === '/gpu/clock') return send(res, 200, gpuClockView())
+  if (method === 'POST' && path === '/gpu/clock') {
+    const body = await readBody(req)
+    const mhz = body?.mhz
+    // Same band as GpuClockPolicy: never 0, which pinned the 890M at 0 MHz until a restart.
+    if (!Number.isInteger(mhz) || mhz < GPU_CLOCK_MIN || mhz > GPU_CLOCK_MAX) {
+      return send(res, 400, { error: { code: 'bad_mhz', message: `The GPU clock must be ${GPU_CLOCK_MIN}–${GPU_CLOCK_MAX} MHz.` }, ...gpuClockView() })
+    }
+    state.gpuClock = { forcedMhz: mhz, sinceUtc: new Date().toISOString() }
+    return send(res, 200, gpuClockView())
+  }
+  // Test hook: the state after a restart of the handheld.
+  if (method === 'POST' && path === '/gpu/clock/_test-reset') {
+    state.gpuClock = { forcedMhz: null, sinceUtc: null }
+    return send(res, 200, gpuClockView())
+  }
+
   if (method === 'POST' && path === '/gpu/frame-cap') {
     // Every other POST route reads the body this way; omitting it crashed the mock on the first
     // request. The E2E still passed, because it only asserted that the POST was SENT — a test that

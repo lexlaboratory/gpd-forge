@@ -5,6 +5,14 @@ All notable changes to GPD Forge are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **A fixed GPU clock** (Power page, `GET/POST /gpu/clock`, MCP `get_gpu_clock` / `set_gpu_clock`),
+  400–2900 MHz. Measured on the Win 4 (HX 370): the Radeon 890M offers no clock tuning through ADLX,
+  so this is PSMU `0x89` — what Motion Assistant's GPU clock does. It **fixes** the clock, idle
+  included, and AMD's firmware has no way back to automatic: it returns when the handheld restarts,
+  which the card says. `0` is refused — on the device it pinned the GPU at 0 MHz until a restart.
+  Re-sent after a resume from sleep; needs the `pawnio-strix` backend.
+
 ### Fixed
 - **A mode you pick holds.** Auto was a switch in the UI only: picking Windows (12 W) showed
   "Manual: Windows" and stopped reading the mode, while auto-profiles kept switching behind it — on

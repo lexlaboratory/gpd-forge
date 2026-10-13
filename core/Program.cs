@@ -517,6 +517,9 @@ bool enableHardware = Environment.GetEnvironmentVariable("GPDFORGE_ENABLE_HARDWA
 TdpBackendRegistration.Register(builder.Services, enableHardware,
     Environment.GetEnvironmentVariable("GPDFORGE_TDP_BACKEND"),
     Environment.GetEnvironmentVariable("GPDFORGE_RYZENADJ"));
+// The fixed GPU clock (core/Gpu/GpuClock.cs) rides the same backend; remembered per boot.
+builder.Services.AddSingleton(sp => new GpuClockService(
+    sp.GetRequiredService<IGpuClockControl>(), new GpuClockStore(DataRoot.Current)));
 if (enableHardware)
 {
     // Read-only richer sensors (package watts, temps). LHM loads its own read-only driver.
@@ -1526,6 +1529,32 @@ app.MapGet("/gpu/desired", (GpuDesiredState desired) => Results.Json(new
     imageVersion = desired.ImageVersion,
 }));
 
+// A fixed GPU clock (2026-10-13; core/Gpu/GpuClock.cs). The 890M offers no clock tuning through ADLX,
+// so this is PSMU 0x89 — what Motion Assistant's GPUClock does: it FIXES the clock, idle included, and
+// only a restart hands it back to the driver. 0 is refused: it pinned the GPU at 0 MHz on this device.
+app.MapGet("/gpu/clock", (GpuClockService clock) => Results.Json(clock.View()));
+app.MapPost("/gpu/clock", async (GpuClockRequest r, GpuClockService clock, CancellationToken ct) =>
+{
+    if (r.Mhz is not int mhz)
+        return Results.BadRequest(new { error = new { code = "bad_mhz", message = "mhz is required." } });
+    var outcome = await clock.SetAsync(mhz, ct);
+    if (outcome.Ok) return Results.Json(outcome.View);
+    var v = outcome.View;
+    var body = new
+    {
+        error = new { code = outcome.Code, message = outcome.Error },
+        supported = v.Supported, forcedMhz = v.ForcedMhz, sinceUtc = v.SinceUtc,
+        minMhz = v.MinMhz, maxMhz = v.MaxMhz, resetsOnRestart = v.ResetsOnRestart, note = v.Note,
+    };
+    int status = outcome.Code switch
+    {
+        "bad_mhz" => StatusCodes.Status400BadRequest,
+        "not_supported" => StatusCodes.Status409Conflict,
+        _ => StatusCodes.Status503ServiceUnavailable,   // the SMU refused or did not confirm it
+    };
+    return Results.Json(body, statusCode: status);
+});
+
 // RSR and Image Sharpening from the Display page (F4). The same contract as /gpu/frame-cap: an
 // INTENT the agent carries out within a few seconds, answered `applied:false, pending:true` — the
 // daemon cannot reach ADLX, and claiming "applied" here would describe work not yet done. Validated
@@ -2488,6 +2517,7 @@ namespace GpdForge.Api
     /// clock we do not control is not evidence about it.</summary>
     /// <summary>POST /gpu/frame-cap. Null Fps disables the cap, which is an intent, not an omission.</summary>
     public sealed record FrameCapRequest(int? Fps);
+    public sealed record GpuClockRequest(int? Mhz);
     public sealed record GpuImageBody(bool? Rsr, int? RsrSharpness, bool? Ris, int? RisSharpness);
 
     /// <summary>POST /standby/hibernate. Seconds of idle before hibernating; 0 means never. Null for

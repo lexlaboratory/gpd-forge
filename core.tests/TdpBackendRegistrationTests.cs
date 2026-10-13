@@ -1,3 +1,4 @@
+using GpdForge.Gpu;
 using GpdForge.Tdp;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -16,6 +17,7 @@ public sealed class TdpBackendRegistrationTests
         var backend = provider.GetRequiredService<ITdpBackend>();
         Assert.IsType<StubTdpBackend>(backend);
         Assert.Equal("stub", TdpBackendRegistration.Name(backend));
+        Assert.False(provider.GetRequiredService<IGpuClockControl>().Supported);
     }
 
     [Fact]
@@ -28,6 +30,8 @@ public sealed class TdpBackendRegistrationTests
         var backend = provider.GetRequiredService<ITdpBackend>();
         Assert.IsType<PawnIoStrixTdpBackend>(backend);
         Assert.Equal("pawnio-strix", TdpBackendRegistration.Name(backend));
+        // One owner of the SMU mailbox and its mutex: the GPU clock is the same backend instance.
+        Assert.Same(backend, provider.GetRequiredService<IGpuClockControl>());
     }
 
     [Fact]
@@ -41,5 +45,6 @@ public sealed class TdpBackendRegistrationTests
         Assert.IsType<RyzenAdjBackend>(backend);
         Assert.IsType<SystemProcessRunner>(provider.GetRequiredService<IProcessRunner>());
         Assert.Equal("ryzenadj", TdpBackendRegistration.Name(backend));
+        Assert.False(provider.GetRequiredService<IGpuClockControl>().Supported);
     }
 }

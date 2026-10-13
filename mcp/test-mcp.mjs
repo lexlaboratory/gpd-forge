@@ -65,6 +65,14 @@ try {
   const badauto = await callTool(53, 'set_auto_mode', {})
   check('set_auto_mode without a boolean is reported as error', badauto.isError === true)
 
+  // 2026-10-13: a FIXED GPU clock; 0 is refused (it pinned the 890M at 0 MHz until a restart).
+  const clk = await callTool(54, 'set_gpu_clock', { mhz: 1200 })
+  check('set_gpu_clock(1200) reports it fixed until restart', !clk.isError && clk.data?.forcedMhz === 1200 && clk.data?.resetsOnRestart === true, clk.text.slice(0, 80))
+  const zero = await callTool(55, 'set_gpu_clock', { mhz: 0 })
+  check('set_gpu_clock(0) is refused', zero.isError === true)
+  const readClk = await callTool(56, 'get_gpu_clock')
+  check('get_gpu_clock reads the fixed clock', !readClk.isError && readClk.data?.forcedMhz === 1200)
+
   const badmode = await callTool(6, 'set_mode', { name: 'nope' })
   check('set_mode(invalid) is reported as error', badmode.isError === true)
 

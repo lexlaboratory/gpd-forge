@@ -6,6 +6,7 @@ import { Badge, Button, Frame, Segmented, Slider, Toggle } from '../components'
 import { useToast } from '../Toast'
 import { PRESET_LABEL } from './shared'
 import { TunerCard } from './DashboardPage'
+import { GpuClockCard } from './GpuClockCard'
 
 export function PowerPage() {
   const [presets, setPresets] = useState<Record<string, Preset>>({})
@@ -137,6 +138,7 @@ export function PowerPage() {
         </div>
         {(tdp?.error || tdpError) && <p role="alert" className="muted" data-testid="tdp-error">{tdp?.error ?? tdpError}</p>}
       </Frame>
+      <GpuClockCard />
       <Frame title="Auto-TDP to FPS" hint="Gaming — hold a target FPS at the least power">
         <div className="row">
           <Toggle on={afps.enabled} onClick={toggleFps} label={afps.enabled ? 'Enabled' : 'Disabled'} testid="autofps-toggle" disabled={fpsPending} />

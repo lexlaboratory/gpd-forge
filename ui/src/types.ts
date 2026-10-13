@@ -17,6 +17,18 @@ export interface ModeDecision {
   process: string | null
 }
 
+/** GET/POST /gpu/clock: a FIXED GPU clock (PSMU 0x89). `forcedMhz` null = automatic; a fixed clock
+ *  lasts until the handheld restarts — there is no way back to automatic without one. */
+export interface GpuClockInfo {
+  supported: boolean
+  forcedMhz: number | null
+  sinceUtc: string | null
+  minMhz: number
+  maxMhz: number
+  resetsOnRestart: boolean
+  note: string
+}
+
 /** GET /mode and POST /mode/auto. `auto` is the daemon's: whether it may switch the mode on its own. */
 export interface ModeInfo {
   active: ModeId

@@ -174,6 +174,24 @@ kept in the mock for manual experimentation. Poll `GET /telemetry` instead.
   isoTime, cpuTempC, gpuTempC, packageW, cpuClockMhz, fanRpm, fps, fps1PctLow, batteryPct, dischargeW, acConnected,
   tdpVerified`.
 
+### `GET /gpu/clock`  ·  `POST /gpu/clock`  (fixed GPU clock — WRITES, pawnio-strix only)
+- `GET → { supported, forcedMhz: number | null, sinceUtc: string | null, minMhz: 400, maxMhz: 2900,
+  resetsOnRestart: true, note }` — `forcedMhz` is the clock Forge fixed in **this boot**; `null` means
+  automatic (the driver decides).
+- `POST { mhz } →` the `GET` body. `400 bad_mhz` outside 400–2900 or without a value; `409
+  not_supported` without the pawnio-strix backend (hardware gate closed, or ryzenadj); `503` when the SMU
+  refused it (`smu_failed`) or did not hand the value back (`not_confirmed`). Error bodies carry
+  `error: { code, message }` plus the `GET` fields.
+- Measured on the GPD Win 4 (HX 370), 2026-10-13: ADLX 1.5 offers **no** clock tuning for the Radeon
+  890M (every `IsSupported*Tuning` is false), so this is PSMU `0x89` — RyzenAdj's `--gfx-clk`, what
+  Motion Assistant's `GPUClock` does. It **fixes** the clock (idle included); it is not a ceiling. No
+  message is known that hands it back to the driver: `0` pinned the GPU at 0 MHz, a graphics-driver
+  reset did not undo it, only a restart did — so `0` is refused and the value lasts until the
+  handheld restarts (stored with its boot in `gpu-clock.json`; a later boot reads as automatic).
+- Re-sent after a resume from sleep (`ResumeRestoreWorker`), since whether a suspend drops it is not known.
+  With Fast Startup, Shut down hibernates the kernel session, so the service and its state survive the
+  power cycle and the clock is re-sent the same way: only **Restart** returns it to automatic.
+
 ### `GET /mode`  ·  `POST /mode`  ·  `POST /mode/auto`
 - `GET  → { active: ModeId, auto: boolean, decidedBy: { ruleId, match, process } | null }` — `auto` is
   whether the daemon may switch the mode on its own (auto-profiles); `decidedBy` names the app rule

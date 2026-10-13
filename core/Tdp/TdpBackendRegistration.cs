@@ -1,3 +1,4 @@
+using GpdForge.Gpu;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -12,14 +13,20 @@ public static class TdpBackendRegistration
         if (!hardwareEnabled)
         {
             services.AddSingleton<ITdpBackend, StubTdpBackend>();
+            services.AddSingleton<IGpuClockControl, NoGpuClockControl>();
             return;
         }
 
         if (string.Equals(requestedBackend, "pawnio-strix", StringComparison.OrdinalIgnoreCase))
         {
-            services.AddSingleton<ITdpBackend, PawnIoStrixTdpBackend>();
+            // The GPU clock rides the same backend: one PawnIO transport and one SMU mutex holder.
+            services.AddSingleton<PawnIoStrixTdpBackend>();
+            services.AddSingleton<ITdpBackend>(sp => sp.GetRequiredService<PawnIoStrixTdpBackend>());
+            services.AddSingleton<IGpuClockControl>(sp => sp.GetRequiredService<PawnIoStrixTdpBackend>());
             return;
         }
+
+        services.AddSingleton<IGpuClockControl, NoGpuClockControl>();
 
         string exePath = ryzenAdjPath ?? @"C:\Program Files\Motion Assistant\amd\ryzenadj.exe";
         services.AddSingleton<IProcessRunner, SystemProcessRunner>();

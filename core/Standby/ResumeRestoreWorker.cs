@@ -24,7 +24,8 @@ public sealed class ResumeRestoreWorker(
     ILogger<ResumeRestoreWorker>? logger = null,
     TimeSpan? interval = null,
     Func<DateTimeOffset>? now = null,
-    TdpIntent? intent = null) : BackgroundService
+    TdpIntent? intent = null,
+    GpdForge.Gpu.GpuClockService? gpuClock = null) : BackgroundService
 {
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(5);
 
@@ -82,6 +83,14 @@ public sealed class ResumeRestoreWorker(
         {
             if (step.Restored) logger?.LogInformation("Resume restore [{Step}]: {Detail}", step.Name, step.Detail);
             else logger?.LogWarning("Resume restore [{Step}] did not restore: {Detail}", step.Name, step.Detail);
+        }
+
+        // A fixed GPU clock is re-sent: whether a suspend drops it is not known, and the screen must not
+        // say "fixed" over a clock that is automatic again (core/Gpu/GpuClock.cs).
+        if (gpuClock?.Forced is { } forced)
+        {
+            if (await gpuClock.ReapplyAsync(ct)) logger?.LogInformation("Resume restore [gpu-clock]: {Mhz} MHz re-applied", forced.Mhz);
+            else logger?.LogWarning("Resume restore [gpu-clock] did not re-apply {Mhz} MHz", forced.Mhz);
         }
     }
 }

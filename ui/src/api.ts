@@ -6,7 +6,7 @@
 // relative requests do not stay inside the local shell. Calls throw on failure; callers degrade.
 
 import type {
-  Telemetry, ModeId, ModeInfo, Job, Standby, Preset, BatteryBudget, BatteryHealth, ChargeGuard, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
+  Telemetry, ModeId, ModeInfo, GpuClockInfo, Job, Standby, Preset, BatteryBudget, BatteryHealth, ChargeGuard, AutoFps, Guardian, AiInfo, AntiStandby, VramInfo,
   InferenceHold,
   HistoryResponse, ImportResult, PowerSourceConfig, SettingsExport,
   RefreshRateInfo, NightMode, TabletModeInfo, KeyboardBacklightInfo,
@@ -65,6 +65,8 @@ export const setMode = async (mode: ModeId) =>
 // only, which said "Manual: Windows" while auto-profiles had moved the handheld to gaming at 25 W.
 export const getModeInfo = () => json<ModeInfo>('/mode')
 export const setModeAuto = (enabled: boolean) => json<ModeInfo>('/mode/auto', post({ enabled }))
+export const getGpuClock = () => json<GpuClockInfo>('/gpu/clock')
+export const setGpuClock = (mhz: number) => json<GpuClockInfo>('/gpu/clock', post({ mhz }))
 export const setTdp = (stapmW: number) => json<TdpResult>('/tdp', post({ stapmW }))
 // The last write and the manual override in force — what the TDP controls open on.
 export const getTdp = () => json<TdpInfo>('/tdp')

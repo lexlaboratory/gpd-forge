@@ -173,8 +173,11 @@ public sealed class NamedSmuMutex(string name = PawnIoStrixTdpBackend.MutexName)
 /// Narrow Strix Point TDP backend. It validates chipset/table/capabilities and readback before the
 /// first TDP-setting write. Applying a profile uses MP1 mailbox 0x14/0x15/0x16/0x19 in that order.
 /// </summary>
-public sealed class PawnIoStrixTdpBackend : ITdpBackend, IDisposable
+public sealed class PawnIoStrixTdpBackend : ITdpBackend, GpdForge.Gpu.IGpuClockControl, IDisposable
 {
+    /// <summary>PSMU message that fixes the GPU clock (RyzenAdj set_gfx_clk). See core/Gpu/GpuClock.cs.</summary>
+    public const long PsmuForceGfxClockCommand = 0x89;
+
     public const string MutexName = "Global\\Access_PCI";
     public const int SupportedCodeName = 31;
     public const long SupportedPmTableVersion = 0x5D0009;
@@ -226,6 +229,25 @@ public sealed class PawnIoStrixTdpBackend : ITdpBackend, IDisposable
             ApplyMp1Command(transport, 0x16, checked(profile.SlowW * 1000), ct);
             ApplyMp1Command(transport, 0x19, profile.TctlC, ct);
             return true;
+        }), ct);
+    }
+
+    public bool Supported => true;
+
+    /// <summary>Fixes the GPU clock with PSMU 0x89 after the same chip/table validation as a TDP write.
+    /// The band is checked again here, before any transport exists: 0 pinned the 890M at 0 MHz until a
+    /// restart (2026-10-13), so no caller's mistake may reach the SMU.</summary>
+    public Task<int> ForceAsync(int mhz, CancellationToken ct)
+    {
+        if (!GpdForge.Gpu.GpuClockPolicy.InRange(mhz))
+            throw new ArgumentOutOfRangeException(nameof(mhz), mhz,
+                $"GPU clock must be {GpdForge.Gpu.GpuClockPolicy.MinMhz}-{GpdForge.Gpu.GpuClockPolicy.MaxMhz} MHz.");
+        return Task.Run(() => WithMutex(ct, transport =>
+        {
+            _ = ReadValidatedTable(transport, ct);
+            ct.ThrowIfCancellationRequested();
+            var reply = ExecuteExact(transport, "ioctl_send_smu_command", [PsmuForceGfxClockCommand, mhz, 0, 0, 0, 0, 0], 6);
+            return checked((int)reply[0]);
         }), ct);
     }
 
